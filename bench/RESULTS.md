@@ -26,6 +26,11 @@ TurboQuant's Triton decode kernel saturates around 4 concurrent and plateaus; it
 is ALU work that flash-attn's fp8 path gets free in hardware. Single-user → TurboQuant.
 8+ concurrent → fp8.
 
+**Pool ≠ usable context.** These pools were measured at util 0.95 / 240K max-len, but TurboQuant's
+continuation-prefill materializes the whole cached prefix in bf16 (~4 KB/token transient), which
+**OOM-kills the engine on any single prompt past ~160K**. The shipped config caps max-len at
+**150K** (147K verified end-to-end); the pool beyond that buys concurrent-sequence headroom only.
+
 ## Quant shoot-out (all NVFP4, fresh nightly, same flags)
 
 | | Unsloth | natfii (modelopt) | NVIDIA official |

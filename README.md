@@ -1,6 +1,6 @@
-# Qwen3.6-27B on a single RTX 5090 — 240K context, 4-bit KV, speculative decoding
+# Qwen3.6-27B on a single RTX 5090 — 150K context, 4-bit KV, speculative decoding
 
-Serving **Qwen3.6-27B with a 245K-token KV cache, MTP speculative decoding, and vision** on one 32 GB consumer GPU (RTX 5090, Blackwell `sm_120`).
+Serving **Qwen3.6-27B with 150K context (222K-token KV pool), MTP speculative decoding, and vision** on one 32 GB consumer GPU (RTX 5090, Blackwell `sm_120`).
 
 The interesting part: this configuration **does not work on stock vLLM**. TurboQuant 4-bit KV cache and MTP speculative decoding produce garbage output together — a known, unfixed upstream bug ([vllm#40880](https://github.com/vllm-project/vllm/issues/40880), tracked as unsupported in [#40069](https://github.com/vllm-project/vllm/issues/40069)). The open PR that claims to fix it ([#40914](https://github.com/vllm-project/vllm/pull/40914)) **does not work on Blackwell** — it has a bug of its own ([the full story](#the-bug-nobody-caught)).
 
@@ -11,7 +11,7 @@ This repo contains the patches that make it work, and the benchmarks proving it 
 fp8      172K          129 t/s      492 t/s      9,607 t/s
 TQ 4bit  261K  (+52%)  143 t/s      552 t/s     10,222 t/s     ← this setup
 ```
-*Pools measured at `--gpu-memory-utilization 0.95`; the shipped config runs 0.94 → **245K pool** — 0.95 dies under concurrent cold-prompt bursts (see [CONFIG.md](docs/CONFIG.md)).*
+*Pools measured at `--gpu-memory-utilization 0.95` / 240K max-len. The shipped config runs **0.94 and caps max-len at 150K**: 0.95 dies under concurrent cold-prompt bursts, and TurboQuant's continuation-prefill dequantizes the whole cached prefix to bf16 (~4 KB/token transient) — a single prompt past ~160K **OOM-kills the engine**. 147K verified working; the >150K pool buys concurrency headroom, not longer prompts. See [CONFIG.md](docs/CONFIG.md).*
 
 ---
 
@@ -41,6 +41,7 @@ Then `http://localhost:8020/v1` speaks OpenAI. See [`docs/CONFIG.md`](docs/CONFI
 | [`vllm-only.diff`](patches/vllm-only.diff) | Upstream [PR #40914](https://github.com/vllm-project/vllm/pull/40914) (open, unmerged): routes K+1 spec-verify batches through the TurboQuant decode kernel instead of the continuation-prefill path, which was attending only to just-drafted tokens and ignoring cached KV. |
 | [`fix_spec_output.py`](patches/fix_spec_output.py) | **The fix that makes #40914 actually work on Blackwell.** Honors the out-param contract ([details below](#the-bug-nobody-caught)). Without this you get `!!!!!!!`. |
 | [`tq_auto_fallback.py`](patches/tq_auto_fallback.py) | Second upstream gap: the MTP draft runner never inherits `cache_config.cache_dtype`, so TurboQuant layers on the draft path arrive with `"auto"` and crash. Falls back to `$VLLM_TQ_PRESET`. |
+| [`fix_spec_guard.py`](patches/fix_spec_guard.py) | **Third fix — intermittent `!!!!` under concurrency.** #40914's routing guard (`query_start_loc.shape[0] == B + 1`) fails on CUDA-graph **captured** steps because qsl is padded to max batch size ([flagged by @rmarnold on the PR](https://github.com/vllm-project/vllm/pull/40914)) → silent fallback to the buggy path → stale output with **0% draft acceptance**, but only on padded concurrent batch shapes — single-stream lands on exact capture sizes and works, so every simple validation passes while real multi-agent sessions corrupt. Fix: `>=` (B derives from padding-free `num_actual_tokens`; padded tail rows are discarded by the caller). Repro: 3 concurrent ~48K-token streams. |
 | [`tq_splits.py`](patches/tq_splits.py) | Makes TurboQuant's fixed decode KV-split count runtime-tunable (`$VLLM_TQ_KV_SPLITS`). *Tested: leave it at the default 32 — lowering it hurts both single-stream and batched.* |
 
 ## Benchmarks
@@ -113,7 +114,9 @@ This is almost certainly why the PR passed on the author's Ampere box (the eager
 2. **Always validate coherence via raw `/v1/completions`.** The chat endpoint's reasoning parser swallows degenerate output as *empty content*, so a broken model looks "fine but quiet". Degeneration tells: constant-token output, or **flat 100% MTP acceptance** (means draft and verify are locked in step).
 3. **Re-verify after every vLLM bump.** These patches are version-sensitive; a nightly that moves `turboquant_attn.py` will silently fail to apply or, worse, apply to shifted code.
 4. **`--kv-cache-memory` "fully utilize" hint OOMs at 240K+** — it ignores warmup transients. Use `--gpu-memory-utilization` and let vLLM profile.
-5. **util 0.95 crashes under concurrent cold starts.** A burst of ~8 simultaneous fresh prompts OOMs the GDN prefill kernel (~96 MiB transient) and **kills the engine** — `expandable_segments` doesn't save it, and a ramping benchmark (llama-benchy) never trips it, so you find out in production. Run **0.94** (245K pool, burst-verified) unless you're strictly single-client.
+5. **util 0.95 crashes under concurrent cold starts.** A burst of ~8 simultaneous fresh prompts OOMs the GDN prefill kernel (~96 MiB transient) and **kills the engine** — `expandable_segments` doesn't save it, and a ramping benchmark (llama-benchy) never trips it, so you find out in production. Run **0.94**, burst-verified.
+6. **TurboQuant's real context ceiling is ~150K, not the KV pool size.** `_continuation_prefill` dequantizes the *entire cached prefix* to bf16 (~4 KB/token transient) — a single prompt past ~160K allocates >650 MB of scratch that isn't there and **OOM-kills the engine** mid-prefill. Cap `--max-model-len 150000` (147K verified). The pool above that serves concurrency, and note each active sequence also pins a fixed GDN/Mamba state (~13% of pool), so 8 concurrent seqs ≈ pool-full regardless of prompt length.
+7. **Validate under *concurrency*, not just single-stream.** The guard bug (patch 4) passes every single-stream test — needle, benchmarks, tool evals — and corrupts only on padded concurrent batch shapes. If we'd load-tested with 3 parallel long-context streams on day one, it would have cost an hour instead of a production incident.
 
 ## License
 

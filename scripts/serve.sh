@@ -28,7 +28,7 @@ sudo docker run -d --name "$NAME" --runtime nvidia --gpus all --ipc=host \
   "$IMAGE" \
   --model /model --served-model-name qwen3.6-27b --trust-remote-code \
   --kv-cache-dtype turboquant_4bit_nc --block-size 128 \
-  --gpu-memory-utilization 0.95 --max-model-len 240000 \
+  --gpu-memory-utilization 0.94 --max-model-len 150000 \
   --max-num-seqs 8 --max-num-batched-tokens 8192 \
   --limit-mm-per-prompt '{"image":4,"video":0}' \
   --mamba-cache-mode align --enable-prefix-caching --enable-chunked-prefill \

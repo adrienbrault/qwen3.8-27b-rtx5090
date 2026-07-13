@@ -36,18 +36,25 @@ MTP speculative decoding. `ns=3` is the sweet spot (ns=4 is unstable, ns=1/2 lea
 ⚠️ Known to **crash at 16+ concurrent** (upstream vLLM MTP bug). Drop `--speculative-config` entirely if you need heavy concurrency.
 
 ```bash
---gpu-memory-utilization 0.94 --max-model-len 240000
+--gpu-memory-utilization 0.94 --max-model-len 150000
 ```
-Let vLLM *profile* the memory. Do **not** hand-set `--kv-cache-memory` to the "fully utilize" value vLLM suggests in its logs — that hint ignores warmup transients and OOMs at 240K+.
+Let vLLM *profile* the memory. Do **not** hand-set `--kv-cache-memory` to the "fully utilize" value vLLM suggests in its logs — that hint ignores warmup transients and OOMs.
+
+**Why max-len 150K, not "whatever the pool holds":** TurboQuant's `_continuation_prefill`
+dequantizes the entire cached prefix to bf16 (~4 KB/token of transient scratch). Past ~160K of
+cached context that allocation exceeds the activation headroom and the **engine dies mid-prefill**
+(`torch.OutOfMemoryError` in `k_full[:cached_len] = ...`). 147K is verified end-to-end. The pool
+above 150K still earns its keep: each concurrent sequence pins a fixed GDN/Mamba state
+(~30K-token-equivalent), so concurrency eats pool fast.
 
 **Why 0.94, not 0.95:** at 0.95 (261K pool) a burst of ~8 simultaneous cold prompts **crashes the
 engine** — the GDN prefill kernel (`chunk_fwd_o`) needs a ~96 MiB transient workspace per step, and
 with 6 requests' prefills packed into one 8192-token batch there is no headroom left
 (`torch.OutOfMemoryError`, engine dead, container restart). `expandable_segments:True` was already
-on; it doesn't save you. 0.94 gives back ~320 MiB of activation headroom and a **245,333-token
-pool** (measured) — still above the 240K max-len, so nothing user-visible is lost. Verified: the
-same 8-cold-prompt burst that killed 0.95 passes cleanly at 0.94. If you never see concurrent
-cold starts (single-user, one client), 0.95 works and buys +16K pool.
+on; it doesn't save you. 0.94 gives back ~320 MiB of activation headroom (222,580-token pool at
+max-len 150K, measured). Verified: the same 8-cold-prompt burst that killed 0.95 passes cleanly
+at 0.94. If you never see concurrent cold starts (single-user, one client), 0.95 works and buys
+a bit more pool.
 
 ```bash
 --max-num-seqs 8
