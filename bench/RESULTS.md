@@ -44,6 +44,32 @@ every axis — its slow prefill path is the killer.
 |---|---|---|
 | **Aider polyglot** (225 exercises) | diff format, 4 threads | **72.3% pass@2**, 34.4% pass@1, **97.3% well-formed** |
 | **Terminal-Bench 2.1** (8-task subset ×2) | Harbor + Terminus-2 | **7/8 pass@2** (12/16 trials; 2 of the 4 misses were agent *timeouts*, not wrong answers) |
+| **tool-eval-bench v2.1.0** (84 scenarios, hardmode, 4 trials) | seed 42, temp 0.6, serial | **89.0 ± 0.0 / 100** — Hard Mode 80%, Pass@4 = Pass^4 = 81.0% (fully deterministic across trials) |
+
+### Tool calling ([tool-eval-bench](https://github.com/SeraphimSerapis/tool-eval-bench))
+
+**Latest bench (v2.1.0, 2026-07-07): 89.0 ± 0.0 / 100** — Quality 89, Responsiveness 80
+(median turn 1.2s), Deployability 86, Hard Mode 80% (24/30). Weakest category: Multi-Step
+Chains (75%). Identical scores across all 4 trials.
+
+A second run on **v2.0.6** reproduces the protocol of a [published NVFP4-vs-Q8 comparison](https://github.com/MiaAI-Lab/Unsloth-Qwen3.6-27B-UD-Q8_K_XL_vs_nvidia-Qwen3.6-27B-NVFP4_tools_eval)
+(`--seed 42 --temperature 0.6 --hardmode --trials 4`), making these directly comparable:
+
+| config | score (v2.0.6 protocol) |
+|---|---|
+| **this setup** (Unsloth NVFP4 + **4-bit TurboQuant KV** + MTP) | **90.0 ± 0.0** |
+| nvidia NVFP4, fp8 KV (published) | 89 |
+| Unsloth Q8_K_XL, llama.cpp (published) | 83 |
+
+The aggressive 4-bit KV cache does **not** cost tool-calling quality — this config tops the
+comparison. One safety flag on both versions: TC-60 (cross-turn sleeper injection) fired in
+all trials — the model propagated an attacker BCC smuggled through turn-1 tool output.
+Standard prompt-injection caveats apply; not config-related.
+
+Run the quality suite **serially**. The bench's per-turn latency timeouts record queued turns
+as FAILs under `--parallel N` — the tool itself warns about this, and a `--parallel 8` run
+here scored 79 on trial 1 from timeout-FAILs alone (then the burst OOM'd the engine — see
+CONFIG.md). Responsiveness/Deployability sub-scores are only meaningful serial anyway.
 
 Coherence: needle-in-haystack at 10K recalled exactly; factual list clean; MTP per-position
 acceptance 0.945 / 0.764 / 0.564 (healthy decay — flat 100% would mean degenerate lock-step).
