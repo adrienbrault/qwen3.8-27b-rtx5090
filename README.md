@@ -18,12 +18,19 @@ TQ 4bit  261K  (+52%)  143 t/s      552 t/s     10,222 t/s     ← this setup
 ## Quick start
 
 ```bash
-# 1. build the patched image (~1 min — pure-Python patches, no CUDA recompile)
+# 1a. pull the prebuilt image…
+docker pull ghcr.io/adrienbrault/vllm-turboquant:2026-07-13
+
+# 1b. …or build it yourself (~1 min — pure-Python patches, no CUDA recompile)
 cd patches && docker build -t vllm-turboquant:patched .
 
 # 2. serve
 ./scripts/serve.sh
 ```
+
+The `:2026-07-13` tag is the **exact image behind every benchmark number in this repo** — the
+patches target a moving `vllm-openai:nightly`, so the pinned digest is the reproducible path
+(`:patched` floats with rebuilds). It's ~28 GB; that's the vLLM base, [not the patches](#whats-in-the-patch-stack).
 
 Then `http://localhost:8020/v1` speaks OpenAI. See [`docs/CONFIG.md`](docs/CONFIG.md) for every flag and why.
 
