@@ -6,6 +6,8 @@ these throughput numbers run above a stock 5090 — see [../docs/CONFIG.md](../d
 Model: `unsloth/Qwen3.6-27B-NVFP4` + MTP `ns=3` + vision, unless noted.
 Tool: [llama-benchy](https://github.com/eugr/llama-benchy) — *not* ad-hoc curl loops, which are noisy enough to produce wrong conclusions.
 
+> **Status (2026-07-13):** we now run **stock nightly + fp8 KV** as the daily and treat the TurboQuant image as experimental — 4-bit KV intermittently corrupts under real agent tool-calling (constant `!!!!`, 0% draft acceptance; [details](../README.md#status--2026-07-13-fp8-is-the-daily-the-turboquant-image-is-experimental)). These throughput and quality numbers still stand — the corruption is intermittent and never surfaced on any benchmark here — but read the fp8/TurboQuant comparison below as "faster vs reliable," not "old vs new default."
+
 ## KV cache: TurboQuant 4-bit vs fp8
 
 Identical image, flags, and tool; same day.
@@ -23,8 +25,10 @@ Identical image, flags, and tool; same day.
 | MTP acceptance | ~60% | **75.8%** |
 
 TurboQuant's Triton decode kernel saturates around 4 concurrent and plateaus; its 4-bit dequant
-is ALU work that flash-attn's fp8 path gets free in hardware. Single-user → TurboQuant.
-8+ concurrent → fp8.
+is ALU work that flash-attn's fp8 path gets free in hardware. On throughput alone: single-user →
+TurboQuant, 8+ concurrent → fp8 (+61%). In practice we run **fp8 everywhere** — TurboQuant's
+intermittent corruption under real agent sessions outweighs its ~10% single-stream edge (see status
+note above).
 
 **Pool ≠ usable context.** These pools were measured at util 0.95 / 240K max-len, but TurboQuant's
 continuation-prefill materializes the whole cached prefix in bf16 (~4 KB/token transient), which
@@ -62,7 +66,7 @@ A second run on **v2.0.6** reproduces the protocol of a [published NVFP4-vs-Q8 c
 
 | config | score (v2.0.6 protocol) |
 |---|---|
-| **this setup** (Unsloth NVFP4 + **4-bit TurboQuant KV** + MTP) | **90.0 ± 0.0** |
+| Unsloth NVFP4 + **4-bit TurboQuant KV** + MTP (the experimental image) | **90.0 ± 0.0** |
 | nvidia NVFP4, fp8 KV (published) | 89 |
 | Unsloth Q8_K_XL, llama.cpp (published) | 83 |
 

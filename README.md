@@ -7,11 +7,19 @@ The interesting part: this configuration **does not work on stock vLLM**. TurboQ
 This repo contains the patches that make it work, and the benchmarks proving it does.
 
 ```
-        context      decode c1    decode c4    prefill @4K
-fp8      172K          129 t/s      492 t/s      9,607 t/s
-TQ 4bit  261K  (+52%)  143 t/s      552 t/s     10,222 t/s     ← this setup
+         max-len   decode c1   decode c4   decode c8   prefill @4K
+fp8       131K       129 t/s     492 t/s    868 t/s      9,607 t/s   ← daily driver (stable)
+TQ 4bit   150K       143 t/s     552 t/s    540 t/s     10,222 t/s   ← experimental (see status)
 ```
-*Pools measured at `--gpu-memory-utilization 0.95` / 240K max-len. The shipped config runs **0.94 and caps max-len at 150K**: 0.95 dies under concurrent cold-prompt bursts, and TurboQuant's continuation-prefill dequantizes the whole cached prefix to bf16 (~4 KB/token transient) — a single prompt past ~160K **OOM-kills the engine**. 147K verified working; the >150K pool buys concurrency headroom, not longer prompts. See [CONFIG.md](docs/CONFIG.md).*
+*Context shown is usable `--max-model-len`, not raw KV-pool size. TurboQuant's continuation-prefill dequantizes the whole cached prefix to bf16 (~4 KB/token transient), so a single prompt past ~160K **OOM-kills the engine** — its 222K-token pool @ util 0.94 / max-len 150K buys concurrency headroom, not longer prompts (147K verified). fp8 fits 137.6K @ 0.94; we cap it at 131K for headroom. See [CONFIG.md](docs/CONFIG.md).*
+
+---
+
+## Status — 2026-07-13: fp8 is the daily; the TurboQuant image is experimental
+
+**We now run stock `vllm/vllm-openai:nightly` with `--kv-cache-dtype fp8_e4m3` as our daily driver, and treat the patched TurboQuant image below as experimental.** Even with all four patches applied, TurboQuant 4-bit KV still intermittently corrupts under real agentic tool-calling sessions — constant `!!!!` output at **0% MTP draft acceptance**. It's a residual CUDA-graph captured-step routing bug in [#40914](https://github.com/vllm-project/vllm/pull/40914) that we could not reproduce synthetically: synthetic tool-history repros passed 4/4, but real opencode sessions still tripped it at 11K and 71K context. fp8 passed the same battery clean (burst repro, 3× concurrent 40–48K streams, multi-turn tool-history with failed-tool-call retries; 74.4% draft acceptance). Full story of the underlying class of bug: [the bug nobody caught](#the-bug-nobody-caught).
+
+**The tradeoff, one line:** TurboQuant is **+10% single-stream** and **150K vs 131K** context; fp8 is **+61% at 8-way concurrency** (868 vs 540 t/s) and **corruption-free**. Tool-eval quality is identical (TQ 90.0 / 89.0 on the bench — 4-bit KV costs no *measurable* quality; the corruption is intermittent, not benchmark-visible). The TurboQuant content below stays — it's the subject of this repo — but it's a lab result now, not what we point production at.
 
 ---
 
@@ -33,6 +41,8 @@ patches target a moving `vllm-openai:nightly`, so the pinned digest is the repro
 (`:patched` floats with rebuilds). It's ~28 GB; that's the vLLM base, [not the patches](#whats-in-the-patch-stack).
 
 Then `http://localhost:8020/v1` speaks OpenAI. See [`docs/CONFIG.md`](docs/CONFIG.md) for every flag and why.
+
+> **Want the stable path?** Skip the patched image entirely and run stock nightly + fp8 KV — see [the status note](#status--2026-07-13-fp8-is-the-daily-the-turboquant-image-is-experimental) and the [recommended stable config](docs/CONFIG.md#recommended-stock-nightly--fp8-kv-our-daily). Everything from here down is the experimental TurboQuant path.
 
 ## What's in the patch stack
 
@@ -56,7 +66,7 @@ Model: [`unsloth/Qwen3.6-27B-NVFP4`](https://huggingface.co/unsloth/Qwen3.6-27B-
 | fp8_e4m3 | 172K | 129 | 253 | 492 | **868** | 9,607 |
 | **turboquant_4bit_nc** | **261K** | **143** | 251 | **552** | 540 | **10,222** |
 
-TurboQuant wins to c4 and **plateaus** past it — its Triton kernel does 4-bit dequant as ALU work that flash-attn's fp8 path gets free in hardware. For single-user coding, it's strictly better. Keep fp8 for 8+ concurrent (benchmark runs, multi-client).
+TurboQuant wins to c4 and **plateaus** past it — its Triton kernel does 4-bit dequant as ALU work that flash-attn's fp8 path gets free in hardware. On raw throughput it's faster for single-user coding; fp8 wins from c8 up (868 vs 540, **+61%**). But we run **fp8 as the daily anyway** — TurboQuant's intermittent corruption under real agent sessions (see [status](#status--2026-07-13-fp8-is-the-daily-the-turboquant-image-is-experimental)) is not worth the ~10% single-stream gain.
 
 ### Quality
 

@@ -2,6 +2,22 @@
 
 The serve command lives in [`../scripts/serve.sh`](../scripts/serve.sh). This explains it.
 
+## Recommended: stock nightly + fp8 KV (our daily)
+
+**As of 2026-07-13 this is what we run in production.** The TurboQuant flags documented in the rest of this file are experimental — 4-bit KV still intermittently corrupts under real agent sessions (constant `!!!!`, 0% MTP draft acceptance; see the [status note](../README.md#status--2026-07-13-fp8-is-the-daily-the-turboquant-image-is-experimental)). fp8 gives up ~10% single-stream and ~19K of usable context and buys reliability plus **+61% at 8-way concurrency**.
+
+No patched image — plain `vllm/vllm-openai:nightly`. Only the KV-cache and context flags differ from the TurboQuant setup below; everything else (MTP, parsers, sampling, caches, host notes) is identical.
+
+```bash
+--kv-cache-dtype fp8_e4m3
+--gpu-memory-utilization 0.94 --max-model-len 131072   # fp8 fits 137.6K @ 0.94; 131072 leaves headroom
+--max-num-seqs 8 --max-num-batched-tokens 8192
+--speculative-config '{"method":"qwen3_5_mtp","num_speculative_tokens":3}'
+--reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_xml
+```
+
+decode t/s: **c1 129, c2 253, c4 492, c8 868**; prefill @4K **9,607**. Validated clean under a full battery — burst repro, 3× concurrent 40–48K streams, multi-turn tool-history including failed-tool-call retries — at **74.4% MTP draft acceptance**. Everything below documents the experimental TurboQuant path.
+
 ## Model
 
 `unsloth/Qwen3.6-27B-NVFP4` — compressed-tensors NVFP4 (4-bit weights), with a **vision tower** and an **MTP head**. ~22 GB on disk.
@@ -16,7 +32,9 @@ Chosen over the alternatives by measurement:
 
 > **Loading note:** Unsloth's build is compressed-tensors. Pass **no** `--quantization` flag (auto-detects). Passing `modelopt` errors out.
 
-## The flags
+## The flags (experimental TurboQuant path)
+
+> These are the flags for the patched TurboQuant image — **experimental** as of 2026-07-13 (see the [stable fp8 config](#recommended-stock-nightly--fp8-kv-our-daily) above). The `--kv-cache-dtype`, `--block-size`, `-e VLLM_TQ_*`, and `--max-model-len` values below are the ones that differ from the daily; the rest apply to both.
 
 ```bash
 --kv-cache-dtype turboquant_4bit_nc --block-size 128
