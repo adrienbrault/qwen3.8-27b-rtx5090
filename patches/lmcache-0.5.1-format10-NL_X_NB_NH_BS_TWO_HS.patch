@@ -1,0 +1,42 @@
+diff --git a/csrc/mp_mem_kernels.cu b/csrc/mp_mem_kernels.cu
+index ebe3d75..b5ab640 100644
+--- a/csrc/mp_mem_kernels.cu
++++ b/csrc/mp_mem_kernels.cu
+@@ -49,6 +49,12 @@ __device__ inline size_t calculate_engine_global_offset(
+     // Flash Infer HND: L tensors [NB, 2, NH, BS, HS]
+     return engine_block_idx * shape_desc.kv_size * scalars_per_block +
+            k_or_v * scalars_per_block;
++  } else if constexpr (format == EngineKVFormat::NL_X_NB_NH_BS_TWO_HS) {
++    // Blocks-first fused K/V: L tensors [NB, NH, BS, 2, HS].
++    // Block stride = NH*BS*2*HS = kv_size*scalars_per_block; the K/V ("2")
++    // axis is interior with stride HS = scalars_per_head.
++    return engine_block_idx * shape_desc.kv_size * scalars_per_block +
++           k_or_v * shape_desc.scalars_per_head<ScalarType>();
+   } else if constexpr (format == EngineKVFormat::NL_X_NB_BS_HS) {
+     // MLA: L tensors [NB, BS, HS]
+     return engine_block_idx * scalars_per_block;
+@@ -88,6 +94,14 @@ __device__ inline size_t calculate_engine_local_offset(
+     size_t scalars_per_head_block =
+         shape_desc.bs * scalars_per_head;  // BS * HS
+     return head_idx * scalars_per_head_block + token_offset * scalars_per_head;
++  } else if constexpr (format == EngineKVFormat::NL_X_NB_NH_BS_TWO_HS) {
++    // Blocks-first fused K/V: within a block, for a fixed K/V slot, the layout
++    // is [NH, BS, (2,) HS] — heads outermost like HND, but the interior "2"
++    // (K/V) axis inflates both the head and token strides by kv_size.
++    size_t scalars_per_head_block =
++        shape_desc.kv_size * shape_desc.bs * scalars_per_head;  // 2 * BS * HS
++    return head_idx * scalars_per_head_block +
++           token_offset * shape_desc.kv_size * scalars_per_head;  // 2 * HS
+   } else {
+     // NHD: [BS, NH, HS] — tokens are outermost within a block
+     return head_idx * scalars_per_head + token_offset * scalars_per_token;
+@@ -291,6 +305,9 @@ __global__ void multi_layer_block_transfer_kernel(
+     case EngineKVFormat::NB_NL_TWO_NH_BS_HS:                            \
+       LAUNCH_KERNEL(DIRECTION, EngineKVFormat::NB_NL_TWO_NH_BS_HS);     \
+       break;                                                            \
++    case EngineKVFormat::NL_X_NB_NH_BS_TWO_HS:                          \
++      LAUNCH_KERNEL(DIRECTION, EngineKVFormat::NL_X_NB_NH_BS_TWO_HS);   \
++      break;                                                            \
+     default:                                                            \
+       TORCH_CHECK(false, "Unsupported EngineKVFormat: ",                \
+                   static_cast<int>(engine_kv_format));                  \

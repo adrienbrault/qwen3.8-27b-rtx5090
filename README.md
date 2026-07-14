@@ -23,6 +23,50 @@ TQ 4bit   150K       143 t/s     552 t/s    540 t/s     10,222 t/s   ← experim
 
 ---
 
+## Update — 2026-07-14: MTP + LMCache tiered KV caching (recommended for multi-agent coding)
+
+**Multi-agent coding lives and dies by cache retention, not single-stream throughput.** Eight coding agents sharing one endpoint re-send enormous, near-identical prefixes (system prompt, tool schemas, repo context, growing session history). vLLM's on-GPU prefix cache evicts them the moment the pool fills; a revisit then pays a full **5.8s re-prefill** on a 40K-token session. So we gave vLLM a tiered KV cache via [LMCache](https://github.com/LMCache/LMCache): a **24 GB pinned-RAM L1** + **150 GB SSD L2** that survives eviction *and* container restarts.
+
+**It works, and it composes with MTP speculative decoding** — the combination the upstream trackers list as unsupported ([vLLM #39809](https://github.com/vllm-project/vllm/issues/39809), [#26201](https://github.com/vllm-project/vllm/issues/26201) "mamba prefix caching + spec decode: TODO", [LMCache #2845](https://github.com/LMCache/LMCache/issues/2845)). The composed profile decodes within **−3..−9%** of the plain MTP daily and turns a cold-session revisit from 5.8s into **sub-1.4s**:
+
+| decode t/s | c1 | c2 | c4 | c8 |
+|---|---|---|---|---|
+| daily — MTP, no cache | 126 | 247 | 449 | **488** |
+| MTP + LMCache — composed on vLLM 0.24 (no patch) | 118 | 224 | 421 | 450 |
+| MTP + LMCache — nightly + [our format-10 patch](#the-format-10-kernel-patch-lmcache-cant-store-this-model) | 122 | 240 | 428 | **458** |
+
+The tiered-hit ladder (40K-token sessions): on-GPU ≈ instant → **L1 RAM hit ~0.5s** → **L2 SSD hit ~2.7s** → **cold re-prefill 5.8s**. Composed revisit walls land **0.64–1.4s** across the tiers. 150 GB of L2 is **~2M tokens of session history that never re-prefills and persists across restarts** — a 10×40K working set (29 GB > the 24 GB L1) spills to SSD with **zero thrash**, all 32 post-warm lookups hit.
+
+Prefill holds up too — composed sweep (batched 3199): **9.1K @2K / 9.0K @8K / 8.2K @16K / 7.0K @32K / 5.5K @64K / 4.0K @115K** t/s, ≈−10% vs the daily's batched-8192 path at matched depth (the batched-token constraint, not the cache). Pool: 124K tokens composed (nightly + patch), 163K no-MTP.
+
+**Serve it:** [`scripts/serve-lmcache.sh`](scripts/serve-lmcache.sh) (port 8030). Every flag and the failure that earned it is in [`docs/LMCACHE.md`](docs/LMCACHE.md).
+
+### Where this sits vs the daily
+
+- **LMCache (MTP, no vision)** is the recommended setup for **multi-agent coding** — the profile runs `image:0`, trading vision for cache retention that pays for itself the moment two agents share a prefix.
+- **The fp8 daily** stays the **vision-capable** alternative and the better pick for a single interactive user, where there's no shared prefix to retain and single-stream latency is what you feel.
+
+### The format-10 kernel patch (LMCache can't store this model)
+
+vLLM nightly's unified hybrid allocator emits attention KV as a fused rank-4 tensor `[NB, NH, BS, 2·HS]` (page-size parity with the mamba state). LMCache **defines and detects** this layout as `EngineKVFormat 10` (`NL_X_NB_NH_BS_TWO_HS`) — but implements it in **no transfer kernel**, not in 0.5.1, not in the 0.5.2-dev main branch. So on nightly every store aborts with `RuntimeError: Unsupported EngineKVFormat: 10`, and the failed stores write-lock entries that pin L1 and can't be evicted. **Every vLLM-nightly hybrid is currently uncacheable by LMCache.**
+
+[`patches/lmcache-0.5.1-format10-NL_X_NB_NH_BS_TWO_HS.patch`](patches/lmcache-0.5.1-format10-NL_X_NB_NH_BS_TWO_HS.patch) fixes it — a 17-line addition to `csrc/mp_mem_kernels.cu`: the two offset-calculator branches (global + local) for the fused axis plus the dispatch case. The Python side needs nothing (the `KVFormatSpec` registry already maps the axes). Validated on `vllm/vllm-openai:nightly`: **0 format errors, stores commit, 12/12 hits, coherent hit outputs, composed decode c1 122 / c8 458.** It's **being prepared as an upstream PR to LMCache** — the project lacks this kernel even on dev.
+
+### Gotchas that will waste your day (LMCache edition)
+
+Each of these cost hours. In launch order:
+
+1. **flashinfer JIT eats all host RAM.** Any non-nightly vLLM image on `sm_120` **JIT-compiles the CUTLASS fp4 GEMM on the first forward pass** with unbounded `nvcc` parallelism — multi-GB per job, reads as a mystery "hang" (GPU idle while nvcc grinds) or a whole-host livelock. Cap it: `MAX_JOBS=4` + `FLASHINFER_NUM_COMPILE_JOBS=4`, and **mount a persistent `/root/.cache/flashinfer`** (one ~30-min build, warm forever). The nightly image ships these kernels prebuilt and never shows this.
+2. **Never set `expandable_segments`.** cuMem/VMM memory is **not CUDA-IPC-exportable** ([pytorch #165685](https://github.com/pytorch/pytorch/issues/165685)) — the LMCache sidecar crashes importing the KV handles and never acks, so vLLM's `register_kv_caches` **silently times out at 300s**. This one env var masqueraded as "version skew" for days.
+3. **Disable the worker reaper: `--worker-reap-timeout-seconds 0`.** LMCache's MP server reaps worker registrations (default 120s) and the worker heartbeat starts *lazily* on first store — a long idle/blocked span gets reaped, after which the cache **cannot recover**: `found_count=0`, "Session not found, skipping touch", stores silently dropped. An unrecoverable zombie that looks like an inert cache.
+4. **L1 must exceed the hot working set / 0.8.** LMCache's lookup breaks at the *first* missing chunk, and LRU evicts the oldest session's **head** chunks first → head-miss → full re-store → evicts the next session's head → permanent thrash, **0% hit rate**. Partial caching does **not** degrade gracefully on this hybrid; size L1 to hold the entire hot working set below the 0.8 watermark or it collapses to zero.
+5. **The sidecar holds ~1.4 GB of VRAM that `--gpu-memory-utilization` can't see** (CUDA context + IPC mappings + MTP draft weights). At util 0.94 a burst of concurrent cold prefills OOMs (74 MB free at crash) and kills the engine. **Use 0.93.** This was the *entire* "MTP crashes with LMCache" myth — a mundane burst-OOM, not the scheduler/connector logic wall the upstream issues describe.
+6. **Don't force `FULL_DECODE_ONLY` cudagraphs.** It doesn't cover MTP's verify-step shapes on vLLM 0.24, so spec decode silently runs eager and decode **collapses to c1 46 / c8 179** (vs 118/450). Default cudagraph mode was the entire fix.
+7. **`--chunk-size` must equal the hybrid's unified block size** — **1600** with MTP `ns=3`, **1568** without (discovered, not documented; it's not 16). And `--max-num-batched-tokens` must be `2·chunk−1` (3199 / 3135) — LMCache's MP connector requires batched-tokens ∈ [chunk, 2·chunk).
+8. **The paired `lmcache/vllm-openai:*-cu129` image is CUDA-13-linked but ships no `libcudart.so.13`.** Multi-stage `COPY` it from `nvidia/cuda:13.0.1-runtime-ubuntu24.04` + `ldconfig` (the `lmcache-vllm:fixed` build). `pip install nvidia-cuda-runtime-cu13` does **not** work (PEP 668, then no wheel).
+
+---
+
 ## Quick start
 
 ```bash
