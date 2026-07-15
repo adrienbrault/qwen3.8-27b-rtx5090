@@ -1,6 +1,6 @@
 # MTP + LMCache tiered KV caching — every flag, and why
 
-The launch command lives in [`../scripts/serve-lmcache.sh`](../scripts/serve-lmcache.sh). This explains it. For the *why-at-all* and the benchmark numbers, see the [README section](../README.md#update--2026-07-14-mtp--lmcache-tiered-kv-caching-recommended-for-multi-agent-coding).
+The launch command lives in [`../scripts/serve-lmcache.sh`](../scripts/serve-lmcache.sh). This explains it. For the *why-at-all* and the benchmark numbers, see the [README section](../README.md#alternative-lmcache-tiered-kv-cache-for-multi-agent-coding).
 
 **When to run this instead of the [k8v4 daily](CONFIG.md#recommended-clean-tq-image--turboquant_k8v4-our-daily):** multi-agent coding, where several agents share large near-identical prefixes and cache retention beats single-stream latency. The profile runs **no vision** (`image:0`) — that's the one capability it gives up vs the daily. It uses **fp8 KV**, not the daily's k8v4: LMCache's persistence tier only round-trips faithfully with fp8 ([why](#lmcache--k8v4-composes-but-the-persisted-tier-is-lossy--not-shipped)).
 
@@ -27,7 +27,7 @@ IMAGE=lmcache-vllm:fixed
 
 `lmcache/vllm-openai:latest-cu129` (vLLM **0.24** + lmcache **0.5.1**) with one fix: it's CUDA-13-linked but ships no `libcudart.so.13`, so `csrc` load fails. Multi-stage `COPY` `libcudart.so.13*` from `nvidia/cuda:13.0.1-runtime-ubuntu24.04`, then `ldconfig`. (`pip install nvidia-cuda-runtime-cu13` does not work — PEP 668, then no wheel.)
 
-**Do not use the nightly pairing** (`latest-nightly-cu129`, lmcache 0.5.2-dev): it rejects this model's KV layout with `Unsupported EngineKVFormat: 10` on every store — *unless* you rebuild lmcache with [`../patches/lmcache-0.5.1-format10-NL_X_NB_NH_BS_TWO_HS.patch`](../patches/lmcache-0.5.1-format10-NL_X_NB_NH_BS_TWO_HS.patch), which recovers the nightly path (composed decode c1 122 / c8 458, slightly ahead of 0.24's 118/450). See [the patch section](../README.md#the-format-10-kernel-patch-lmcache-cant-store-this-model).
+**Do not use the nightly pairing** (`latest-nightly-cu129`, lmcache 0.5.2-dev): it rejects this model's KV layout with `Unsupported EngineKVFormat: 10` on every store — *unless* you rebuild lmcache with [`../patches/lmcache-0.5.1-format10-NL_X_NB_NH_BS_TWO_HS.patch`](../patches/lmcache-0.5.1-format10-NL_X_NB_NH_BS_TWO_HS.patch), which recovers the nightly path (composed decode c1 122 / c8 458, slightly ahead of 0.24's 118/450). See [the patch section](../patches/README.md#lmcache-format-10-kernel-patch-separate-project).
 
 ## Container flags
 

@@ -2,9 +2,13 @@
 
 Serving **Qwen3.6-27B with a 165K-token KV pool (160K usable context), MTP speculative decoding, and vision** on one 32 GB consumer GPU (RTX 5090, Blackwell `sm_120`).
 
-The interesting part: this configuration **does not work on stock vLLM**. TurboQuant KV cache and MTP speculative decoding produce garbage output together — a known, unfixed upstream bug ([vllm#40880](https://github.com/vllm-project/vllm/issues/40880), tracked as unsupported in [#40069](https://github.com/vllm-project/vllm/issues/40069)). The open PR that claims to fix it ([#40914](https://github.com/vllm-project/vllm/pull/40914)) **does not work on Blackwell** — it has a bug of its own ([the full story](#the-bug-nobody-caught)).
+## What you get
 
-This repo contains the patches that make it work, and the benchmarks proving it does.
+- **Qwen3.6-27B** (Unsloth NVFP4, 4-bit weights) served over an OpenAI-compatible endpoint.
+- **165K-token KV pool → 160K usable context** via `turboquant_k8v4` KV cache (8-bit Keys / 4-bit Values).
+- **MTP speculative decoding** — draft head inside the weights, ~0 VRAM, mean acceptance length ~3.2.
+- **Vision** — the model's image tower, on.
+- All of it on **one 32 GB RTX 5090** (`sm_120`), memory-OC'd, 600 W.
 
 ```
                   max-len   decode c1   decode c4   decode c8   prefill @4K   KV density
@@ -13,67 +17,9 @@ fp8_e4m3          131K       130 t/s     482 t/s     478 t/s      9,604 t/s   26
 ```
 *Decode is @512 tg-throughput mean (pure decode). `turboquant_k8v4` (8-bit Keys / 4-bit Values) wins single-stream and short-context at every concurrency; the one regime fp8 wins is **deep context (≥4K) at high concurrency** — see [Benchmarks](#benchmarks). Context shown is usable `--max-model-len`, not raw KV-pool size: the 165,274-token pool @ util 0.94 caps at max-len 160K because TurboQuant's continuation-prefill dequantizes the whole cached prefix to bf16 (~4 KB/token transient), so a single prompt far past the cap **OOM-kills the engine** — pool headroom buys concurrency, not longer prompts. fp8 fits 136,477 tokens; we cap it at 131K. See [CONFIG.md](docs/CONFIG.md).*
 
----
+## Why it needs patches
 
-## Status: turboquant_k8v4 is the daily
-
-**2026-07-15 — this reverses our earlier call.** For weeks we shipped stock fp8 KV and treated the patched TurboQuant image as experimental, because it produced constant `!!!!` at **0% MTP acceptance** under real agent sessions and we called it intermittent memory corruption. **That diagnosis was wrong — there was never a corruption bug.** A ~30-round investigation traced the `!!!!` to two mundane causes: (1) a soak-test **degeneracy detector that false-positived** on coherent replies to random-gibberish prompts, and (2) genuine long-context **quality loss from quantizing the *keys* to 4 bits** (`turboquant_4bit_nc`). Keys are what attention indexes on — 4-bit keys destroy long-context retrieval.
-
-**The fix was one flag.** Use **`turboquant_k8v4`** (8-bit Keys / 4-bit Values) instead of `turboquant_4bit_nc`. 8-bit keys preserve retrieval; 4-bit values keep most of the density win. Proven by fair needle-in-haystack retrieval — plant 5-digit codes in coherent filler, exact-match:
-
-| KV cache | 9K | 20K | 40K |
-|---|---|---|---|
-| `turboquant_4bit_nc` (4-bit keys) | **0/8 across depths — destroys retrieval** | | |
-| fp8_e4m3 | 6/6 | 8/8 | — |
-| **turboquant_k8v4** | **8/8** | **8/8** | **6/6** |
-
-So the whole TurboQuant + MTP stack and its four patches are **still real and still needed** — the [`!!!!`-from-a-discarded-out-param bug](#the-bug-nobody-caught) was genuine and its fix stands. What's retired is the "demoted to experimental because it corrupts" conclusion. **The daily image is the same clean TQ image, just `VLLM_TQ_PRESET=turboquant_k8v4` + `--kv-cache-dtype turboquant_k8v4`.** It's faster single-stream, **+21% pool** (165K vs 136K tokens, in *less* KV memory), and matches fp8's retrieval and MTP acceptance. fp8 remains the alternative for **deep-context high-concurrency batch serving** (see [Benchmarks](#benchmarks)). `turboquant_4bit_nc` is a **rejected variant** — 0/8 retrieval is why.
-
----
-
-## Update — 2026-07-14: MTP + LMCache tiered KV caching (recommended for multi-agent coding)
-
-**Multi-agent coding lives and dies by cache retention, not single-stream throughput.** Eight coding agents sharing one endpoint re-send enormous, near-identical prefixes (system prompt, tool schemas, repo context, growing session history). vLLM's on-GPU prefix cache evicts them the moment the pool fills; a revisit then pays a full **5.8s re-prefill** on a 40K-token session. So we gave vLLM a tiered KV cache via [LMCache](https://github.com/LMCache/LMCache): a **24 GB pinned-RAM L1** + **150 GB SSD L2** that survives eviction *and* container restarts.
-
-**It works, and it composes with MTP speculative decoding** — the combination the upstream trackers list as unsupported ([vLLM #39809](https://github.com/vllm-project/vllm/issues/39809), [#26201](https://github.com/vllm-project/vllm/issues/26201) "mamba prefix caching + spec decode: TODO", [LMCache #2845](https://github.com/LMCache/LMCache/issues/2845)). The composed profile decodes within **−3..−9%** of the plain MTP daily and turns a cold-session revisit from 5.8s into **sub-1.4s**:
-
-| decode t/s | c1 | c2 | c4 | c8 |
-|---|---|---|---|---|
-| daily — MTP, no cache | 126 | 247 | 449 | **488** |
-| MTP + LMCache — composed on vLLM 0.24 (no patch) | 118 | 224 | 421 | 450 |
-| MTP + LMCache — nightly + [our format-10 patch](#the-format-10-kernel-patch-lmcache-cant-store-this-model) | 122 | 240 | 428 | **458** |
-
-The tiered-hit ladder (40K-token sessions): on-GPU ≈ instant → **L1 RAM hit ~0.5s** → **L2 SSD hit ~2.7s** → **cold re-prefill 5.8s**. Composed revisit walls land **0.64–1.4s** across the tiers. 150 GB of L2 is **~2M tokens of session history that never re-prefills and persists across restarts** — a 10×40K working set (29 GB > the 24 GB L1) spills to SSD with **zero thrash**, all 32 post-warm lookups hit.
-
-Prefill holds up too — composed sweep (batched 3199): **9.1K @2K / 9.0K @8K / 8.2K @16K / 7.0K @32K / 5.5K @64K / 4.0K @115K** t/s, ≈−10% vs the daily's batched-8192 path at matched depth (the batched-token constraint, not the cache). Pool: 124K tokens composed (nightly + patch), 163K no-MTP.
-
-**Serve it:** [`scripts/serve-lmcache.sh`](scripts/serve-lmcache.sh) (port 8030). Every flag and the failure that earned it is in [`docs/LMCACHE.md`](docs/LMCACHE.md).
-
-### Where this sits vs the daily
-
-- **LMCache (MTP, no vision)** is the recommended setup for **multi-agent coding** — the profile runs `image:0`, trading vision for cache retention that pays for itself the moment two agents share a prefix. It uses **fp8 KV**: LMCache's persistence tier only round-trips faithfully with fp8 (the k8v4 attempt is a documented non-ship — [details](docs/LMCACHE.md#lmcache--k8v4-composes-but-the-persisted-tier-is-lossy--not-shipped)).
-- **The `turboquant_k8v4` daily** stays the **vision-capable** pick for a single interactive user, where there's no shared prefix to retain and single-stream latency is what you feel — and it's now *faster* single-stream than fp8.
-
-### The format-10 kernel patch (LMCache can't store this model)
-
-vLLM nightly's unified hybrid allocator emits attention KV as a fused rank-4 tensor `[NB, NH, BS, 2·HS]` (page-size parity with the mamba state). LMCache **defines and detects** this layout as `EngineKVFormat 10` (`NL_X_NB_NH_BS_TWO_HS`) — but implements it in **no transfer kernel**, not in 0.5.1, not in the 0.5.2-dev main branch. So on nightly every store aborts with `RuntimeError: Unsupported EngineKVFormat: 10`, and the failed stores write-lock entries that pin L1 and can't be evicted. **Every vLLM-nightly hybrid is currently uncacheable by LMCache.**
-
-[`patches/lmcache-0.5.1-format10-NL_X_NB_NH_BS_TWO_HS.patch`](patches/lmcache-0.5.1-format10-NL_X_NB_NH_BS_TWO_HS.patch) fixes it — a 17-line addition to `csrc/mp_mem_kernels.cu`: the two offset-calculator branches (global + local) for the fused axis plus the dispatch case. The Python side needs nothing (the `KVFormatSpec` registry already maps the axes). Validated on `vllm/vllm-openai:nightly`: **0 format errors, stores commit, 12/12 hits, coherent hit outputs, composed decode c1 122 / c8 458.** It's **being prepared as an upstream PR to LMCache** — the project lacks this kernel even on dev.
-
-### Gotchas that will waste your day (LMCache edition)
-
-Each of these cost hours. In launch order:
-
-1. **flashinfer JIT eats all host RAM.** Any non-nightly vLLM image on `sm_120` **JIT-compiles the CUTLASS fp4 GEMM on the first forward pass** with unbounded `nvcc` parallelism — multi-GB per job, reads as a mystery "hang" (GPU idle while nvcc grinds) or a whole-host livelock. Cap it: `MAX_JOBS=4` + `FLASHINFER_NUM_COMPILE_JOBS=4`, and **mount a persistent `/root/.cache/flashinfer`** (one ~30-min build, warm forever). The nightly image ships these kernels prebuilt and never shows this.
-2. **Never set `expandable_segments`.** cuMem/VMM memory is **not CUDA-IPC-exportable** ([pytorch #165685](https://github.com/pytorch/pytorch/issues/165685)) — the LMCache sidecar crashes importing the KV handles and never acks, so vLLM's `register_kv_caches` **silently times out at 300s**. This one env var masqueraded as "version skew" for days.
-3. **Disable the worker reaper: `--worker-reap-timeout-seconds 0`.** LMCache's MP server reaps worker registrations (default 120s) and the worker heartbeat starts *lazily* on first store — a long idle/blocked span gets reaped, after which the cache **cannot recover**: `found_count=0`, "Session not found, skipping touch", stores silently dropped. An unrecoverable zombie that looks like an inert cache.
-4. **L1 must exceed the hot working set / 0.8.** LMCache's lookup breaks at the *first* missing chunk, and LRU evicts the oldest session's **head** chunks first → head-miss → full re-store → evicts the next session's head → permanent thrash, **0% hit rate**. Partial caching does **not** degrade gracefully on this hybrid; size L1 to hold the entire hot working set below the 0.8 watermark or it collapses to zero.
-5. **The sidecar holds ~1.4 GB of VRAM that `--gpu-memory-utilization` can't see** (CUDA context + IPC mappings + MTP draft weights). At util 0.94 a burst of concurrent cold prefills OOMs (74 MB free at crash) and kills the engine. **Use 0.93.** This was the *entire* "MTP crashes with LMCache" myth — a mundane burst-OOM, not the scheduler/connector logic wall the upstream issues describe.
-6. **Don't force `FULL_DECODE_ONLY` cudagraphs.** It doesn't cover MTP's verify-step shapes on vLLM 0.24, so spec decode silently runs eager and decode **collapses to c1 46 / c8 179** (vs 118/450). Default cudagraph mode was the entire fix.
-7. **`--chunk-size` must equal the hybrid's unified block size** — **1600** with MTP `ns=3`, **1568** without (discovered, not documented; it's not 16). And `--max-num-batched-tokens` must be `2·chunk−1` (3199 / 3135) — LMCache's MP connector requires batched-tokens ∈ [chunk, 2·chunk).
-8. **The paired `lmcache/vllm-openai:*-cu129` image is CUDA-13-linked but ships no `libcudart.so.13`.** Multi-stage `COPY` it from `nvidia/cuda:13.0.1-runtime-ubuntu24.04` + `ldconfig` (the `lmcache-vllm:fixed` build). `pip install nvidia-cuda-runtime-cu13` does **not** work (PEP 668, then no wheel).
-
----
+This configuration **does not work on stock vLLM**. TurboQuant KV cache and MTP speculative decoding produce garbage output together — a known, unfixed upstream bug ([vllm#40880](https://github.com/vllm-project/vllm/issues/40880), tracked as unsupported in [#40069](https://github.com/vllm-project/vllm/issues/40069)). The open PR that claims to fix it ([#40914](https://github.com/vllm-project/vllm/pull/40914)) **does not work on Blackwell** — it has a bug of its own ([the full story](docs/HISTORY.md#the-bug-nobody-caught)). This repo's image carries #40914 plus the three fixes that make it actually work on `sm_120`, and the benchmarks proving it does. How the config was arrived at — including the "TurboQuant corrupts" misdiagnosis we later reversed — is in [docs/HISTORY.md](docs/HISTORY.md).
 
 ## Quick start
 
@@ -94,14 +40,14 @@ patches target a moving `vllm-openai:nightly`, so the pinned digest is the repro
 
 Then `http://localhost:8020/v1` speaks OpenAI. See [`docs/CONFIG.md`](docs/CONFIG.md) for every flag and why.
 
-> **Want the most battle-tested path, or serving deep-context high-concurrency batches?** fp8 KV on stock nightly remains a documented alternative — see [the status note](#status-turboquant_k8v4-is-the-daily) and the [alternative fp8 config](docs/CONFIG.md#alternative-stock-nightly--fp8-kv). Everything from here down is the TurboQuant path the daily runs.
+> **Want the most battle-tested path, or serving deep-context high-concurrency batches?** fp8 KV on stock nightly remains a documented alternative — see [the status note](docs/HISTORY.md#status-turboquant_k8v4-is-the-daily) and the [alternative fp8 config](docs/CONFIG.md#alternative-stock-nightly--fp8-kv). Everything from here down is the TurboQuant path the daily runs.
 
 ## What's in the patch stack
 
 | patch | what it does |
 |---|---|
 | [`vllm-only.diff`](patches/vllm-only.diff) | Upstream [PR #40914](https://github.com/vllm-project/vllm/pull/40914) (open, unmerged): routes K+1 spec-verify batches through the TurboQuant decode kernel instead of the continuation-prefill path, which was attending only to just-drafted tokens and ignoring cached KV. |
-| [`fix_spec_output.py`](patches/fix_spec_output.py) | **The fix that makes #40914 actually work on Blackwell.** Honors the out-param contract ([details below](#the-bug-nobody-caught)). Without this you get `!!!!!!!`. |
+| [`fix_spec_output.py`](patches/fix_spec_output.py) | **The fix that makes #40914 actually work on Blackwell.** Honors the out-param contract ([details](docs/HISTORY.md#the-bug-nobody-caught)). Without this you get `!!!!!!!`. |
 | [`tq_auto_fallback.py`](patches/tq_auto_fallback.py) | Second upstream gap: the MTP draft runner never inherits `cache_config.cache_dtype`, so TurboQuant layers on the draft path arrive with `"auto"` and crash. Falls back to `$VLLM_TQ_PRESET`. |
 | [`fix_spec_guard.py`](patches/fix_spec_guard.py) | **Third fix — intermittent `!!!!` under concurrency.** #40914's routing guard (`query_start_loc.shape[0] == B + 1`) fails on CUDA-graph **captured** steps because qsl is padded to max batch size ([flagged by @rmarnold on the PR](https://github.com/vllm-project/vllm/pull/40914)) → silent fallback to the buggy path → stale output with **0% draft acceptance**, but only on padded concurrent batch shapes — single-stream lands on exact capture sizes and works, so every simple validation passes while real multi-agent sessions corrupt. Fix: `>=` (B derives from padding-free `num_actual_tokens`; padded tail rows are discarded by the caller). Repro: 3 concurrent ~48K-token streams. |
 | [`tq_splits.py`](patches/tq_splits.py) | Makes TurboQuant's fixed decode KV-split count runtime-tunable (`$VLLM_TQ_KV_SPLITS`). *Tested: leave it at the default 32 — lowering it hurts both single-stream and batched.* |
@@ -110,7 +56,7 @@ Then `http://localhost:8020/v1` speaks OpenAI. See [`docs/CONFIG.md`](docs/CONFI
 
 Hardware: RTX 5090 32 GB (`sm_120`, +4500 MHz mem OC, 600 W) + Ryzen 9 5900X + 64 GB RAM, Ubuntu 24.04.
 Model: [`unsloth/Qwen3.6-27B-NVFP4`](https://huggingface.co/unsloth/Qwen3.6-27B-NVFP4) (4-bit weights) + MTP `ns=3` + vision.
-Tool: [llama-benchy](https://github.com/eugr/llama-benchy) 0.3.8. Both configs, identical invocation (`--pp 512 4096 --tg 128 --concurrency 1 2 4 8 --runs 3`), same box, same session (2026-07-15).
+Tool: [llama-benchy](https://github.com/eugr/llama-benchy) 0.3.8. Both configs, identical invocation (`--pp 512 4096 --tg 128 --concurrency 1 2 4 8 --runs 3`), same box, same session (2026-07-15). Full detail in [bench/RESULTS.md](bench/RESULTS.md).
 
 ### Throughput — decode (tokens/s)
 
@@ -172,59 +118,55 @@ k8v4's unified block size is 2,112 (fp8's is 1,600); it adds 3 padding layers (u
 | **Terminal-Bench 2.1** (8-task subset ×2) | **7/8** pass@2 | matches the fp8 baseline — the KV cache costs no measurable quality |
 | **[tool-eval-bench](https://github.com/SeraphimSerapis/tool-eval-bench) v2.1.0** (84 scenarios, hardmode, 4 trials) | **89.0 ± 0.0** /100 | Hard Mode 80%; deterministic across trials. On the v2.0.6 protocol: **90.0** vs [published](https://github.com/MiaAI-Lab/Unsloth-Qwen3.6-27B-UD-Q8_K_XL_vs_nvidia-Qwen3.6-27B-NVFP4_tools_eval) nvidia NVFP4 **89** / Unsloth Q8 **83** — details in [bench/RESULTS.md](bench/RESULTS.md) |
 
-MTP mean acceptance length ~3.2 of `ns=3` (identical fp8/k8v4). Needle-in-haystack retrieval, `turboquant_k8v4`: **8/8 @9K, 8/8 @20K, 6/6 @40K** — matches fp8 and fixes the 0/8 that `turboquant_4bit_nc`'s 4-bit keys scored (see [status](#status-turboquant_k8v4-is-the-daily)).
+MTP mean acceptance length ~3.2 of `ns=3` (identical fp8/k8v4). Needle-in-haystack retrieval, `turboquant_k8v4`: **8/8 @9K, 8/8 @20K, 6/6 @40K** — matches fp8 and fixes the 0/8 that `turboquant_4bit_nc`'s 4-bit keys scored (see [history](docs/HISTORY.md#status-turboquant_k8v4-is-the-daily)).
 
-## The bug nobody caught
+## Config essentials
 
-vLLM PR #40914 fixes TurboQuant's spec-decode routing. Its new branch ends:
+`./scripts/serve.sh` runs the daily. The load-bearing flags, all explained in [`docs/CONFIG.md`](docs/CONFIG.md):
 
-```python
-attn_out = triton_turboquant_decode_attention(...)
-return attn_out          # ← the bug
-```
+- `--kv-cache-dtype turboquant_k8v4` + `-e VLLM_TQ_PRESET=turboquant_k8v4` (must match) — the 8-bit-K/4-bit-V cache; needs the patched image.
+- `--gpu-memory-utilization 0.94 --max-model-len 160000` — let vLLM profile the 165K pool; don't hand-set `--kv-cache-memory`, don't hand-set `--block-size` (auto-resolves to 2112).
+- `--speculative-config '{"method":"qwen3_5_mtp","num_speculative_tokens":3}'` — MTP, `ns=3`.
+- `--mamba-cache-mode align --enable-prefix-caching --enable-chunked-prefill` — hybrid-model prefix caching.
+- `--reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_xml` — `qwen3_xml` is correct; `hermes` silently drops tool calls.
+- `--limit-mm-per-prompt '{"image":4,"video":0}'` — vision on (~60K tokens of context).
 
-But `TurboQuantImpl.forward()` is invoked as a **mutated-out-param custom op** (`unified_attention_with_output`). Under `FULL_AND_PIECEWISE` CUDA-graph capture, **the return value is discarded** — the caller reads the `output` buffer. So attention output stays stale/zeroed and the model decodes a constant token:
+Model: pass Unsloth's `unsloth/Qwen3.6-27B-NVFP4` with **no** `--quantization` flag (it's compressed-tensors, auto-detected). The box runs a **+4500 MHz memory-only OC** at 600 W — all throughput numbers assume it; see [docs/CONFIG.md#host-notes](docs/CONFIG.md#host-notes).
 
-```
-prompt: "def fib(n):"
-output: "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-```
+## Alternative: LMCache tiered KV cache for multi-agent coding
 
-Every other branch of `forward()` writes the buffer. That one didn't. The fix ([`patches/fix_spec_output.py`](patches/fix_spec_output.py)):
+**Multi-agent coding lives and dies by cache retention, not single-stream throughput.** Eight coding agents sharing one endpoint re-send enormous, near-identical prefixes (system prompt, tool schemas, repo context, growing session history). vLLM's on-GPU prefix cache evicts them the moment the pool fills; a revisit then pays a full **5.8s re-prefill** on a 40K-token session. So we gave vLLM a tiered KV cache via [LMCache](https://github.com/LMCache/LMCache): a **24 GB pinned-RAM L1** + **150 GB SSD L2** that survives eviction *and* container restarts.
 
-```python
-if output.ndim == 3:
-    output[:N] = attn_out.to(output.dtype)
-else:
-    output[:N] = attn_out.reshape(N, -1).to(output.dtype)
-return output
-```
+**It works, and it composes with MTP speculative decoding** — the combination the upstream trackers list as unsupported ([vLLM #39809](https://github.com/vllm-project/vllm/issues/39809), [#26201](https://github.com/vllm-project/vllm/issues/26201) "mamba prefix caching + spec decode: TODO", [LMCache #2845](https://github.com/LMCache/LMCache/issues/2845)). The composed profile decodes within **−3..−9%** of the plain MTP daily and turns a cold-session revisit from 5.8s into **sub-1.4s**:
 
-This is almost certainly why the PR passed on the author's Ampere box (the eager/piecewise path *does* consume the return value) and fails on Blackwell, where full CUDA-graph capture is the default.
+| decode t/s | c1 | c2 | c4 | c8 |
+|---|---|---|---|---|
+| daily — MTP, no cache | 126 | 247 | 449 | **488** |
+| MTP + LMCache — composed on vLLM 0.24 (no patch) | 118 | 224 | 421 | 450 |
+| MTP + LMCache — nightly + [our format-10 patch](patches/README.md#lmcache-format-10-kernel-patch-separate-project) | 122 | 240 | 428 | **458** |
 
-## Things that DON'T work (so you don't repeat them)
+The tiered-hit ladder (40K-token sessions): on-GPU ≈ instant → **L1 RAM hit ~0.5s** → **L2 SSD hit ~2.7s** → **cold re-prefill 5.8s**. Composed revisit walls land **0.64–1.4s** across the tiers. 150 GB of L2 is **~2M tokens of session history that never re-prefills and persists across restarts** — a 10×40K working set (29 GB > the 24 GB L1) spills to SSD with **zero thrash**, all 32 post-warm lookups hit. Prefill holds up too — composed sweep (batched 3199): **9.1K @2K / 9.0K @8K / 8.2K @16K / 7.0K @32K / 5.5K @64K / 4.0K @115K** t/s, ≈−10% vs the daily's batched-8192 path at matched depth. Pool: 124K tokens composed (nightly + patch), 163K no-MTP.
 
-| tried | verdict |
-|---|---|
-| **`turboquant_4bit_nc`** (4-bit Keys) | **Rejected — the old headline config.** 4-bit keys destroy long-context retrieval: **0/8** on fair needle-in-haystack (vs k8v4's 8/8). Its ~47.8K tok/GiB density is real but worthless if the model can't find what it stored. `turboquant_k8v4` (8-bit K / 4-bit V) is the fix. |
-| **`nvfp4` native KV cache** | **Won't load.** `head_size=256` has no FlashInfer nvfp4 backend on `sm_120` — needs unmerged [vLLM PR #44389](https://github.com/vllm-project/vllm/pull/44389). Projected density ≈47–48K tok/GiB, **unmeasured**. |
-| **DFlash** speculative decoding | **Works, but boxed in — measured and rejected.** Requires a full source build of [PR #40898](https://github.com/vllm-project/vllm/pull/40898) (SWA draft support). Real result with the [z-lab draft](https://huggingface.co/z-lab/Qwen3.6-27B-DFlash): **185 t/s single-stream (2.0× its no-spec baseline — a bigger uplift than MTP's ~1.6×)**… at the cost of **21K max context** (3.3 GB draft + bf16-KV-only: fp8 trips the branch's hybrid page-size assert, and the branch predates NVFP4-`lm_head` support so quantized targets are limited), **zero batch scaling** (c4 aggregate ≈ c1), and ~3× slower prefill. MTP's draft head lives *inside* the weights, costs ~0, and keeps 245K context. Revisit if #40898 merges into nightly. |
-| `nvidia/Qwen3.6-27B-NVFP4` (official) | ~2.6× slower prefill, 20–25% slower decode, fatter checkpoint (max ~150K ctx), MTP crashes at moderate batch. Community quants win. |
-| `--async-scheduling` | c4 552 → 526. No. |
-| [froggeric fixed chat templates](https://huggingface.co/froggeric/Qwen-Fixed-Chat-Templates) | Bundled template already scores **4/4** on a behavioural probe (single + parallel tool calls, chat→tool→chat, chat-after-tools). Zero measured gain. |
-| `--max-num-batched-tokens 4096` | **~4× prefill regression** (9.6K → 2.6K t/s) for +28K ctx. Keep 8192. |
-| `VLLM_TQ_KV_SPLITS` < 32 | Hurts *both* c1 (139→132) and c8. Not the batching bottleneck. |
-| `VLLM_NVFP4_GEMM_BACKEND=flashinfer-cutlass` | Already the nightly default. No-op. |
+- **LMCache (MTP, no vision)** is the recommended setup for **multi-agent coding** — the profile runs `image:0`, trading vision for cache retention that pays for itself the moment two agents share a prefix. It uses **fp8 KV**: LMCache's persistence tier only round-trips faithfully with fp8 (the k8v4 attempt is a documented non-ship — [details](docs/LMCACHE.md#lmcache--k8v4-composes-but-the-persisted-tier-is-lossy--not-shipped)).
+- **The `turboquant_k8v4` daily** stays the **vision-capable** pick for a single interactive user, where there's no shared prefix to retain and single-stream latency is what you feel — and it's now *faster* single-stream than fp8.
 
-## ⚠️ Gotchas that will waste your day
+**Serve it:** [`scripts/serve-lmcache.sh`](scripts/serve-lmcache.sh) (port 8030). Every flag, the failure that earned it, and the LMCache-specific gotchas (flashinfer JIT, `expandable_segments`, the worker reaper, L1 sizing, the format-10 kernel patch) are in [`docs/LMCACHE.md`](docs/LMCACHE.md).
 
-1. **vLLM's prefix-cache metric lies on this model.** `vllm:prefix_cache_hits_total` and the "Prefix cache hit rate: 0.0%" log line report **0% while the cache is working**. Verified by timing: repeated 9,827-token prompt → **1.16s cold, 0.23s warm (5×)**. Don't debug the counter — time a repeated prompt ([`bench/prefix_probe.py`](bench/prefix_probe.py)).
-2. **Always validate coherence via raw `/v1/completions`.** The chat endpoint's reasoning parser swallows degenerate output as *empty content*, so a broken model looks "fine but quiet". Degeneration tells: constant-token output, or **flat 100% MTP acceptance** (means draft and verify are locked in step).
-3. **Re-verify after every vLLM bump.** These patches are version-sensitive; a nightly that moves `turboquant_attn.py` will silently fail to apply or, worse, apply to shifted code.
-4. **`--kv-cache-memory` "fully utilize" hint OOMs at 240K+** — it ignores warmup transients. Use `--gpu-memory-utilization` and let vLLM profile.
-5. **util 0.95 crashes under concurrent cold starts.** A burst of ~8 simultaneous fresh prompts OOMs the GDN prefill kernel (~96 MiB transient) and **kills the engine** — `expandable_segments` doesn't save it, and a ramping benchmark (llama-benchy) never trips it, so you find out in production. Run **0.94**, burst-verified.
-6. **TurboQuant's real single-prompt ceiling is below the KV pool size.** `_continuation_prefill` dequantizes the *entire cached prefix* to bf16 (~4 KB/token transient) — a single prompt far past the cap allocates hundreds of MB of scratch that isn't there and **OOM-kills the engine** mid-prefill. Cap `--max-model-len 160000` against the 165,274-token pool. The pool above the cap serves concurrency, and note each active sequence also pins a fixed GDN/Mamba state (~13% of pool), so 8 concurrent seqs ≈ pool-full regardless of prompt length.
-7. **Validate under *concurrency*, not just single-stream.** The guard bug (patch 4) passes every single-stream test — needle, benchmarks, tool evals — and corrupts only on padded concurrent batch shapes. If we'd load-tested with 3 parallel long-context streams on day one, it would have cost an hour instead of a production incident.
+## Gotchas that bite during setup
+
+1. **flashinfer JIT eats all host RAM (non-nightly images).** Any non-nightly vLLM image on `sm_120` **JIT-compiles the CUTLASS fp4 GEMM on the first forward pass** with unbounded `nvcc` parallelism — multi-GB per job, reads as a mystery "hang" (GPU idle while nvcc grinds) or a whole-host livelock. Cap it: `MAX_JOBS=4` + `FLASHINFER_NUM_COMPILE_JOBS=4`, and **mount a persistent `/root/.cache/flashinfer`** (one ~30-min build, warm forever). The nightly image ships these kernels prebuilt and never shows this.
+2. **vLLM's prefix-cache metric lies on this model.** `vllm:prefix_cache_hits_total` and the "Prefix cache hit rate: 0.0%" log line report **0% while the cache is working**. Verified by timing: repeated 9,827-token prompt → **1.16s cold, 0.23s warm (5×)**. Don't debug the counter — time a repeated prompt ([`bench/prefix_probe.py`](bench/prefix_probe.py)).
+3. **Always validate coherence via raw `/v1/completions`.** The chat endpoint's reasoning parser swallows degenerate output as *empty content*, so a broken model looks "fine but quiet". Degeneration tells: constant-token output, or **flat 100% MTP acceptance** (means draft and verify are locked in step).
+4. **Re-verify after every vLLM bump.** These patches are version-sensitive; a nightly that moves `turboquant_attn.py` will silently fail to apply or, worse, apply to shifted code.
+5. **`--kv-cache-memory` "fully utilize" hint OOMs at 240K+** — it ignores warmup transients. Use `--gpu-memory-utilization` and let vLLM profile.
+6. **util 0.95 crashes under concurrent cold starts.** A burst of ~8 simultaneous fresh prompts OOMs the GDN prefill kernel (~96 MiB transient) and **kills the engine** — `expandable_segments` doesn't save it, and a ramping benchmark (llama-benchy) never trips it, so you find out in production. Run **0.94**, burst-verified.
+7. **TurboQuant's real single-prompt ceiling is below the KV pool size.** `_continuation_prefill` dequantizes the *entire cached prefix* to bf16 (~4 KB/token transient) — a single prompt far past the cap allocates hundreds of MB of scratch that isn't there and **OOM-kills the engine** mid-prefill. Cap `--max-model-len 160000` against the 165,274-token pool. The pool above the cap serves concurrency, and note each active sequence also pins a fixed GDN/Mamba state (~13% of pool), so 8 concurrent seqs ≈ pool-full regardless of prompt length.
+8. **Validate under *concurrency*, not just single-stream.** The guard bug (patch 4) passes every single-stream test — needle, benchmarks, tool evals — and corrupts only on padded concurrent batch shapes. If we'd load-tested with 3 parallel long-context streams on day one, it would have cost an hour instead of a production incident.
+
+## How we got here / what didn't work
+
+- **[docs/HISTORY.md](docs/HISTORY.md)** — how the config was arrived at. For weeks we shipped fp8 and treated the TurboQuant image as "corrupting"; a ~30-round investigation traced the `!!!!` to a noisy soak-test detector plus 4-bit-*key* quality loss, not a bug. Includes [the one real bug](docs/HISTORY.md#the-bug-nobody-caught) — a discarded out-param under CUDA-graph capture — that the patch stack genuinely fixes.
+- **[docs/REJECTED.md](docs/REJECTED.md)** — everything tried and rejected, with the number that killed it: `turboquant_4bit_nc` (0/8 retrieval), nvfp4-native (won't load), DFlash, the official NVIDIA quant, `--async-scheduling`, `VLLM_TQ_KV_SPLITS`, the froggeric template, and LMCache+k8v4. Read it before "improving" the config. Benchmark-only rejects with their deltas are in [bench/RESULTS.md](bench/RESULTS.md#rejected-with-numbers-so-nobody-redoes-them).
 
 ## License
 

@@ -4,7 +4,7 @@ The serve command lives in [`../scripts/serve.sh`](../scripts/serve.sh). This ex
 
 ## Recommended: clean TQ image + turboquant_k8v4 (our daily)
 
-**As of 2026-07-15 this is what we run in production.** The daily is the patched TurboQuant image with **`turboquant_k8v4`** KV (8-bit Keys / 4-bit Values): faster single-stream than fp8, **+21% pool** (165K vs 136K tokens, in *less* KV memory), and equal long-context retrieval. It replaces our earlier fp8 daily — the "TurboQuant corrupts" call was a misdiagnosis (a noisy soak-test detector + 4-bit-*key* quality loss), fixed by keeping keys at 8 bits. See the [status note](../README.md#status-turboquant_k8v4-is-the-daily). fp8 KV stays the [documented alternative](#alternative-stock-nightly--fp8-kv) for deep-context high-concurrency batch serving.
+**As of 2026-07-15 this is what we run in production.** The daily is the patched TurboQuant image with **`turboquant_k8v4`** KV (8-bit Keys / 4-bit Values): faster single-stream than fp8, **+21% pool** (165K vs 136K tokens, in *less* KV memory), and equal long-context retrieval. It replaces our earlier fp8 daily — the "TurboQuant corrupts" call was a misdiagnosis (a noisy soak-test detector + 4-bit-*key* quality loss), fixed by keeping keys at 8 bits. See the [status note](HISTORY.md#status-turboquant_k8v4-is-the-daily). fp8 KV stays the [documented alternative](#alternative-stock-nightly--fp8-kv) for deep-context high-concurrency batch serving.
 
 The flags that make k8v4 the daily (everything else — MTP, parsers, sampling, caches, host notes — is shared with the fp8 alternative and detailed below):
 

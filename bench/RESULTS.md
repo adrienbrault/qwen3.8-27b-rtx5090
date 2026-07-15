@@ -6,7 +6,7 @@ these throughput numbers run above a stock 5090 — see [../docs/CONFIG.md](../d
 Model: `unsloth/Qwen3.6-27B-NVFP4` + MTP `ns=3` + vision, unless noted.
 Tool: [llama-benchy](https://github.com/eugr/llama-benchy) — *not* ad-hoc curl loops, which are noisy enough to produce wrong conclusions.
 
-> **Status (2026-07-15):** the daily is now the patched TurboQuant image with **`turboquant_k8v4`** KV (8-bit Keys / 4-bit Values). This reverses the earlier "fp8 is the daily, TurboQuant corrupts" call: there was never a corruption bug — the `!!!!` was a noisy soak-test degeneracy detector plus genuine 4-bit-*key* quality loss (`turboquant_4bit_nc`), both resolved by keeping keys at 8 bits ([full story](../README.md#status-turboquant_k8v4-is-the-daily)). `turboquant_4bit_nc` is a rejected variant (0/8 retrieval). fp8 stays the alternative for deep-context high-concurrency batch serving.
+> **Status (2026-07-15):** the daily is now the patched TurboQuant image with **`turboquant_k8v4`** KV (8-bit Keys / 4-bit Values). This reverses the earlier "fp8 is the daily, TurboQuant corrupts" call: there was never a corruption bug — the `!!!!` was a noisy soak-test degeneracy detector plus genuine 4-bit-*key* quality loss (`turboquant_4bit_nc`), both resolved by keeping keys at 8 bits ([full story](../docs/HISTORY.md#status-turboquant_k8v4-is-the-daily)). `turboquant_4bit_nc` is a rejected variant (0/8 retrieval). fp8 stays the alternative for deep-context high-concurrency batch serving.
 
 ## KV cache: turboquant_k8v4 (daily) vs fp8
 
