@@ -12,6 +12,7 @@ docker build -t vllm-turboquant:patched .
 | `fix_spec_output.py` | **Makes #40914 actually work on Blackwell.** It returned the kernel tensor instead of writing the out-param buffer; under full CUDA-graph capture the return value is discarded → constant-token garbage. |
 | `tq_auto_fallback.py` | MTP draft runner never inherits `cache_config.cache_dtype` (arrives `"auto"`, crashes). Falls back to `$VLLM_TQ_PRESET`. |
 | `tq_splits.py` | Exposes TurboQuant's fixed decode KV-split count as `$VLLM_TQ_KV_SPLITS`. Default 32 is optimal — this exists so you can verify that, not change it. |
+| [PR #44993](https://github.com/vllm-project/vllm/pull/44993) graft (`v1/structured_output/__init__.py`, `v1/core/sched/scheduler.py`) | **Structured output that survives thinking.** With a reasoning model, `response_format` json_schema + thinking-on returned **empty `content`** — the schema JSON leaked into `reasoning_content`. `should_advance`'s delta window (`num_computed_tokens − num_output_placeholders`) skips `</think>` when MTP rejects drafts, so the grammar never re-engages. Open, approved; stacked on merged #44297. Two pure-Python files. Needs the launch flag `--structured-outputs-config '{"backend":"xgrammar","reasoning_parser":"qwen3","enable_in_reasoning":false}'`. Lifted tool-eval **85→89**. |
 
 **After any vLLM nightly bump**: re-verify. These patch a file (`vllm/v1/attention/backends/turboquant_attn.py`)
 that upstream actively moves. A failed `patch` fails the build loudly; a *shifted* apply could

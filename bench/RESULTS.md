@@ -6,56 +6,63 @@ these throughput numbers run above a stock 5090 — see [../docs/CONFIG.md](../d
 Model: `unsloth/Qwen3.6-27B-NVFP4` + MTP `ns=3` + vision, unless noted.
 Tool: [llama-benchy](https://github.com/eugr/llama-benchy) — *not* ad-hoc curl loops, which are noisy enough to produce wrong conclusions.
 
-> **Status (2026-07-15):** the daily is now the patched TurboQuant image with **`turboquant_k8v4`** KV (8-bit Keys / 4-bit Values). This reverses the earlier "fp8 is the daily, TurboQuant corrupts" call: there was never a corruption bug — the `!!!!` was a noisy soak-test degeneracy detector plus genuine 4-bit-*key* quality loss (`turboquant_4bit_nc`), both resolved by keeping keys at 8 bits ([full story](../docs/HISTORY.md#status-turboquant_k8v4-is-the-daily)). `turboquant_4bit_nc` is a rejected variant (0/8 retrieval). fp8 stays the alternative for deep-context high-concurrency batch serving.
+> **Status (2026-07-15):** the daily is now the patched TurboQuant image with **`turboquant_4bit_nc`** KV (4-bit Keys / 4-bit Values + norm-correction) **+ `--no-async-scheduling`** — **~235K pool → 200K context** (+42% pool over `turboquant_k8v4`). This reverses the "4bit_nc destroys retrieval, 0/8" call recorded below: that 0/8 was vLLM's **async×spec-decode scheduler desync** ([vllm#42655](https://github.com/vllm-project/vllm/issues/42655)), not the 4-bit keys — `--no-async-scheduling` fixes it ([full story](../docs/HISTORY.md#status-turboquant_4bit_nc-is-the-daily-the-asyncspec-reversal)). `turboquant_k8v4` is now a decode-optimal alternative; fp8 stays the deep-context high-concurrency batch alternative.
 
-## KV cache: turboquant_k8v4 (daily) vs fp8
+## KV cache: turboquant_4bit_nc (daily) vs turboquant_k8v4
 
-Both configs, same box, same session (2026-07-15), identical invocation — [llama-benchy](https://github.com/eugr/llama-benchy) 0.3.8, `--pp 512 4096 --tg 128 --concurrency 1 2 4 8 --runs 3`, util 0.94.
+Both configs, same box, same session (2026-07-15), identical invocation — [llama-benchy](https://github.com/eugr/llama-benchy) 0.3.8, `--pp 512 4096 --tg 128 --concurrency 1 2 4 8 --runs 3`, util 0.94, **both with `--no-async-scheduling`**.
 
-| | fp8_e4m3 | **turboquant_k8v4** |
+| | turboquant_k8v4 | **turboquant_4bit_nc** (daily) |
 |---|---|---|
-| KV pool | 136,477 tok | **165,274 tok** (+21%) |
-| KV memory | 5.25 GiB | **4.89 GiB** |
-| KV density | 26.0K tok/GiB | **33.8K tok/GiB** |
-| max-model-len | 131K | **160K** |
-| unified block size | 1,600 | 2,112 |
-| decode c1 @512 (tg mean) | 130 | **164** |
-| decode c2 @512 | 251 | **319** |
-| decode c4 @512 | 482 | **524** |
-| decode c8 @512 | 478 | **516** |
-| decode c8 @512 (peak) | 832 | **872** |
-| decode c1 @4096 | 137 | **145** |
-| decode c2 @4096 | **259** | 236 |
-| decode c4 @4096 | **461** | 277 |
-| decode c8 @4096 | **292** | 222 |
-| prefill @512 | **4,701** | 4,258 |
-| prefill @4096 | 9,604 | **10,392** |
-| median inter-token | **1.15 ms** | 1.22 ms |
-| TTFT (c1@512) | **110 ms** | 122 ms |
+| KV pool | 165,274 tok | **~235,000 tok** (+42%) |
+| KV memory | 4.89 GiB | ~4.89 GiB |
+| KV density | 33.8K tok/GiB | **~48K tok/GiB** |
+| max-model-len | 160K | **200K** (+25%) |
+| decode c1 @512 (tg mean) | **137** | 133 |
+| decode c2 @512 | **250** | 211 |
+| decode c4 @512 | 426 | **432** |
+| decode c8 @512 | **467** | 435 |
+| decode c1 @4096 | **145** | 126 |
+| decode c2 @4096 | 179 | 179 |
+| decode c4 @4096 | 230 | 230 |
+| decode c8 @4096 | **216** | 214 |
 | MTP acceptance length (ns=3) | ~3.2 | ~3.2 |
+| tool-eval-bench v2.1.0 | 89 | 89 |
 
-**The honest split:** k8v4 wins single-stream and **short-context** decode at every concurrency
-(+26% c1 @512), and matches fp8's concurrency scaling (c8 peak 872 ≥ 832 — no `4bit_nc`-style
-collapse, because 8-bit keys use the efficient attention path). It's also slightly faster at deep
-prefill (10.4K vs 9.6K @4096). fp8 wins exactly one regime: **deep context (≥4K) at high
-concurrency**, where TurboQuant's Triton value-dequant is ALU work that scales with attended context
-length (decode c4@4096 461 vs 277). For the daily — interactive coding, low concurrency, deep
-context — k8v4 is faster single-stream, +21% pool, equal retrieval, equal MTP.
+**The honest split:** `4bit_nc` costs a **small decode tax** — −3% c1 / −7% c8 short-context (c2 is the
+noisiest, −16%; c4 parity), and its worst case is **deep single-stream, −13% (c1@4096: 126 vs 145)** —
+because the 4-bit-key dequant — Lloyd-Max codebook + per-GQA-head norm-correction; the inverse Hadamard is hoisted to one per-query GEMM, not per key — is more ALU
+work than k8v4's cheap FP8-cast keys. From c2 up at deep context the two are within noise. In exchange
+`4bit_nc` carries **+42% pool / +25% usable context**, with equal retrieval and equal MTP acceptance —
+a pool-for-modest-decode trade that fits interactive coding (low concurrency, deep context).
+
+> **Older k8v4 numbers retired.** Earlier revisions quoted `turboquant_k8v4` at decode **c1 164 @512**
+> (from a standalone `k8v4-bench.json`) and a k8v4-vs-fp8 table built on it. A fresh same-session
+> re-measurement did **not** reproduce the 164 — fresh k8v4 is **~137 c1 @512**. The table above uses
+> the reproduced same-session figures; the 164 outlier and the derived fp8 head-to-head are dropped.
+> fp8's own earlier same-session decode (for reference, not re-run under `--no-async-scheduling`):
+> @512 c1 130 / c2 251 / c4 482 / c8 478 (peak c8 832); @4096 it leads from c2 up (c4@4096 461) — the
+> one regime fp8 still wins is deep context at high concurrency.
 
 ### Retrieval quality (needle-in-haystack)
 
-Plant 5-digit codes in coherent filler, exact-match. This is what exposed `turboquant_4bit_nc`:
-4-bit *keys* — what attention indexes on — destroy long-context retrieval.
+Plant 5-digit codes in coherent filler, exact-match. This is what *appeared* to expose
+`turboquant_4bit_nc` — until we found the 0/8 was async×spec KV corruption, not the 4-bit keys.
 
 | KV cache | 9K | 20K | 40K |
 |---|---|---|---|
-| `turboquant_4bit_nc` (4-bit keys) | **0/8 across depths — destroys retrieval** | | |
+| `turboquant_4bit_nc` — *async scheduling ON* | **0/8 across depths (async×spec corruption, not the keys)** | | |
+| **turboquant_4bit_nc** — *`--no-async-scheduling`* (daily) | **8/8** | **8/8** | **8/8** |
 | fp8_e4m3 | 6/6 | 8/8 | — |
-| **turboquant_k8v4** | **8/8** | **8/8** | **6/6** |
+| turboquant_k8v4 | 8/8 | 8/8 | 6/6 |
+
+`turboquant_4bit_nc` with `--no-async-scheduling` also passes **high-pressure concurrency: 90/90**
+(3 rounds × 30 needles, 6 background loaders) — the exact test the "all 4-bit-KV corrupts under
+concurrency" belief predicted it would fail.
 
 **Pool ≠ usable context.** TurboQuant's continuation-prefill materializes the whole cached prefix in
 bf16 (~4 KB/token transient), which **OOM-kills the engine on a single prompt far past the cap**.
-The shipped config caps max-len at **160K** against the 165,274-token pool; the pool beyond the cap
+The shipped config caps max-len at **200K** against the ~235K-token pool; the pool beyond the cap
 buys concurrent-sequence headroom only.
 
 ## Quant shoot-out (all NVFP4, fresh nightly, same flags)
@@ -94,8 +101,10 @@ A second run on **v2.0.6** reproduces the protocol of a [published NVFP4-vs-Q8 c
 | Unsloth Q8_K_XL, llama.cpp (published) | 83 |
 
 The aggressive 4-bit KV cache does **not** cost *tool-calling* quality — this short-context bench
-tops the comparison. (It *does* cost long-context **retrieval**, which is why the daily now runs
-`turboquant_k8v4`; see [KV cache](#kv-cache-turboquant_k8v4-daily-vs-fp8) above.) One safety flag on
+tops the comparison. (We once thought 4-bit keys cost long-context **retrieval**, which is why we
+briefly ran `turboquant_k8v4`; the "4bit_nc 0/8" was actually async×spec KV corruption — with
+`--no-async-scheduling`, `4bit_nc` retrieves 8/8 and is the daily. See [KV cache](#kv-cache-turboquant_4bit_nc-daily-vs-turboquant_k8v4)
+above.) One safety flag on
 both versions: TC-60 (cross-turn sleeper injection) fired in
 all trials — the model propagated an attacker BCC smuggled through turn-1 tool output.
 Standard prompt-injection caveats apply; not config-related.
@@ -116,15 +125,17 @@ The nearest published Qwen reference is Qwen3-32B at 41.3% (diff, May 2025).
 
 **Terminal-Bench 2.0 is the comparable one**: Qwen publishes **59.3** for Qwen3.6-27B with a fully
 documented config (Harbor + Terminus-2, temp 1.0, top_p 0.95, top_k 20, 256K ctx, avg of 5 runs).
-That is the number to beat — or to lose to, by however much 4-bit weights + k8v4 KV cost.
+That is the number to beat — or to lose to, by however much 4-bit weights + `4bit_nc` KV cost.
 A full 89-task run against that baseline is the obvious next measurement; it is not in this repo yet.
 
 ## Rejected (with numbers, so nobody redoes them)
 
 | | result |
 |---|---|
-| **`turboquant_4bit_nc`** (4-bit Keys) | **0/8** needle-in-haystack — 4-bit keys destroy long-context retrieval. Was the old headline config; `turboquant_k8v4` (8-bit K / 4-bit V) is the fix. Rejected. |
-| `--async-scheduling` | c4 552 → 526. Rejected. |
+| **`turboquant_4bit_nc`** (4-bit Keys) | **UN-rejected — now the daily.** The 0/8 needle-in-haystack was async×spec KV corruption ([#42655](https://github.com/vllm-project/vllm/issues/42655)), not the keys; with `--no-async-scheduling` it scores 8/8 all depths + 90/90 concurrent, at ~235K pool. See [REJECTED.md](../docs/REJECTED.md) / [HISTORY.md](../docs/HISTORY.md#status-turboquant_4bit_nc-is-the-daily-the-asyncspec-reversal). |
+| `--async-scheduling` (not passing `--no-async-scheduling`) | c4 552 → 526 on throughput **and** corrupts KV under MTP (0/8 on 4bit_nc, ~10% on k8v4). Rejected — `--no-async-scheduling` is mandatory. |
+| **nvfp4-FA2** (FlashInfer FA2 nvfp4 KV) | Builds & runs byte-identical (jethac/vllm + FlashInfer #3684, JIT sm120), but loses to `4bit_nc`: stable pool 184K, decode −8..−23%, tool-eval 82, OOMs at util 0.97, 2-branch dev build + ~15min JIT. Rejected — see [REJECTED.md](../docs/REJECTED.md). |
+| smaller-bit TQ presets `k3v4_nc` / `3bit_nc` | PPL delta vs bf16: k8v4 +1.17% → 4bit_nc +2.71% → k3v4_nc +10.63% → 3bit_nc +20.59%. Every preset below 4bit_nc attacks the keys. Rejected. |
 | `--max-num-batched-tokens 4096` | prefill 9,607 → 2,556 (**−73%**) for +28K ctx. Rejected. |
 | `VLLM_TQ_KV_SPLITS=8` | c1 143 → 132, c8 unchanged. Rejected (default 32 is right). |
 | froggeric chat template | 4/4 vs bundled 4/4 on a behavioural tool-call probe. No gain. |

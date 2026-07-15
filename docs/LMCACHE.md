@@ -2,7 +2,7 @@
 
 The launch command lives in [`../scripts/serve-lmcache.sh`](../scripts/serve-lmcache.sh). This explains it. For the *why-at-all* and the benchmark numbers, see the [README section](../README.md#alternative-lmcache-tiered-kv-cache-for-multi-agent-coding).
 
-**When to run this instead of the [k8v4 daily](CONFIG.md#recommended-clean-tq-image--turboquant_k8v4-our-daily):** multi-agent coding, where several agents share large near-identical prefixes and cache retention beats single-stream latency. The profile runs **no vision** (`image:0`) — that's the one capability it gives up vs the daily. It uses **fp8 KV**, not the daily's k8v4: LMCache's persistence tier only round-trips faithfully with fp8 ([why](#lmcache--k8v4-composes-but-the-persisted-tier-is-lossy--not-shipped)).
+**When to run this instead of the [TurboQuant daily](CONFIG.md):** multi-agent coding, where several agents share large near-identical prefixes and cache retention beats single-stream latency. The profile runs **no vision** (`image:0`) — that's the one capability it gives up vs the daily. It uses **fp8 KV**, not the daily's TurboQuant KV: LMCache's persistence tier only round-trips faithfully with fp8 ([why](#lmcache--k8v4-composes-but-the-persisted-tier-is-lossy--not-shipped); the daily's `turboquant_4bit_nc` packs even tighter than the k8v4 tested there, so it would be lossier still).
 
 Every ingredient below was earned by a failure. Removing any one of them reintroduces a specific, documented break.
 
@@ -103,7 +103,7 @@ Identical to the daily — see [CONFIG.md](CONFIG.md) for each. `--mamba-cache-m
 
 ## LMCache + k8v4: composes, but the persisted tier is lossy — not shipped
 
-The daily's `turboquant_k8v4` KV composes with LMCache in the lab, but its **persisted (L2 SSD) tier is not bit-faithful** — so this profile stays **fp8-only**.
+`turboquant_k8v4` KV (the prior daily; the current daily's `turboquant_4bit_nc` packs tighter still) composes with LMCache in the lab, but its **persisted (L2 SSD) tier is not bit-faithful** — so this profile stays **fp8-only**.
 
 - **It builds and runs.** The clean TQ image already ships lmcache 0.5.1; graft the format-10 `c_ops.so` from the [fmt10 build](../patches/lmcache-0.5.1-format10-NL_X_NB_NH_BS_TWO_HS.patch) (identical ABI, single file, no recompile). It launches, composes with MTP, stores land (0 format-10 errors), and the L2 SSD tier fills.
 - **But the L2 reload corrupts long-context retrieval.** After a container restart LMCache reloads 16–21K tokens in ~26 ms and the output stays fully coherent — yet planted long-context needles **vanish** (measured **7/7 miss** across two needles; a fresh prefill retrieves every time; the sidecar log confirms LMCache served the reload). Root cause: the format-10 transfer kernel copies bytes for the standard `[NB, NH, BS, 2·HS=512]` fp8/bf16 layout, but k8v4 packs `[…, 262]` (8-bit K + 4-bit V + scales) — the stride mismatch corrupts the L2 serialization round-trip. Coherent-but-lossy is exactly the failure that kills long-context coding.
