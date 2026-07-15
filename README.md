@@ -1,25 +1,33 @@
-# Qwen3.6-27B on a single RTX 5090 — 150K context, 4-bit KV, speculative decoding
+# Qwen3.6-27B on a single RTX 5090 — 165K KV pool, 8-bit-K/4-bit-V cache, speculative decoding
 
-Serving **Qwen3.6-27B with 150K context (222K-token KV pool), MTP speculative decoding, and vision** on one 32 GB consumer GPU (RTX 5090, Blackwell `sm_120`).
+Serving **Qwen3.6-27B with a 165K-token KV pool (160K usable context), MTP speculative decoding, and vision** on one 32 GB consumer GPU (RTX 5090, Blackwell `sm_120`).
 
-The interesting part: this configuration **does not work on stock vLLM**. TurboQuant 4-bit KV cache and MTP speculative decoding produce garbage output together — a known, unfixed upstream bug ([vllm#40880](https://github.com/vllm-project/vllm/issues/40880), tracked as unsupported in [#40069](https://github.com/vllm-project/vllm/issues/40069)). The open PR that claims to fix it ([#40914](https://github.com/vllm-project/vllm/pull/40914)) **does not work on Blackwell** — it has a bug of its own ([the full story](#the-bug-nobody-caught)).
+The interesting part: this configuration **does not work on stock vLLM**. TurboQuant KV cache and MTP speculative decoding produce garbage output together — a known, unfixed upstream bug ([vllm#40880](https://github.com/vllm-project/vllm/issues/40880), tracked as unsupported in [#40069](https://github.com/vllm-project/vllm/issues/40069)). The open PR that claims to fix it ([#40914](https://github.com/vllm-project/vllm/pull/40914)) **does not work on Blackwell** — it has a bug of its own ([the full story](#the-bug-nobody-caught)).
 
 This repo contains the patches that make it work, and the benchmarks proving it does.
 
 ```
-         max-len   decode c1   decode c4   decode c8   prefill @4K
-fp8       131K       129 t/s     492 t/s    868 t/s      9,607 t/s   ← daily driver (stable)
-TQ 4bit   150K       143 t/s     552 t/s    540 t/s     10,222 t/s   ← experimental (see status)
+                  max-len   decode c1   decode c4   decode c8   prefill @4K   KV density
+turboquant_k8v4   160K       164 t/s     524 t/s     516 t/s     10,392 t/s   33.8K tok/GiB  ← daily
+fp8_e4m3          131K       130 t/s     482 t/s     478 t/s      9,604 t/s   26.0K tok/GiB  ← alt: deep-ctx batch
 ```
-*Context shown is usable `--max-model-len`, not raw KV-pool size. TurboQuant's continuation-prefill dequantizes the whole cached prefix to bf16 (~4 KB/token transient), so a single prompt past ~160K **OOM-kills the engine** — its 222K-token pool @ util 0.94 / max-len 150K buys concurrency headroom, not longer prompts (147K verified). fp8 fits 137.6K @ 0.94; we cap it at 131K for headroom. See [CONFIG.md](docs/CONFIG.md).*
+*Decode is @512 tg-throughput mean (pure decode). `turboquant_k8v4` (8-bit Keys / 4-bit Values) wins single-stream and short-context at every concurrency; the one regime fp8 wins is **deep context (≥4K) at high concurrency** — see [Benchmarks](#benchmarks). Context shown is usable `--max-model-len`, not raw KV-pool size: the 165,274-token pool @ util 0.94 caps at max-len 160K because TurboQuant's continuation-prefill dequantizes the whole cached prefix to bf16 (~4 KB/token transient), so a single prompt far past the cap **OOM-kills the engine** — pool headroom buys concurrency, not longer prompts. fp8 fits 136,477 tokens; we cap it at 131K. See [CONFIG.md](docs/CONFIG.md).*
 
 ---
 
-## Status — 2026-07-13: fp8 is the daily; the TurboQuant image is experimental
+## Status: turboquant_k8v4 is the daily
 
-**We now run stock `vllm/vllm-openai:nightly` with `--kv-cache-dtype fp8_e4m3` as our daily driver, and treat the patched TurboQuant image below as experimental.** Even with all four patches applied, TurboQuant 4-bit KV still intermittently corrupts under real agentic tool-calling sessions — constant `!!!!` output at **0% MTP draft acceptance**. It's a residual CUDA-graph captured-step routing bug in [#40914](https://github.com/vllm-project/vllm/pull/40914) that we could not reproduce synthetically: synthetic tool-history repros passed 4/4, but real opencode sessions still tripped it at 11K and 71K context. fp8 passed the same battery clean (burst repro, 3× concurrent 40–48K streams, multi-turn tool-history with failed-tool-call retries; 74.4% draft acceptance). Full story of the underlying class of bug: [the bug nobody caught](#the-bug-nobody-caught).
+**2026-07-15 — this reverses our earlier call.** For weeks we shipped stock fp8 KV and treated the patched TurboQuant image as experimental, because it produced constant `!!!!` at **0% MTP acceptance** under real agent sessions and we called it intermittent memory corruption. **That diagnosis was wrong — there was never a corruption bug.** A ~30-round investigation traced the `!!!!` to two mundane causes: (1) a soak-test **degeneracy detector that false-positived** on coherent replies to random-gibberish prompts, and (2) genuine long-context **quality loss from quantizing the *keys* to 4 bits** (`turboquant_4bit_nc`). Keys are what attention indexes on — 4-bit keys destroy long-context retrieval.
 
-**The tradeoff, one line:** TurboQuant is **+10% single-stream** and **150K vs 131K** context; fp8 is **+61% at 8-way concurrency** (868 vs 540 t/s) and **corruption-free**. Tool-eval quality is identical (TQ 90.0 / 89.0 on the bench — 4-bit KV costs no *measurable* quality; the corruption is intermittent, not benchmark-visible). The TurboQuant content below stays — it's the subject of this repo — but it's a lab result now, not what we point production at.
+**The fix was one flag.** Use **`turboquant_k8v4`** (8-bit Keys / 4-bit Values) instead of `turboquant_4bit_nc`. 8-bit keys preserve retrieval; 4-bit values keep most of the density win. Proven by fair needle-in-haystack retrieval — plant 5-digit codes in coherent filler, exact-match:
+
+| KV cache | 9K | 20K | 40K |
+|---|---|---|---|
+| `turboquant_4bit_nc` (4-bit keys) | **0/8 across depths — destroys retrieval** | | |
+| fp8_e4m3 | 6/6 | 8/8 | — |
+| **turboquant_k8v4** | **8/8** | **8/8** | **6/6** |
+
+So the whole TurboQuant + MTP stack and its four patches are **still real and still needed** — the [`!!!!`-from-a-discarded-out-param bug](#the-bug-nobody-caught) was genuine and its fix stands. What's retired is the "demoted to experimental because it corrupts" conclusion. **The daily image is the same clean TQ image, just `VLLM_TQ_PRESET=turboquant_k8v4` + `--kv-cache-dtype turboquant_k8v4`.** It's faster single-stream, **+21% pool** (165K vs 136K tokens, in *less* KV memory), and matches fp8's retrieval and MTP acceptance. fp8 remains the alternative for **deep-context high-concurrency batch serving** (see [Benchmarks](#benchmarks)). `turboquant_4bit_nc` is a **rejected variant** — 0/8 retrieval is why.
 
 ---
 
@@ -43,8 +51,8 @@ Prefill holds up too — composed sweep (batched 3199): **9.1K @2K / 9.0K @8K / 
 
 ### Where this sits vs the daily
 
-- **LMCache (MTP, no vision)** is the recommended setup for **multi-agent coding** — the profile runs `image:0`, trading vision for cache retention that pays for itself the moment two agents share a prefix.
-- **The fp8 daily** stays the **vision-capable** alternative and the better pick for a single interactive user, where there's no shared prefix to retain and single-stream latency is what you feel.
+- **LMCache (MTP, no vision)** is the recommended setup for **multi-agent coding** — the profile runs `image:0`, trading vision for cache retention that pays for itself the moment two agents share a prefix. It uses **fp8 KV**: LMCache's persistence tier only round-trips faithfully with fp8 (the k8v4 attempt is a documented non-ship — [details](docs/LMCACHE.md#lmcache--k8v4-composes-but-the-persisted-tier-is-lossy--not-shipped)).
+- **The `turboquant_k8v4` daily** stays the **vision-capable** pick for a single interactive user, where there's no shared prefix to retain and single-stream latency is what you feel — and it's now *faster* single-stream than fp8.
 
 ### The format-10 kernel patch (LMCache can't store this model)
 
@@ -86,7 +94,7 @@ patches target a moving `vllm-openai:nightly`, so the pinned digest is the repro
 
 Then `http://localhost:8020/v1` speaks OpenAI. See [`docs/CONFIG.md`](docs/CONFIG.md) for every flag and why.
 
-> **Want the stable path?** Skip the patched image entirely and run stock nightly + fp8 KV — see [the status note](#status--2026-07-13-fp8-is-the-daily-the-turboquant-image-is-experimental) and the [recommended stable config](docs/CONFIG.md#recommended-stock-nightly--fp8-kv-our-daily). Everything from here down is the experimental TurboQuant path.
+> **Want the most battle-tested path, or serving deep-context high-concurrency batches?** fp8 KV on stock nightly remains a documented alternative — see [the status note](#status-turboquant_k8v4-is-the-daily) and the [alternative fp8 config](docs/CONFIG.md#alternative-stock-nightly--fp8-kv). Everything from here down is the TurboQuant path the daily runs.
 
 ## What's in the patch stack
 
@@ -100,27 +108,71 @@ Then `http://localhost:8020/v1` speaks OpenAI. See [`docs/CONFIG.md`](docs/CONFI
 
 ## Benchmarks
 
-Hardware: RTX 5090 32 GB (`sm_120`) + Ryzen 9 5900X + 64 GB RAM, Ubuntu 24.04.
-Model: [`unsloth/Qwen3.6-27B-NVFP4`](https://huggingface.co/unsloth/Qwen3.6-27B-NVFP4) (4-bit weights) + `turboquant_4bit_nc` KV + MTP `ns=3` + vision.
+Hardware: RTX 5090 32 GB (`sm_120`, +4500 MHz mem OC, 600 W) + Ryzen 9 5900X + 64 GB RAM, Ubuntu 24.04.
+Model: [`unsloth/Qwen3.6-27B-NVFP4`](https://huggingface.co/unsloth/Qwen3.6-27B-NVFP4) (4-bit weights) + MTP `ns=3` + vision.
+Tool: [llama-benchy](https://github.com/eugr/llama-benchy) 0.3.8. Both configs, identical invocation (`--pp 512 4096 --tg 128 --concurrency 1 2 4 8 --runs 3`), same box, same session (2026-07-15).
 
-### Throughput ([llama-benchy](https://github.com/eugr/llama-benchy), decode t/s)
+### Throughput — decode (tokens/s)
 
-| KV cache | ctx | c1 | c2 | c4 | c8 | prefill @4K |
-|---|---|---|---|---|---|---|
-| fp8_e4m3 | 172K | 129 | 253 | 492 | **868** | 9,607 |
-| **turboquant_4bit_nc** | **261K** | **143** | 251 | **552** | 540 | **10,222** |
+**Short context (`pp=512`, pure decode) — tg-throughput mean:**
 
-TurboQuant wins to c4 and **plateaus** past it — its Triton kernel does 4-bit dequant as ALU work that flash-attn's fp8 path gets free in hardware. On raw throughput it's faster for single-user coding; fp8 wins from c8 up (868 vs 540, **+61%**). But we run **fp8 as the daily anyway** — TurboQuant's intermittent corruption under real agent sessions (see [status](#status--2026-07-13-fp8-is-the-daily-the-turboquant-image-is-experimental)) is not worth the ~10% single-stream gain.
+| KV cache | c1 | c2 | c4 | c8 |
+|---|---|---|---|---|
+| fp8_e4m3 | 130 | 251 | 482 | 478 |
+| **turboquant_k8v4** | **164** | **319** | **524** | **516** |
+
+k8v4 wins at every concurrency (**+26% c1**). Peak-throughput c8 is **fp8 832 / k8v4 872** — k8v4 does *not* suffer the `turboquant_4bit_nc`-style c8 collapse, because 8-bit keys use the efficient attention path.
+
+**Deep context (`pp=4096`, prefill mixed in) — tg-throughput mean:**
+
+| KV cache | c1 | c2 | c4 | c8 |
+|---|---|---|---|---|
+| fp8_e4m3 | 137 | **259** | **461** | **292** |
+| turboquant_k8v4 | **145** | 236 | 277 | 222 |
+
+This is the **one regime fp8 wins**: deep context (≥4K) at high concurrency. TurboQuant's Triton value-dequant is ALU work that scales with attended context length, so at c4/c8 @4096 it falls behind fp8's hardware fp8 path (decode c4@4096: fp8 461 vs k8v4 277).
+
+**Prefill (`pp`, c1):** @512 fp8 4,701 / k8v4 4,258 t/s; @4096 fp8 9,604 / **k8v4 10,392** t/s (k8v4 slightly faster at depth).
+**Latency:** median inter-token fp8 1.15 ms / k8v4 1.22 ms; TTFT (c1@512) fp8 110 ms / k8v4 122 ms.
+**MTP:** mean acceptance length ~3.2 of `ns=3` — fp8 and k8v4 statistically identical.
+
+**Net for the daily** (interactive coding = low concurrency, deep context): k8v4 is faster single-stream, **+21% pool**, equal retrieval quality, equal MTP. fp8 remains the pick only for deep-context high-concurrency batch serving.
+
+### VRAM budget
+
+Weights eat ~70% of the card; only ~5 GiB is left for KV — and density is why the k8v4 daily fits **more** context into **less** of it:
+
+```mermaid
+pie showData title RTX 5090 32 GB VRAM — turboquant_k8v4 daily (util 0.94)
+    "Model weights (NVFP4 27B)" : 21.97
+    "Reserved headroom" : 2.23
+    "KV cache pool → 165K tokens" : 4.89
+    "Peak activation" : 1.89
+    "Non-torch + CUDA graphs" : 0.36
+```
+
+fp8's KV slice is **bigger** (5.25 GiB) yet holds **fewer** tokens (136,477 vs 165,274) — 8-bit Keys + 4-bit Values ≈ 6 bits/element vs fp8's 8, so k8v4 is denser where it counts. Full breakdown (util 0.94, 31.34 GiB usable):
+
+| component | turboquant_k8v4 | fp8_e4m3 |
+|---|---|---|
+| Model weights (NVFP4 27B) | 21.97 GiB | 21.97 GiB |
+| Peak activation | 1.89 GiB | 1.89 GiB |
+| Non-torch + CUDA graphs | ~0.36 GiB | ~0.36 GiB |
+| **KV cache pool** | **4.89 GiB → 165,274 tok** | 5.25 GiB → 136,477 tok |
+| Reserved headroom | ~2.23 GiB | ~1.9 GiB |
+| **KV density** | **33.8K tok/GiB** | 26.0K tok/GiB |
+
+k8v4's unified block size is 2,112 (fp8's is 1,600); it adds 3 padding layers (up to 6.25% KV waste) for mamba-page parity, and still lands +21% ahead on pool.
 
 ### Quality
 
 | eval | score | notes |
 |---|---|---|
 | **Aider polyglot** (225 exercises, diff) | **72.3%** pass@2 | 97.3% well-formed edits — reliably emits machine-applicable diffs |
-| **Terminal-Bench 2.1** (8-task subset ×2) | **7/8** pass@2 | matches the fp8 baseline — 4-bit KV costs no measurable quality |
+| **Terminal-Bench 2.1** (8-task subset ×2) | **7/8** pass@2 | matches the fp8 baseline — the KV cache costs no measurable quality |
 | **[tool-eval-bench](https://github.com/SeraphimSerapis/tool-eval-bench) v2.1.0** (84 scenarios, hardmode, 4 trials) | **89.0 ± 0.0** /100 | Hard Mode 80%; deterministic across trials. On the v2.0.6 protocol: **90.0** vs [published](https://github.com/MiaAI-Lab/Unsloth-Qwen3.6-27B-UD-Q8_K_XL_vs_nvidia-Qwen3.6-27B-NVFP4_tools_eval) nvidia NVFP4 **89** / Unsloth Q8 **83** — details in [bench/RESULTS.md](bench/RESULTS.md) |
 
-MTP acceptance: **75.8%** (per-position 0.945 / 0.764 / 0.564 — a healthy decay curve). Needle-in-haystack at 10K: recalled.
+MTP mean acceptance length ~3.2 of `ns=3` (identical fp8/k8v4). Needle-in-haystack retrieval, `turboquant_k8v4`: **8/8 @9K, 8/8 @20K, 6/6 @40K** — matches fp8 and fixes the 0/8 that `turboquant_4bit_nc`'s 4-bit keys scored (see [status](#status-turboquant_k8v4-is-the-daily)).
 
 ## The bug nobody caught
 
@@ -154,6 +206,8 @@ This is almost certainly why the PR passed on the author's Ampere box (the eager
 
 | tried | verdict |
 |---|---|
+| **`turboquant_4bit_nc`** (4-bit Keys) | **Rejected — the old headline config.** 4-bit keys destroy long-context retrieval: **0/8** on fair needle-in-haystack (vs k8v4's 8/8). Its ~47.8K tok/GiB density is real but worthless if the model can't find what it stored. `turboquant_k8v4` (8-bit K / 4-bit V) is the fix. |
+| **`nvfp4` native KV cache** | **Won't load.** `head_size=256` has no FlashInfer nvfp4 backend on `sm_120` — needs unmerged [vLLM PR #44389](https://github.com/vllm-project/vllm/pull/44389). Projected density ≈47–48K tok/GiB, **unmeasured**. |
 | **DFlash** speculative decoding | **Works, but boxed in — measured and rejected.** Requires a full source build of [PR #40898](https://github.com/vllm-project/vllm/pull/40898) (SWA draft support). Real result with the [z-lab draft](https://huggingface.co/z-lab/Qwen3.6-27B-DFlash): **185 t/s single-stream (2.0× its no-spec baseline — a bigger uplift than MTP's ~1.6×)**… at the cost of **21K max context** (3.3 GB draft + bf16-KV-only: fp8 trips the branch's hybrid page-size assert, and the branch predates NVFP4-`lm_head` support so quantized targets are limited), **zero batch scaling** (c4 aggregate ≈ c1), and ~3× slower prefill. MTP's draft head lives *inside* the weights, costs ~0, and keeps 245K context. Revisit if #40898 merges into nightly. |
 | `nvidia/Qwen3.6-27B-NVFP4` (official) | ~2.6× slower prefill, 20–25% slower decode, fatter checkpoint (max ~150K ctx), MTP crashes at moderate batch. Community quants win. |
 | `--async-scheduling` | c4 552 → 526. No. |
@@ -169,7 +223,7 @@ This is almost certainly why the PR passed on the author's Ampere box (the eager
 3. **Re-verify after every vLLM bump.** These patches are version-sensitive; a nightly that moves `turboquant_attn.py` will silently fail to apply or, worse, apply to shifted code.
 4. **`--kv-cache-memory` "fully utilize" hint OOMs at 240K+** — it ignores warmup transients. Use `--gpu-memory-utilization` and let vLLM profile.
 5. **util 0.95 crashes under concurrent cold starts.** A burst of ~8 simultaneous fresh prompts OOMs the GDN prefill kernel (~96 MiB transient) and **kills the engine** — `expandable_segments` doesn't save it, and a ramping benchmark (llama-benchy) never trips it, so you find out in production. Run **0.94**, burst-verified.
-6. **TurboQuant's real context ceiling is ~150K, not the KV pool size.** `_continuation_prefill` dequantizes the *entire cached prefix* to bf16 (~4 KB/token transient) — a single prompt past ~160K allocates >650 MB of scratch that isn't there and **OOM-kills the engine** mid-prefill. Cap `--max-model-len 150000` (147K verified). The pool above that serves concurrency, and note each active sequence also pins a fixed GDN/Mamba state (~13% of pool), so 8 concurrent seqs ≈ pool-full regardless of prompt length.
+6. **TurboQuant's real single-prompt ceiling is below the KV pool size.** `_continuation_prefill` dequantizes the *entire cached prefix* to bf16 (~4 KB/token transient) — a single prompt far past the cap allocates hundreds of MB of scratch that isn't there and **OOM-kills the engine** mid-prefill. Cap `--max-model-len 160000` against the 165,274-token pool. The pool above the cap serves concurrency, and note each active sequence also pins a fixed GDN/Mamba state (~13% of pool), so 8 concurrent seqs ≈ pool-full regardless of prompt length.
 7. **Validate under *concurrency*, not just single-stream.** The guard bug (patch 4) passes every single-stream test — needle, benchmarks, tool evals — and corrupts only on padded concurrent batch shapes. If we'd load-tested with 3 parallel long-context streams on day one, it would have cost an hour instead of a production incident.
 
 ## License

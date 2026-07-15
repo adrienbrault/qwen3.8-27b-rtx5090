@@ -2,7 +2,7 @@
 
 The launch command lives in [`../scripts/serve-lmcache.sh`](../scripts/serve-lmcache.sh). This explains it. For the *why-at-all* and the benchmark numbers, see the [README section](../README.md#update--2026-07-14-mtp--lmcache-tiered-kv-caching-recommended-for-multi-agent-coding).
 
-**When to run this instead of the [fp8 daily](CONFIG.md#recommended-stock-nightly--fp8-kv-our-daily):** multi-agent coding, where several agents share large near-identical prefixes and cache retention beats single-stream latency. The profile runs **no vision** (`image:0`) — that's the one capability it gives up vs the daily.
+**When to run this instead of the [k8v4 daily](CONFIG.md#recommended-clean-tq-image--turboquant_k8v4-our-daily):** multi-agent coding, where several agents share large near-identical prefixes and cache retention beats single-stream latency. The profile runs **no vision** (`image:0`) — that's the one capability it gives up vs the daily. It uses **fp8 KV**, not the daily's k8v4: LMCache's persistence tier only round-trips faithfully with fp8 ([why](#lmcache--k8v4-composes-but-the-persisted-tier-is-lossy--not-shipped)).
 
 Every ingredient below was earned by a failure. Removing any one of them reintroduces a specific, documented break.
 
@@ -100,3 +100,12 @@ Identical to the daily — see [CONFIG.md](CONFIG.md) for each. `--mamba-cache-m
 - **Two stochastic flakes** shared by every composed run: an instant-EOS at depth (`comp=1` empty — the documented temp-0.6 quirk) and a ~1-in-3 flake at pool capacity. Noisier than the clean no-MTP LMCache run; a flake-rate probe is pending.
 - **`engine_driven` transfer mode** serves but scores 0 hits on this hybrid — stick with the default `lmcache_driven`.
 - The **no-MTP** LMCache config (chunk 1568, no `--speculative-config`, util 0.90+) is the conservative fallback if MTP composition ever regresses: c8 517 (beats the daily's 488), c1 69 (the 0.24 image tax + no MTP).
+
+## LMCache + k8v4: composes, but the persisted tier is lossy — not shipped
+
+The daily's `turboquant_k8v4` KV composes with LMCache in the lab, but its **persisted (L2 SSD) tier is not bit-faithful** — so this profile stays **fp8-only**.
+
+- **It builds and runs.** The clean TQ image already ships lmcache 0.5.1; graft the format-10 `c_ops.so` from the [fmt10 build](../patches/lmcache-0.5.1-format10-NL_X_NB_NH_BS_TWO_HS.patch) (identical ABI, single file, no recompile). It launches, composes with MTP, stores land (0 format-10 errors), and the L2 SSD tier fills.
+- **But the L2 reload corrupts long-context retrieval.** After a container restart LMCache reloads 16–21K tokens in ~26 ms and the output stays fully coherent — yet planted long-context needles **vanish** (measured **7/7 miss** across two needles; a fresh prefill retrieves every time; the sidecar log confirms LMCache served the reload). Root cause: the format-10 transfer kernel copies bytes for the standard `[NB, NH, BS, 2·HS=512]` fp8/bf16 layout, but k8v4 packs `[…, 262]` (8-bit K + 4-bit V + scales) — the stride mismatch corrupts the L2 serialization round-trip. Coherent-but-lossy is exactly the failure that kills long-context coding.
+- **`engine_driven` doesn't rescue it.** The `engine_driven` transfer mode ([LMCache PR #4073](https://github.com/LMCache/LMCache/pull/4073)) reclaims the ~900 MB sidecar VRAM (1,370 → 498 MiB), but its SHM-registration handshake is unstable grafted onto the older-nightly TQ base (300 s `register_kv_caches` timeout), and even the prior working run was parked as unstable (≥30K-prefill OOM) with fidelity unverified.
+- **Conclusion.** LMCache's persistence tier only round-trips faithfully with **fp8 KV**. k8v4 keeps vLLM's in-pool `--enable-prefix-caching` (fast in-pool reuse) but **no tiered persistence**. A faithful k8v4 tier would need a new lmcache `KVFormatSpec` + transfer kernel for the 262-wide packed layout (or forcing opaque BINARY blocks) — not worth it single-user.

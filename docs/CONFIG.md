@@ -2,21 +2,22 @@
 
 The serve command lives in [`../scripts/serve.sh`](../scripts/serve.sh). This explains it.
 
-## Recommended: stock nightly + fp8 KV (our daily)
+## Recommended: clean TQ image + turboquant_k8v4 (our daily)
 
-**As of 2026-07-13 this is what we run in production.** The TurboQuant flags documented in the rest of this file are experimental — 4-bit KV still intermittently corrupts under real agent sessions (constant `!!!!`, 0% MTP draft acceptance; see the [status note](../README.md#status--2026-07-13-fp8-is-the-daily-the-turboquant-image-is-experimental)). fp8 gives up ~10% single-stream and ~19K of usable context and buys reliability plus **+61% at 8-way concurrency**.
+**As of 2026-07-15 this is what we run in production.** The daily is the patched TurboQuant image with **`turboquant_k8v4`** KV (8-bit Keys / 4-bit Values): faster single-stream than fp8, **+21% pool** (165K vs 136K tokens, in *less* KV memory), and equal long-context retrieval. It replaces our earlier fp8 daily — the "TurboQuant corrupts" call was a misdiagnosis (a noisy soak-test detector + 4-bit-*key* quality loss), fixed by keeping keys at 8 bits. See the [status note](../README.md#status-turboquant_k8v4-is-the-daily). fp8 KV stays the [documented alternative](#alternative-stock-nightly--fp8-kv) for deep-context high-concurrency batch serving.
 
-No patched image — plain `vllm/vllm-openai:nightly`. Only the KV-cache and context flags differ from the TurboQuant setup below; everything else (MTP, parsers, sampling, caches, host notes) is identical.
+The flags that make k8v4 the daily (everything else — MTP, parsers, sampling, caches, host notes — is shared with the fp8 alternative and detailed below):
 
 ```bash
---kv-cache-dtype fp8_e4m3
---gpu-memory-utilization 0.94 --max-model-len 131072   # fp8 fits 137.6K @ 0.94; 131072 leaves headroom
---max-num-seqs 8 --max-num-batched-tokens 8192
+--kv-cache-dtype turboquant_k8v4                        # 8-bit K / 4-bit V; needs the patched image
+-e VLLM_TQ_PRESET=turboquant_k8v4                       # MUST equal --kv-cache-dtype
+--gpu-memory-utilization 0.94 --max-model-len 160000    # 165,274-token pool; block auto-resolves to 2112
 --speculative-config '{"method":"qwen3_5_mtp","num_speculative_tokens":3}'
+--mamba-cache-mode align --enable-prefix-caching --enable-chunked-prefill
 --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_xml
 ```
 
-decode t/s: **c1 129, c2 253, c4 492, c8 868**; prefill @4K **9,607**. Validated clean under a full battery — burst repro, 3× concurrent 40–48K streams, multi-turn tool-history including failed-tool-call retries — at **74.4% MTP draft acceptance**. Everything below documents the experimental TurboQuant path.
+decode @512 tg-mean **c1 164, c2 319, c4 524, c8 516**; prefill @4K **10,392** t/s; MTP mean acceptance length ~3.2. Needle-in-haystack **8/8 @9K, 8/8 @20K, 6/6 @40K** — matches fp8. Full numbers in [../bench/RESULTS.md](../bench/RESULTS.md).
 
 ## Model
 
@@ -32,19 +33,19 @@ Chosen over the alternatives by measurement:
 
 > **Loading note:** Unsloth's build is compressed-tensors. Pass **no** `--quantization` flag (auto-detects). Passing `modelopt` errors out.
 
-## The flags (experimental TurboQuant path)
+## The flags (turboquant_k8v4 daily)
 
-> These are the flags for the patched TurboQuant image — **experimental** as of 2026-07-13 (see the [stable fp8 config](#recommended-stock-nightly--fp8-kv-our-daily) above). The `--kv-cache-dtype`, `--block-size`, `-e VLLM_TQ_*`, and `--max-model-len` values below are the ones that differ from the daily; the rest apply to both.
-
-```bash
---kv-cache-dtype turboquant_4bit_nc --block-size 128
-```
-The whole point. 4-bit KV → **47.8K tokens/GiB vs fp8's 26.8K** (1.8× denser) → 261K pool instead of 172K. `block-size 128` is required by the TurboQuant kernel. **Needs the patched image** — on stock vLLM this + MTP produces garbage.
+> These are the flags for the patched TurboQuant image — **our daily** as of 2026-07-15. The `--kv-cache-dtype`, `-e VLLM_TQ_*`, and `--max-model-len` values below are the ones that differ from the [fp8 alternative](#alternative-stock-nightly--fp8-kv); the rest apply to both.
 
 ```bash
--e VLLM_TQ_PRESET=turboquant_4bit_nc      # REQUIRED
+--kv-cache-dtype turboquant_k8v4
 ```
-Not optional. vLLM never propagates the KV dtype to the MTP **draft** runner (it arrives as `"auto"` and crashes). `tq_auto_fallback.py` reads this env as the fallback. Must match `--kv-cache-dtype`.
+The whole point. **8-bit Keys / 4-bit Values** → **33.8K tokens/GiB vs fp8's 26.0K** → a **165,274-token pool** in *less* KV memory (4.89 GiB vs fp8's 5.25). The 8-bit keys are what preserve long-context retrieval — the 4-bit-key `turboquant_4bit_nc` variant scored **0/8** on fair needle-in-haystack and is rejected. **Needs the patched image** — on stock vLLM this + MTP produces garbage. Do **not** hand-set `--block-size`: the hybrid allocator auto-resolves the unified block to **2112** (vs fp8's 1600), adding 3 padding layers (up to 6.25% KV waste) for mamba-page parity.
+
+```bash
+-e VLLM_TQ_PRESET=turboquant_k8v4         # REQUIRED — must equal --kv-cache-dtype
+```
+Not optional. vLLM never propagates the KV dtype to the MTP **draft** runner (it arrives as `"auto"` and crashes). `tq_auto_fallback.py` reads this env as the fallback. **Must equal `--kv-cache-dtype` exactly** — a mismatch puts the draft path on a different KV format than the target.
 
 ```bash
 --speculative-config '{"method":"qwen3_5_mtp","num_speculative_tokens":3}'
@@ -54,25 +55,24 @@ MTP speculative decoding. `ns=3` is the sweet spot (ns=4 is unstable, ns=1/2 lea
 ⚠️ Known to **crash at 16+ concurrent** (upstream vLLM MTP bug). Drop `--speculative-config` entirely if you need heavy concurrency.
 
 ```bash
---gpu-memory-utilization 0.94 --max-model-len 150000
+--gpu-memory-utilization 0.94 --max-model-len 160000
 ```
 Let vLLM *profile* the memory. Do **not** hand-set `--kv-cache-memory` to the "fully utilize" value vLLM suggests in its logs — that hint ignores warmup transients and OOMs.
 
-**Why max-len 150K, not "whatever the pool holds":** TurboQuant's `_continuation_prefill`
-dequantizes the entire cached prefix to bf16 (~4 KB/token of transient scratch). Past ~160K of
-cached context that allocation exceeds the activation headroom and the **engine dies mid-prefill**
-(`torch.OutOfMemoryError` in `k_full[:cached_len] = ...`). 147K is verified end-to-end. The pool
-above 150K still earns its keep: each concurrent sequence pins a fixed GDN/Mamba state
-(~30K-token-equivalent), so concurrency eats pool fast.
+**Why max-len 160K, not "whatever the pool holds":** TurboQuant's `_continuation_prefill`
+dequantizes the entire cached prefix to bf16 (~4 KB/token of transient scratch). Far past the cap
+that allocation exceeds the activation headroom and the **engine dies mid-prefill**
+(`torch.OutOfMemoryError` in `k_full[:cached_len] = ...`). The 165,274-token pool above the cap
+still earns its keep: each concurrent sequence pins a fixed GDN/Mamba state, so concurrency eats
+pool fast.
 
-**Why 0.94, not 0.95:** at 0.95 (261K pool) a burst of ~8 simultaneous cold prompts **crashes the
+**Why 0.94, not 0.95:** at 0.95 a burst of ~8 simultaneous cold prompts **crashes the
 engine** — the GDN prefill kernel (`chunk_fwd_o`) needs a ~96 MiB transient workspace per step, and
-with 6 requests' prefills packed into one 8192-token batch there is no headroom left
+with several requests' prefills packed into one 8192-token batch there is no headroom left
 (`torch.OutOfMemoryError`, engine dead, container restart). `expandable_segments:True` was already
-on; it doesn't save you. 0.94 gives back ~320 MiB of activation headroom (222,580-token pool at
-max-len 150K, measured). Verified: the same 8-cold-prompt burst that killed 0.95 passes cleanly
-at 0.94. If you never see concurrent cold starts (single-user, one client), 0.95 works and buys
-a bit more pool.
+on; it doesn't save you. 0.94 gives back enough activation headroom that the same 8-cold-prompt
+burst passes cleanly. If you never see concurrent cold starts (single-user, one client), 0.95
+works and buys a bit more pool.
 
 ```bash
 --max-num-seqs 8
@@ -103,6 +103,20 @@ The model emits XML-format tool calls. `qwen3_xml` is correct; `hermes` silently
 --override-generation-config '{"temperature":0.6,"top_p":0.95,"top_k":20}'
 ```
 Qwen's recommended sampling. (Their *benchmark* config uses `temperature: 1.0` — match that if you're reproducing published scores.)
+
+## Alternative: stock nightly + fp8 KV
+
+fp8 KV on **plain `vllm/vllm-openai:nightly`** (no patched image) is the pick for **deep-context high-concurrency batch serving** — the one regime it beats k8v4 (decode c4@4096: fp8 461 vs k8v4 277 t/s) — and the most battle-tested path. It gives up single-stream speed and ~29K of pool. Only the KV-cache and context flags differ from the daily above; everything else (MTP, parsers, sampling, caches, host notes) is identical.
+
+```bash
+--kv-cache-dtype fp8_e4m3
+--gpu-memory-utilization 0.94 --max-model-len 131072   # fp8 fits 136,477 tokens @ 0.94; 131072 leaves headroom
+--max-num-seqs 8 --max-num-batched-tokens 8192
+--speculative-config '{"method":"qwen3_5_mtp","num_speculative_tokens":3}'
+--reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_xml
+```
+
+decode @512 tg-mean **c1 130, c2 251, c4 482, c8 478** (peak c8 832); prefill @4K **9,604** t/s; deep-context (`pp=4096`) it leads from c2 up. MTP mean acceptance length ~3.2, same as k8v4.
 
 ## Environment
 
