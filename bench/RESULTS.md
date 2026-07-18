@@ -3,16 +3,44 @@
 Hardware: RTX 5090 32 GB (`sm_120`), Ryzen 9 5900X, 64 GB RAM, Ubuntu 24.04, driver 595.71.05.
 **GPU: +4500 MHz memory OC (16 GHz effective), 600 W, core stock.** Decode is memory-bound, so
 these throughput numbers run above a stock 5090 — see [../docs/CONFIG.md](../docs/CONFIG.md#host-notes).
-Model: `unsloth/Qwen3.6-27B-NVFP4` + MTP `ns=3` + vision, unless noted.
 Tool: [llama-benchy](https://github.com/eugr/llama-benchy) — *not* ad-hoc curl loops, which are noisy enough to produce wrong conclusions.
 
-> **Status (2026-07-15):** the daily is now the patched TurboQuant image with **`turboquant_4bit_nc`** KV (4-bit Keys / 4-bit Values + norm-correction) **+ `--no-async-scheduling`** — **~235K pool → 200K context** (+42% pool over `turboquant_k8v4`). This reverses the "4bit_nc destroys retrieval, 0/8" call recorded below: that 0/8 was vLLM's **async×spec-decode scheduler desync** ([vllm#42655](https://github.com/vllm-project/vllm/issues/42655)), not the 4-bit keys — `--no-async-scheduling` fixes it ([full story](../docs/HISTORY.md#status-turboquant_4bit_nc-is-the-daily-the-asyncspec-reversal)). `turboquant_k8v4` is now a decode-optimal alternative; fp8 stays the deep-context high-concurrency batch alternative.
+> **Status (2026-07-18): the daily is [Lorbus INT4-AutoRound](https://huggingface.co/Lorbus/Qwen3.6-27B-int4-AutoRound) + `fp8_e4m3` KV + FlashInfer + MTP `ns=4`** (image `k8v4-so-pr42603`, with [PR #42603](https://github.com/vllm-project/vllm/pull/42603)). Its numbers are the section directly below. **Everything after it** — TurboQuant `4bit_nc`/`k8v4` KV on the Unsloth NVFP4 model — is **prior-daily / alternative** data, kept for the record; see [the lineage](../README.md#daily-lineage--what-each-daily-was-and-why-the-next-took-over).
 
-## KV cache: turboquant_4bit_nc (daily) vs turboquant_k8v4
+## The daily: Lorbus INT4-AutoRound + fp8 + FlashInfer + MTP ns=4 (PR #42603)
+
+Config: **Qwen3.6-27B INT4 ([Lorbus AutoRound](https://huggingface.co/Lorbus/Qwen3.6-27B-int4-AutoRound)) + `fp8_e4m3` KV + FlashInfer 0.6.15 + `--mamba-cache-mode align` + MTP `ns=4`**, image `k8v4-so-pr42603` (base image + [PR #42603](https://github.com/vllm-project/vllm/pull/42603)). Pool **253,521 tok**, 200K max-len.
+
+**The bug it fixes** is a known, still-open upstream class: **MTP × fp8 KV × Blackwell `sm_120`** illegal-memory-access under concurrency ([vllm#40756](https://github.com/vllm-project/vllm/issues/40756) — same Qwen3.6-27B-FP8 model; [vllm#35288](https://github.com/vllm-project/vllm/issues/35288) — "MTP corrupted output at concurrency ≥ 4"). Under concurrency the crash is 100% reproducible (`rejection_sampler.py:267 parse_output` → `cudaErrorIllegalAddress`); single-stream and `ns=1` are both clean; `CUDA_LAUNCH_BLOCKING=1` masks it (→ a timing race). Root cause ([PR #42603](https://github.com/vllm-project/vllm/pull/42603)): the MTP draft loop in `llm_base_proposer.py` writes shared cudagraph buffers (`input_ids`/`hidden_states`) then launches the draft forward that reads them *without a sync* — async, so the draft FlashInfer kernels observe stale buffers. Fix is one `torch.accelerator.current_stream().synchronize()` after the writes. (Device-wide barriers placed *around* the proposer in `gpu_model_runner` do **not** fix it — the race is *inside* the proposer loop; `--mamba-cache-mode all` and a draft-token sanitizer both failed too. Full bisection: [HISTORY.md](../docs/HISTORY.md).)
+
+**Stability** — every axis that reliably IMA-crashed pre-patch, now zero crashes: full concurrent c4/c8 (pp512+pp4096, ×3), a repeat c8 ×5 stress, deep pp30000 × c4, **deep pp90000 × c4** (worst case: deep + concurrent + K=4), and the full **69×2 tool-eval** under load.
+
+**Decode** — llama-benchy 0.3.8, `--pp 512 4096 --tg 128 --concurrency 1 2 4 8 --runs 3 --skip-coherence`, `t/s (total)` (aggregate), util 0.94, `--no-async-scheduling`:
+
+| decode t/s (total) | c1 | c2 | c4 | c8 |
+|---|---|---|---|---|
+| @512 | 114 | 212 | 355 | 496 |
+| @4096 | 129 | 164 | 198 | 157 |
+
+**Long context (c1)** — prefill / e2e-TTFT / decode; decode is **flat ~128–133 t/s from 30K→180K** (no deep crater — the fp8 + FlashInfer attention kernel, now with `ns=4` spec):
+
+| context | prefill t/s | e2e TTFT | decode t/s |
+|---|---|---|---|
+| 30K | 3,653 | 7.4 s | 128 |
+| 90K | 2,924 | 27.9 s | 132 |
+| 180K | 2,249 | 72.4 s | 133 |
+
+Deep context also holds *under* concurrency — pp90000 × c4 stays alive at ~102 t/s/req. **tool-eval-bench: 90** (full 69-scenario suite ×2 trials; mean 88 ± 2.8). The PR #42603 sync is **perf-neutral** (an `align`+sync image matched an `all`-without-sync image on decode), so restoring the sync costs no measurable throughput.
+
+---
+
+*The sections below are prior dailies / alternatives on the Unsloth NVFP4 model — historical, kept for the record.*
+
+## KV cache (prior daily): turboquant_4bit_nc vs turboquant_k8v4
 
 Both configs, same box, same session (2026-07-15), identical invocation — [llama-benchy](https://github.com/eugr/llama-benchy) 0.3.8, `--pp 512 4096 --tg 128 --concurrency 1 2 4 8 --runs 3`, util 0.94, **both with `--no-async-scheduling`**.
 
-| | turboquant_k8v4 | **turboquant_4bit_nc** (daily) |
+| | turboquant_k8v4 | **turboquant_4bit_nc** (prior daily) |
 |---|---|---|
 | KV pool | 165,274 tok | **~235,000 tok** (+42%) |
 | KV memory | 4.89 GiB | ~4.89 GiB |
@@ -52,7 +80,7 @@ Plant 5-digit codes in coherent filler, exact-match. This is what *appeared* to 
 | KV cache | 9K | 20K | 40K |
 |---|---|---|---|
 | `turboquant_4bit_nc` — *async scheduling ON* | **0/8 across depths (async×spec corruption, not the keys)** | | |
-| **turboquant_4bit_nc** — *`--no-async-scheduling`* (daily) | **8/8** | **8/8** | **8/8** |
+| **turboquant_4bit_nc** — *`--no-async-scheduling`* (prior daily) | **8/8** | **8/8** | **8/8** |
 | fp8_e4m3 | 6/6 | 8/8 | — |
 | turboquant_k8v4 | 8/8 | 8/8 | 6/6 |
 
@@ -65,7 +93,7 @@ bf16 (~4 KB/token transient), which **OOM-kills the engine on a single prompt fa
 The shipped config caps max-len at **200K** against the ~235K-token pool; the pool beyond the cap
 buys concurrent-sequence headroom only.
 
-## Quant shoot-out (all NVFP4, fresh nightly, same flags)
+## Quant shoot-out — prior daily (NVFP4 model selection, same flags)
 
 | | Unsloth | natfii (modelopt) | NVIDIA official |
 |---|---|---|---|
@@ -77,7 +105,7 @@ buys concurrent-sequence headroom only.
 natfii is faster; **Unsloth is smarter**, and quality won. NVIDIA's official quant loses on
 every axis — its slow prefill path is the killer.
 
-## Quality
+## Quality — prior daily (NVFP4 + TurboQuant)
 
 | eval | config | result |
 |---|---|---|
@@ -127,31 +155,6 @@ The nearest published Qwen reference is Qwen3-32B at 41.3% (diff, May 2025).
 documented config (Harbor + Terminus-2, temp 1.0, top_p 0.95, top_k 20, 256K ctx, avg of 5 runs).
 That is the number to beat — or to lose to, by however much 4-bit weights + `4bit_nc` KV cost.
 A full 89-task run against that baseline is the obvious next measurement; it is not in this repo yet.
-
-## MTP K=4 restored on Blackwell — the fp8-KV spec-decode crash (PR #42603)
-
-A separate, fully-validated config: **Qwen3.6-27B INT4 (Lorbus AutoRound) + `fp8_e4m3` KV + FlashInfer 0.6.15 + `--mamba-cache-mode align` + MTP `ns=4`**, image `k8v4-so-pr42603` (base image + [PR #42603](https://github.com/vllm-project/vllm/pull/42603)). Pool **253,521 tok**, 200K max-len.
-
-**The bug it fixes** is a known, still-open upstream class: **MTP × fp8 KV × Blackwell `sm_120`** illegal-memory-access under concurrency ([vllm#40756](https://github.com/vllm-project/vllm/issues/40756) — same Qwen3.6-27B-FP8 model; [vllm#35288](https://github.com/vllm-project/vllm/issues/35288) — "MTP corrupted output at concurrency ≥ 4"). Under concurrency the crash is 100% reproducible (`rejection_sampler.py:267 parse_output` → `cudaErrorIllegalAddress`); single-stream and `ns=1` are both clean; `CUDA_LAUNCH_BLOCKING=1` masks it (→ a timing race). Root cause ([PR #42603](https://github.com/vllm-project/vllm/pull/42603)): the MTP draft loop in `llm_base_proposer.py` writes shared cudagraph buffers (`input_ids`/`hidden_states`) then launches the draft forward that reads them *without a sync* — async, so the draft FlashInfer kernels observe stale buffers. Fix is one `torch.accelerator.current_stream().synchronize()` after the writes. (Device-wide barriers placed *around* the proposer in `gpu_model_runner` do **not** fix it — the race is *inside* the proposer loop; `--mamba-cache-mode all` and a draft-token sanitizer both failed too. Full bisection: [HISTORY.md](../docs/HISTORY.md).)
-
-**Stability** — every axis that reliably IMA-crashed pre-patch, now zero crashes: full concurrent c4/c8 (pp512+pp4096, ×3), a repeat c8 ×5 stress, deep pp30000 × c4, **deep pp90000 × c4** (worst case: deep + concurrent + K=4), and the full **69×2 tool-eval** under load.
-
-**Decode** — llama-benchy 0.3.8, `--pp 512 4096 --tg 128 --concurrency 1 2 4 8 --runs 3 --skip-coherence`, `t/s (total)` (aggregate), util 0.94, `--no-async-scheduling`:
-
-| decode t/s (total) | c1 | c2 | c4 | c8 |
-|---|---|---|---|---|
-| @512 | 114 | 212 | 355 | 496 |
-| @4096 | 129 | 164 | 198 | 157 |
-
-**Long context (c1)** — prefill / e2e-TTFT / decode; decode is **flat ~128–133 t/s from 30K→180K** (no deep crater — the fp8 + FlashInfer attention kernel, now with `ns=4` spec):
-
-| context | prefill t/s | e2e TTFT | decode t/s |
-|---|---|---|---|
-| 30K | 3,653 | 7.4 s | 128 |
-| 90K | 2,924 | 27.9 s | 132 |
-| 180K | 2,249 | 72.4 s | 133 |
-
-Deep context also holds *under* concurrency — pp90000 × c4 stays alive at ~102 t/s/req. **tool-eval-bench: 90** (full 69-scenario suite ×2 trials; mean 88 ± 2.8). The PR #42603 sync is **perf-neutral** (an `align`+sync image matched an `all`-without-sync image on decode), so restoring the sync costs no measurable throughput.
 
 ## Rejected (with numbers, so nobody redoes them)
 
