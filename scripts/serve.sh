@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Serve Qwen3.6-27B: Lorbus INT4-AutoRound weights + fp8_e4m3 KV + FlashInfer + MTP ns=4 + vision.
-# 200K context (~287K pool at util 0.98) on one RTX 5090. Requires the patched image (see ../patches/).
+# 200K context (~270K pool at util 0.96) on one RTX 5090. Requires the patched image (see ../patches/).
 # CRITICAL: MTP ns>=2 + fp8 KV IMA-crashes under concurrency on stock vLLM — the image's
 # PR #42603 graft is what fixes it. And --no-async-scheduling (vllm#42655). See NOTES.
 # Idempotent: removes the existing container first.
@@ -34,7 +34,7 @@ sudo docker run -d --name "$NAME" --runtime nvidia --gpus all --ipc=host \
   --quantization auto-round \
   --kv-cache-dtype fp8_e4m3 \
   --no-async-scheduling \
-  --gpu-memory-utilization 0.98 --max-model-len 200000 \
+  --gpu-memory-utilization 0.96 --max-model-len 200000 \
   --max-num-seqs 8 --max-num-batched-tokens 4096 \
   --limit-mm-per-prompt '{"image":4,"video":0}' \
   --mamba-cache-mode align --enable-prefix-caching --enable-chunked-prefill \
@@ -52,7 +52,7 @@ for i in $(seq 1 90); do
 done
 sudo docker restart owui-proxy >/dev/null 2>&1 || true   # so Open WebUI re-discovers
 echo "daily up. KV pool: $(sudo docker logs $NAME 2>&1 | grep 'GPU KV cache size' | tail -1)"
-echo "  ^ VERIFY this is ~287K (util 0.98). A wrong pool size means a dtype/align/preset mismatch (wrong config)."
+echo "  ^ VERIFY this is ~270K (util 0.96). A wrong pool size means a dtype/align/preset mismatch (wrong config)."
 
 # ------------------------------------------------------------------------------
 # NOTES / KNOBS
@@ -68,7 +68,7 @@ echo "  ^ VERIFY this is ~287K (util 0.98). A wrong pool size means a dtype/alig
 #   --quantization auto-round  : Lorbus INT4-AutoRound (compressed-tensors AutoRound), native in base.
 #   --kv-cache-dtype fp8_e4m3  : flat-with-depth attention via FlashInfer. e5m2 is NOT usable on this
 #                                checkpoint. --mamba-cache-mode align packs GDN state into the unified
-#                                pool -> ~287K at util 0.98. Do NOT set --block-size (hybrid allocator resolves it).
+#                                pool -> ~270K at util 0.96. Do NOT set --block-size (hybrid allocator resolves it).
 #   --structured-outputs-config: enables the reasoning gate for the #44993 graft — response_format
 #                                json_schema with thinking-on otherwise returns EMPTY content.
 #                                Needs adequate max_tokens (reasoning + JSON).
@@ -77,15 +77,14 @@ echo "  ^ VERIFY this is ~287K (util 0.98). A wrong pool size means a dtype/alig
 #                                reasoning in the `reasoning` field (NOT reasoning_content).
 #   --speculative-config ns=4  : MTP. --mamba-cache-mode all is same speed / same pool and does NOT
 #                                avoid the crash — don't bother; PR #42603 is the fix.
-#   util 0.98 + mnbt 4096      : util is the ONLY pool lever here (+8,450 tok/0.01 -> 287,323 at
-#                                0.98); mnbt does NOT change the pool — chunked prefill bounds the
+#   util 0.96 + mnbt 4096      : util is the ONLY pool lever here (+8,450 tok/0.01 -> 270,422 at
+#                                0.96). DO NOT run 0.98: it boots and passes burst probes, then OOMs
+#                                at SERVE TIME when the fp4-GEMM/FlashInfer autotuner meets a fresh
+#                                deep batch shape (pp8192xc8: ~266MB lazy workspace vs ~600MB margin;
+#                                2/2 repro -> EngineDead). 0.96 = ~1.2GB margin, validated against
+#                                that exact shape. mnbt does NOT change the pool — chunked prefill bounds the
 #                                transient either way, so 4096 is essentially free on prefill (and at
 #                                high util it AVOIDS a ~9% deep-prefill slowdown that mnbt 8192 incurs
-#                                from allocator pressure). Ceiling probed ABOVE 0.98: distinct-prompt
-#                                cold-start bursts at ~98%/~104% of pool, 8x concurrent 4-image
-#                                (2048^2) vision bursts, and mixed vision+deep-text all pass with no
-#                                OOM. CAVEAT: burst tests need DISTINCT prompts — prefix caching
-#                                silently voids identical-prompt tests. ~600MB VRAM margin at 0.98;
 #                                fall back to 0.96 (270K) / 0.94 (253K) if fragmentation or a
 #                                colocated sidecar ever bites.
 # SPEED (decode t/s total, --pp 512 4096 --tg 128 -c 1 2 4 8): @512 114/212/355/496, @4096 129/164/198/157.
