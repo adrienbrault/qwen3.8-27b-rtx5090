@@ -128,6 +128,31 @@ documented config (Harbor + Terminus-2, temp 1.0, top_p 0.95, top_k 20, 256K ctx
 That is the number to beat — or to lose to, by however much 4-bit weights + `4bit_nc` KV cost.
 A full 89-task run against that baseline is the obvious next measurement; it is not in this repo yet.
 
+## MTP K=4 restored on Blackwell — the fp8-KV spec-decode crash (PR #42603)
+
+A separate, fully-validated config: **Qwen3.6-27B INT4 (Lorbus AutoRound) + `fp8_e4m3` KV + FlashInfer 0.6.15 + `--mamba-cache-mode align` + MTP `ns=4`**, image `k8v4-so-pr42603` (base image + [PR #42603](https://github.com/vllm-project/vllm/pull/42603)). Pool **253,521 tok**, 200K max-len.
+
+**The bug it fixes** is a known, still-open upstream class: **MTP × fp8 KV × Blackwell `sm_120`** illegal-memory-access under concurrency ([vllm#40756](https://github.com/vllm-project/vllm/issues/40756) — same Qwen3.6-27B-FP8 model; [vllm#35288](https://github.com/vllm-project/vllm/issues/35288) — "MTP corrupted output at concurrency ≥ 4"). Under concurrency the crash is 100% reproducible (`rejection_sampler.py:267 parse_output` → `cudaErrorIllegalAddress`); single-stream and `ns=1` are both clean; `CUDA_LAUNCH_BLOCKING=1` masks it (→ a timing race). Root cause ([PR #42603](https://github.com/vllm-project/vllm/pull/42603)): the MTP draft loop in `llm_base_proposer.py` writes shared cudagraph buffers (`input_ids`/`hidden_states`) then launches the draft forward that reads them *without a sync* — async, so the draft FlashInfer kernels observe stale buffers. Fix is one `torch.accelerator.current_stream().synchronize()` after the writes. (Device-wide barriers placed *around* the proposer in `gpu_model_runner` do **not** fix it — the race is *inside* the proposer loop; `--mamba-cache-mode all` and a draft-token sanitizer both failed too. Full bisection: [HISTORY.md](../docs/HISTORY.md).)
+
+**Stability** — every axis that reliably IMA-crashed pre-patch, now zero crashes: full concurrent c4/c8 (pp512+pp4096, ×3), a repeat c8 ×5 stress, deep pp30000 × c4, **deep pp90000 × c4** (worst case: deep + concurrent + K=4), and the full **69×2 tool-eval** under load.
+
+**Decode** — llama-benchy 0.3.8, `--pp 512 4096 --tg 128 --concurrency 1 2 4 8 --runs 3 --skip-coherence`, `t/s (total)` (aggregate), util 0.94, `--no-async-scheduling`:
+
+| decode t/s (total) | c1 | c2 | c4 | c8 |
+|---|---|---|---|---|
+| @512 | 114 | 212 | 355 | 496 |
+| @4096 | 129 | 164 | 198 | 157 |
+
+**Long context (c1)** — prefill / e2e-TTFT / decode; decode is **flat ~128–133 t/s from 30K→180K** (no deep crater — the fp8 + FlashInfer attention kernel, now with `ns=4` spec):
+
+| context | prefill t/s | e2e TTFT | decode t/s |
+|---|---|---|---|
+| 30K | 3,653 | 7.4 s | 128 |
+| 90K | 2,924 | 27.9 s | 132 |
+| 180K | 2,249 | 72.4 s | 133 |
+
+Deep context also holds *under* concurrency — pp90000 × c4 stays alive at ~102 t/s/req. **tool-eval-bench: 90** (full 69-scenario suite ×2 trials; mean 88 ± 2.8). The PR #42603 sync is **perf-neutral** (an `align`+sync image matched an `all`-without-sync image on decode), so restoring the sync costs no measurable throughput.
+
 ## Rejected (with numbers, so nobody redoes them)
 
 | | result |

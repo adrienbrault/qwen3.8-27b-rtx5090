@@ -2,6 +2,23 @@
 
 The daily config in this repo (patched TurboQuant image + `turboquant_4bit_nc` KV + `--no-async-scheduling`) did not arrive in a straight line — it took **two** reversals. First we shipped stock fp8 for weeks, treating the TurboQuant image as experimental over what we *thought* was intermittent memory corruption; that turned out to be a noisy detector plus 4-bit-*key* quality loss, so we moved to `turboquant_k8v4` (8-bit keys). Then we found the 4-bit-key "quality loss" was itself largely a *third* confound — vLLM's async scheduler corrupting KV under speculative decode — and that one flag (`--no-async-scheduling`) makes the denser `turboquant_4bit_nc` clean and it becomes the daily. This page is that story, newest chapter first, plus the one genuine bug — a discarded out-param under CUDA-graph capture — that the patch stack really does fix.
 
+## Status: the daily is now Lorbus INT4-AutoRound + fp8 + MTP ns=4 (the PR #42603 fix)
+
+**2026-07-18 — the daily moved off TurboQuant KV to a simpler, battle-tested path: Lorbus INT4-AutoRound weights + `fp8_e4m3` KV + FlashInfer + MTP `ns=4`.** The fp8 attention path is flat with depth (no decode crater), the pool is **~253K** (bigger than the 235K TurboQuant daily below), and tool-eval is **90**. The one thing that blocked it for months was a crash — and finding it was a long bisection worth recording, because almost every "obvious" fix was wrong.
+
+**The crash.** MTP `ns≥2` + `fp8_e4m3` KV on Blackwell `sm_120` illegal-memory-accesses at `rejection_sampler.py:267 parse_output` under **any** real concurrency (c≥4). Single-stream is clean; `ns=1` is clean; `CUDA_LAUNCH_BLOCKING=1` masks it → a timing race.
+
+**The dead ends (all empirically killed, each a fresh build + concurrent repro):**
+- **Device-wide `torch.accelerator.synchronize()` barriers in `gpu_model_runner`** — placed after the accepted-state postprocess (before the proposer), before the `bookkeep` block, and inside `execute_model` right after the Mamba input staging. All three **fired** (log-proven) and **all three still crashed**. So it is not an ordering race anywhere in the model runner's spec loop — a late sync can't repair an already-wrong value.
+- **`--mamba-cache-mode all`** (skips the fused `align` Mamba postprocess kernel entirely) — **still crashed**, same pool. So it is not the fused Mamba postprocess.
+- **A draft-token sanitizer** (drop any `id<0 or id≥vocab` before the rejection sampler, the closed upstream [#46574](https://github.com/vllm-project/vllm/pull/46574) approach) — the drop-warning **never fired**. The fault was never an out-of-vocab draft token.
+
+**The actual bug — [vLLM PR #42603](https://github.com/vllm-project/vllm/pull/42603).** A search of upstream turned up [#40756](https://github.com/vllm-project/vllm/issues/40756) (same Qwen3.6-27B-FP8 model) and [#35288](https://github.com/vllm-project/vllm/issues/35288) ("MTP corrupted output at concurrency ≥ 4") — a known, still-open class: **MTP × fp8 KV × Blackwell**. Root cause: the MTP draft loop in `vllm/v1/spec_decode/llm_base_proposer.py` writes shared cudagraph buffers (`input_ids`/`hidden_states`) then launches the draft forward reading them **without a stream sync** — so under concurrency the draft FlashInfer kernels read stale buffers. That's *inside* the proposer loop, which is exactly why every `gpu_model_runner` barrier missed it. The fix is one `torch.accelerator.current_stream().synchronize()` after the writes. Validated crash-free across concurrent c4/c8 + deep pp90000×c4 + the full 69×2 tool-eval; perf-neutral. Grafted as [`patches/install_pr42603_sync.py`](../patches/install_pr42603_sync.py).
+
+**Lesson (again):** localize before fixing. `CUDA_LAUNCH_BLOCKING` naming the *class* (timing race), then serializing one candidate edge at a time to prove where it *isn't*, is what pointed at the proposer's own loop — and the upstream issue search is what turned a multi-day bisection into a one-line graft.
+
+---
+
 ## Status: turboquant_4bit_nc is the daily (the async×spec reversal)
 
 **2026-07-15 — this reverses the "`turboquant_4bit_nc` destroys retrieval" call recorded in the next section.** We had rejected `turboquant_4bit_nc` (4-bit Keys) because it scored a catastrophic **0/8** on needle-in-haystack, and concluded "4-bit keys destroy long-context retrieval." That conclusion was a **confound**. The real culprit was vLLM's **async scheduling × speculative decode** interaction — a batch-row-mapping desync ([vllm#42655](https://github.com/vllm-project/vllm/issues/42655)).
