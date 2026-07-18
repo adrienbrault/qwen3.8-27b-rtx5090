@@ -45,6 +45,15 @@ Tool: [llama-benchy](https://github.com/eugr/llama-benchy) 0.3.8. Full detail in
 
 Measurement trap: `--tg 128` at deep contexts measures almost *only* the prefill shadow (streams never overlap in steady state) — it reports 19–22 t/s aggregate and looks like a catastrophe. Use `tg ≥ 512` for steady state, and report both.
 
+**Prefill under concurrency — a fixed shared lane.** Prefill is the mirror image of decode: it saturates the GPU's compute at c1, so batching adds *nothing* — aggregate stays flat and per-request throughput divides by N:
+
+| prefill t/s | c1 | c4 aggregate (per-req) | c8 aggregate (per-req) |
+|---|---|---|---|
+| pp8192 | 3,976 | 3,966 (~990) | 3,946 (~490) |
+| pp30000 | 3,604 | 3,575 (~890) | 3,354 (~420) |
+
+Consequence: N simultaneous cold contexts serialize through that lane — TTFT spread was measured at ±8.4 s (c4×30K) and ±19 s (c8×30K), i.e. the last request waits for everyone ahead of it. Budget cold-start waves accordingly (or avoid them: a prefix-cache hit skips the lane entirely).
+
 **Long context (c1) — prefill / e2e-TTFT / decode.** Decode is **flat ~128–133 t/s from 30K → 180K** — the fp8 + FlashInfer attention kernel has no deep-context crater, now with `ns=4` spec on top:
 
 | context | prefill t/s | e2e TTFT | decode t/s |
