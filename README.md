@@ -39,6 +39,39 @@ Deep context holds *under* concurrency too — pp90000 × c4 stays alive at ~102
 
 **Quality — [tool-eval-bench](https://github.com/SeraphimSerapis/tool-eval-bench): 90** / 100 (full 69-scenario suite × 2 trials; mean 88 ± 2.8, pass@k 89.9). The run doubles as the heaviest concurrent-load stability stress on the fix.
 
+## Where the 31.35 GiB goes — memory budget
+
+All numbers below are measured — the boot log (`gpu_worker` prints the breakdown at every launch, 2026-07-18 boot) plus the checkpoint's safetensors headers for the weight split:
+
+| slice | GiB | notes |
+|---|---:|---|
+| **Weights, total** | **17.73** | split ↓ (17.69 on disk + 0.04 loader) |
+| · language model | 11.82 | 48 hybrid layers (GDN + full-attention), INT4-AutoRound |
+| · embeddings | 2.37 | bf16 — not quantized |
+| · lm_head | 2.37 | bf16 — embed+head = 4.7 GiB, a **27% big-vocab tax** on the weight budget |
+| · vision tower | 0.86 | bf16, always loaded (even text-only requests) |
+| · MTP drafter | 0.28 | the whole speculative-decoding head costs less than 1% of VRAM |
+| **KV pool** | **10.72** | **= 287,323 tokens** @ ~39 KiB/tok (fp8 attention KV + GDN state pages, one unified pool) |
+| **Peak-activation reserve** | 1.89 | sized by profiling at `mnbt` 4096 |
+| **CUDA graphs + non-torch** | 0.37 | |
+| **util 0.98 budget** | **30.72** | of 31.35 usable; the last ~0.6 GiB of margin is burst-tested (text + vision transients), not guessed |
+
+What each token costs and what a cache hit is worth (60K-token context, measured):
+
+| tier | capacity | revisit cost | status |
+|---|---|---|---|
+| GPU pool (vLLM prefix cache) | 287,323 tok | **~1–2 s** (≈ decode time only) | production |
+| host RAM (LMCache L1, 24 GiB pinned) | ~245K tok @ ~98 KiB/tok serialized | ~2 s | **experimental — failed fidelity validation, see below** |
+| NVMe (LMCache L2) | ~640K tok per 60 GiB | **3.4 s** (survives restarts) | **experimental — failed fidelity validation, see below** |
+| miss → full re-prefill | — | **~23 s** | the thing caches exist to avoid |
+
+Notes that save you from wrong conclusions:
+
+- **util is the only pool lever** (+~8.4K tok per 0.01); `max-num-seqs` provably isn't on this hybrid (`align` packs GDN state *into* the unified pool, consumed per **active** request — seqs 4 vs 8 gave the identical pool).
+- The in-pool ~39 KiB/tok is an *effective average*: full-attention layers pay per-token fp8 KV; GDN layers pay a fixed per-sequence state that amortizes with depth. Serialized tiers pay ~98 KiB/tok because LMCache ships whole 1616-token unified blocks (attention KV + state page + metadata, padded to full block).
+- Effective deep concurrency is **pool-bound, not `max-num-seqs`-bound**: 4 × ~70K-token agent sessions fill the pool; request 5 queues.
+- The RAM/NVMe tiers require LMCache ≥ the [PR #4128](https://github.com/LMCache/LMCache/pull/4128) kernels for this model's fused hybrid layout — release pairings up to 0.5.1 silently store nothing, and our own [withdrawn kernel patch](patches/README.md#lmcache-format-10-kernel-patch-separate-project) stored corrupted GDN state. Until a pairing passes a **cross-restart needle test**, treat every external tier as unvalidated ([details](docs/LMCACHE.md)).
+
 ## Why it needs a patch: MTP × fp8-KV × Blackwell crashes on stock vLLM
 
 > ⚠️ **`ns≥2` MTP with `fp8_e4m3` KV on `sm_120` is a 100%-reproducible illegal-memory-access under concurrency** — a known, still-open upstream bug ([vllm#40756](https://github.com/vllm-project/vllm/issues/40756), same Qwen3.6-27B model; [vllm#35288](https://github.com/vllm-project/vllm/issues/35288) "MTP corrupted output at concurrency ≥ 4"). It crashes at `rejection_sampler.py:267 parse_output → cudaErrorIllegalAddress`. Single-stream and `ns=1` are both clean; `CUDA_LAUNCH_BLOCKING=1` masks it (→ a timing race).
@@ -94,38 +127,6 @@ The daily uses these three; the image also carries an (unused-by-this-config) Tu
 - `--limit-mm-per-prompt '{"image":4,"video":0}'` — vision on.
 
 **Verify container identity after launch.** Confirm the startup log reports a **~287K-token KV pool** (at util 0.98). A wrong pool size means a preset/dtype/align mismatch reading as a perfectly healthy server at the *wrong* config.
-
-## Where the 31.35 GiB goes — memory budget
-
-Straight from the boot log (`gpu_worker` prints the breakdown at every launch — the numbers below are a 2026-07-18 boot, not estimates):
-
-```mermaid
-flowchart TB
-    subgraph VRAM["RTX 5090 VRAM — 31.35 GiB usable, util 0.98 = 30.72 GiB budget"]
-        direction TB
-        W["Weights (INT4-AutoRound + vision tower) — 17.73 GiB"]
-        KV["KV pool — 10.72 GiB = 287,323 tokens @ ~39 KiB/tok<br/>(fp8 attention KV + GDN state pages, unified)"]
-        A["Peak-activation reserve — 1.89 GiB"]
-        M["Non-torch 0.21 + CUDA graphs 0.16 GiB"]
-    end
-    VRAM -.->|"~0.6 GiB true margin<br/>(burst-tested: text + vision transients)"| HW["hardware limit"]
-```
-
-What each token costs and what a cache hit is worth (60K-token context, measured):
-
-| tier | capacity | revisit cost | status |
-|---|---|---|---|
-| GPU pool (vLLM prefix cache) | 287,323 tok | **~1–2 s** (≈ decode time only) | production |
-| host RAM (LMCache L1, 24 GiB pinned) | ~245K tok @ ~98 KiB/tok serialized | ~2 s | **experimental — failed fidelity validation, see below** |
-| NVMe (LMCache L2) | ~640K tok per 60 GiB | **3.4 s** (survives restarts) | **experimental — failed fidelity validation, see below** |
-| miss → full re-prefill | — | **~23 s** | the thing caches exist to avoid |
-
-Notes that save you from wrong conclusions:
-
-- **util is the only pool lever** (+~8.4K tok per 0.01); `max-num-seqs` provably isn't on this hybrid (`align` packs GDN state *into* the unified pool, consumed per **active** request — seqs 4 vs 8 gave the identical pool).
-- The in-pool ~39 KiB/tok is an *effective average*: full-attention layers pay per-token fp8 KV; GDN layers pay a fixed per-sequence state that amortizes with depth. Serialized tiers pay ~98 KiB/tok because LMCache ships whole 1616-token unified blocks (attention KV + state page + metadata, padded to full block).
-- Effective deep concurrency is **pool-bound, not `max-num-seqs`-bound**: 4 × ~70K-token agent sessions fill the pool; request 5 queues.
-- The RAM/NVMe tiers require LMCache ≥ the [PR #4128](https://github.com/LMCache/LMCache/pull/4128) kernels for this model's fused hybrid layout — release pairings up to 0.5.1 silently store nothing, and our own [withdrawn kernel patch](patches/README.md#lmcache-format-10-kernel-patch-separate-project) stored corrupted GDN state. Until a pairing passes a **cross-restart needle test**, treat every external tier as unvalidated ([details](docs/LMCACHE.md)).
 
 ## Gotchas that bite during setup
 
