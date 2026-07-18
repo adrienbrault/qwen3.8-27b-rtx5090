@@ -4,6 +4,17 @@ Serving **Qwen3.6-27B with a 270K-token KV pool (200K usable context), MTP specu
 
 The daily is the **[Lorbus INT4-AutoRound](https://huggingface.co/Lorbus/Qwen3.6-27B-int4-AutoRound)** weights + **`fp8_e4m3` KV cache** + **FlashInfer** attention + **MTP `ns=4`**, on a patched vLLM image. The one patch that makes `ns=4` possible on Blackwell is [vLLM PR #42603](https://github.com/vllm-project/vllm/pull/42603) — without it, MTP + fp8 KV illegal-memory-access-crashes under any real concurrency.
 
+## What this config optimizes for
+
+This is a **daily driver for agentic coding** — a handful of coding agents with deep (8K–100K+) contexts, plus interactive chat and the occasional image, on one always-on box. That workload ranks the goals, and the ranking explains every choice below:
+
+1. **Reliability over everything.** An engine that crashes mid-run or — worse — answers *fluently but wrongly* from corrupted cache is worth less than a slower one. Every config here survived a promotion gauntlet: concurrent burst battery, a fresh-deep-batch OOM trigger, needle-in-haystack recall across cache boundaries, and a 69-scenario × 2 tool-eval. Several faster configs died on that hill (a +6% pool setting, two 4-bit KV kernels, a tiered-cache patch) — the [history](docs/HISTORY.md) is mostly their graves.
+2. **Trustworthy context capacity.** Agents live or die by how many deep sessions stay *warm*: a prefix-cache hit costs ~1–2 s where a cold 60K re-prefill costs ~23 s. So: the biggest KV pool that passes rule 1 (270K tokens), fp8 KV instead of denser-but-corrupting 4-bit kernels, and prefix caching on.
+3. **Latency in the agent regime, not benchmark aggregate.** MTP `ns=4` roughly doubles deep single-stream decode (the "agent reading its own long context" case) even though it does nothing for shallow batch throughput. Flat decode with depth (128–133 t/s at 30K→180K) beats a higher peak that craters.
+4. **Everything on at once.** Vision, 200K context, speculative decoding, reasoning + structured outputs, tool calling — the daily runs the full stack simultaneously. No per-benchmark specialization; the numbers below are the config you'd actually run.
+
+Non-goals: maximum batched throughput for many shallow users (a serving-farm concern — this box peaks at ~500–600 t/s aggregate anyway when streams are warm), multi-GPU, and minimum VRAM.
+
 ## What you get
 
 - **Qwen3.6-27B** (Lorbus INT4-AutoRound weights, `--quantization auto-round`) over an OpenAI-compatible endpoint.
