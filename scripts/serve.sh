@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Serve Qwen3.6-27B: Lorbus INT4-AutoRound weights + fp8_e4m3 KV + FlashInfer + MTP ns=4 + vision.
-# 200K context (~253K pool) on one RTX 5090. Requires the patched image (see ../patches/).
+# 200K context (~270K pool at util 0.96) on one RTX 5090. Requires the patched image (see ../patches/).
 # CRITICAL: MTP ns>=2 + fp8 KV IMA-crashes under concurrency on stock vLLM — the image's
 # PR #42603 graft is what fixes it. And --no-async-scheduling (vllm#42655). See NOTES.
 # Idempotent: removes the existing container first.
@@ -34,8 +34,8 @@ sudo docker run -d --name "$NAME" --runtime nvidia --gpus all --ipc=host \
   --quantization auto-round \
   --kv-cache-dtype fp8_e4m3 \
   --no-async-scheduling \
-  --gpu-memory-utilization 0.94 --max-model-len 200000 \
-  --max-num-seqs 8 --max-num-batched-tokens 8192 \
+  --gpu-memory-utilization 0.96 --max-model-len 200000 \
+  --max-num-seqs 8 --max-num-batched-tokens 4096 \
   --limit-mm-per-prompt '{"image":4,"video":0}' \
   --mamba-cache-mode align --enable-prefix-caching --enable-chunked-prefill \
   --speculative-config '{"method":"qwen3_5_mtp","num_speculative_tokens":4}' \
@@ -52,7 +52,7 @@ for i in $(seq 1 90); do
 done
 sudo docker restart owui-proxy >/dev/null 2>&1 || true   # so Open WebUI re-discovers
 echo "daily up. KV pool: $(sudo docker logs $NAME 2>&1 | grep 'GPU KV cache size' | tail -1)"
-echo "  ^ VERIFY this is ~253K. A wrong pool size means a dtype/align/preset mismatch (wrong config)."
+echo "  ^ VERIFY this is ~270K (util 0.96). A wrong pool size means a dtype/align/preset mismatch (wrong config)."
 
 # ------------------------------------------------------------------------------
 # NOTES / KNOBS
@@ -68,7 +68,7 @@ echo "  ^ VERIFY this is ~253K. A wrong pool size means a dtype/align/preset mis
 #   --quantization auto-round  : Lorbus INT4-AutoRound (compressed-tensors AutoRound), native in base.
 #   --kv-cache-dtype fp8_e4m3  : flat-with-depth attention via FlashInfer. e5m2 is NOT usable on this
 #                                checkpoint. --mamba-cache-mode align packs GDN state into the unified
-#                                pool -> ~253K. Do NOT set --block-size (hybrid allocator resolves it).
+#                                pool -> ~270K at util 0.96. Do NOT set --block-size (hybrid allocator resolves it).
 #   --structured-outputs-config: enables the reasoning gate for the #44993 graft — response_format
 #                                json_schema with thinking-on otherwise returns EMPTY content.
 #                                Needs adequate max_tokens (reasoning + JSON).
@@ -77,7 +77,13 @@ echo "  ^ VERIFY this is ~253K. A wrong pool size means a dtype/align/preset mis
 #                                reasoning in the `reasoning` field (NOT reasoning_content).
 #   --speculative-config ns=4  : MTP. --mamba-cache-mode all is same speed / same pool and does NOT
 #                                avoid the crash — don't bother; PR #42603 is the fix.
-#   --max-num-batched-tokens   : keep at 8192. Dropping to 4096 costs ~4x PREFILL.
+#   util 0.96 + mnbt 4096      : the pool sweep's clean corner ({0.94,0.95,0.96}x{8192,4096}). util is
+#                                the ONLY pool lever here (+8.4K/0.01 -> 270K at 0.96); mnbt does NOT
+#                                change the pool — chunked prefill bounds the transient either way, so
+#                                4096 is essentially free on prefill (and at 0.96 it AVOIDS a ~9% deep-
+#                                prefill slowdown that mnbt 8192 incurs from allocator pressure). All
+#                                cells survived an 8x~16K cold-start burst; drop to 0.94 if you ever
+#                                OOM on a near-pool-full burst.
 # SPEED (decode t/s total, --pp 512 4096 --tg 128 -c 1 2 4 8): @512 114/212/355/496, @4096 129/164/198/157.
 #   Long-context c1 decode is flat ~128-133 t/s from 30K to 180K. tool-eval-bench 90 (full 69x2).
 # ------------------------------------------------------------------------------

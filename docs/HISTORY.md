@@ -4,7 +4,7 @@ The daily config in this repo (patched TurboQuant image + `turboquant_4bit_nc` K
 
 ## Status: the daily is now Lorbus INT4-AutoRound + fp8 + MTP ns=4 (the PR #42603 fix)
 
-**2026-07-18 — the daily moved off TurboQuant KV to a simpler, battle-tested path: Lorbus INT4-AutoRound weights + `fp8_e4m3` KV + FlashInfer + MTP `ns=4`.** The fp8 attention path is flat with depth (no decode crater), the pool is **~253K** (bigger than the 235K TurboQuant daily below), and tool-eval is **90**. The one thing that blocked it for months was a crash — and finding it was a long bisection worth recording, because almost every "obvious" fix was wrong.
+**2026-07-18 — the daily moved off TurboQuant KV to a simpler, battle-tested path: Lorbus INT4-AutoRound weights + `fp8_e4m3` KV + FlashInfer + MTP `ns=4`.** The fp8 attention path is flat with depth (no decode crater), the pool is **~270K** at util 0.96 (bigger than the 235K TurboQuant daily below), and tool-eval is **90**. The one thing that blocked it for months was a crash — and finding it was a long bisection worth recording, because almost every "obvious" fix was wrong.
 
 **The crash.** MTP `ns≥2` + `fp8_e4m3` KV on Blackwell `sm_120` illegal-memory-accesses at `rejection_sampler.py:267 parse_output` under **any** real concurrency (c≥4). Single-stream is clean; `ns=1` is clean; `CUDA_LAUNCH_BLOCKING=1` masks it → a timing race.
 
