@@ -95,6 +95,38 @@ The daily uses these three; the image also carries an (unused-by-this-config) Tu
 
 **Verify container identity after launch.** Confirm the startup log reports a **~287K-token KV pool** (at util 0.98). A wrong pool size means a preset/dtype/align mismatch reading as a perfectly healthy server at the *wrong* config.
 
+## Where the 31.35 GiB goes — memory budget
+
+Straight from the boot log (`gpu_worker` prints the breakdown at every launch — the numbers below are a 2026-07-18 boot, not estimates):
+
+```mermaid
+flowchart TB
+    subgraph VRAM["RTX 5090 VRAM — 31.35 GiB usable, util 0.98 = 30.72 GiB budget"]
+        direction TB
+        W["Weights (INT4-AutoRound + vision tower) — 17.73 GiB"]
+        KV["KV pool — 10.72 GiB = 287,323 tokens @ ~39 KiB/tok<br/>(fp8 attention KV + GDN state pages, unified)"]
+        A["Peak-activation reserve — 1.89 GiB"]
+        M["Non-torch 0.21 + CUDA graphs 0.16 GiB"]
+    end
+    VRAM -.->|"~0.6 GiB true margin<br/>(burst-tested: text + vision transients)"| HW["hardware limit"]
+```
+
+What each token costs and what a cache hit is worth (60K-token context, measured):
+
+| tier | capacity | revisit cost | status |
+|---|---|---|---|
+| GPU pool (vLLM prefix cache) | 287,323 tok | **~1–2 s** (≈ decode time only) | production |
+| host RAM (LMCache L1, 24 GiB pinned) | ~245K tok @ ~98 KiB/tok serialized | ~2 s | **experimental — failed fidelity validation, see below** |
+| NVMe (LMCache L2) | ~640K tok per 60 GiB | **3.4 s** (survives restarts) | **experimental — failed fidelity validation, see below** |
+| miss → full re-prefill | — | **~23 s** | the thing caches exist to avoid |
+
+Notes that save you from wrong conclusions:
+
+- **util is the only pool lever** (+~8.4K tok per 0.01); `max-num-seqs` provably isn't on this hybrid (`align` packs GDN state *into* the unified pool, consumed per **active** request — seqs 4 vs 8 gave the identical pool).
+- The in-pool ~39 KiB/tok is an *effective average*: full-attention layers pay per-token fp8 KV; GDN layers pay a fixed per-sequence state that amortizes with depth. Serialized tiers pay ~98 KiB/tok because LMCache ships whole 1616-token unified blocks (attention KV + state page + metadata, padded to full block).
+- Effective deep concurrency is **pool-bound, not `max-num-seqs`-bound**: 4 × ~70K-token agent sessions fill the pool; request 5 queues.
+- The RAM/NVMe tiers require LMCache ≥ the [PR #4128](https://github.com/LMCache/LMCache/pull/4128) kernels for this model's fused hybrid layout — release pairings up to 0.5.1 silently store nothing, and our own [withdrawn kernel patch](patches/README.md#lmcache-format-10-kernel-patch-separate-project) stored corrupted GDN state. Until a pairing passes a **cross-restart needle test**, treat every external tier as unvalidated ([details](docs/LMCACHE.md)).
+
 ## Gotchas that bite during setup
 
 1. **MTP `ns≥2` needs [PR #42603](https://github.com/vllm-project/vllm/pull/42603) or it IMA-crashes under concurrency.** Single-stream and `ns=1` pass every test and hide it; `CUDA_LAUNCH_BLOCKING=1` masks it. **Load-test with 3+ parallel streams on day one** — that's the only thing that reproduces it.
