@@ -2,7 +2,7 @@
 
 Serving **Qwen3.6-27B with a 253K-token KV pool (200K usable context), MTP speculative decoding at `ns=4`, and vision** on one 32 GB consumer GPU (RTX 5090, Blackwell `sm_120`).
 
-The daily is the **Lorbus INT4-AutoRound** weights + **`fp8_e4m3` KV cache** + **FlashInfer** attention + **MTP `ns=4`**, on a patched vLLM image. The one patch that makes `ns=4` possible on Blackwell is [vLLM PR #42603](https://github.com/vllm-project/vllm/pull/42603) — without it, MTP + fp8 KV illegal-memory-access-crashes under any real concurrency.
+The daily is the **[Lorbus INT4-AutoRound](https://huggingface.co/Lorbus/Qwen3.6-27B-int4-AutoRound)** weights + **`fp8_e4m3` KV cache** + **FlashInfer** attention + **MTP `ns=4`**, on a patched vLLM image. The one patch that makes `ns=4` possible on Blackwell is [vLLM PR #42603](https://github.com/vllm-project/vllm/pull/42603) — without it, MTP + fp8 KV illegal-memory-access-crashes under any real concurrency.
 
 ## What you get
 
@@ -131,5 +131,5 @@ MIT (see [LICENSE](LICENSE)) for the original work here — docs, benchmarks, sc
 ## Credits
 
 - [vLLM](https://github.com/vllm-project/vllm) and [PR #42603](https://github.com/vllm-project/vllm/pull/42603) — the draft-loop sync that makes MTP `ns=4` usable on Blackwell.
-- Lorbus for the Qwen3.6-27B INT4-AutoRound quant.
+- [Lorbus](https://huggingface.co/Lorbus/Qwen3.6-27B-int4-AutoRound) for the Qwen3.6-27B INT4-AutoRound quant.
 - [llama-benchy](https://github.com/eugr/llama-benchy), [tool-eval-bench](https://github.com/SeraphimSerapis/tool-eval-bench) for the measurements.
