@@ -21,7 +21,7 @@ as empty content.
 
 ## LMCache format-10 kernel patch (separate project)
 
-> **⚠️ WITHDRAWN (2026-07-18) — this patch corrupts cached content on hybrid models. Do not use it. Use LMCache `main` (≥ 0.5.2.dev66) instead, which ships native `NL_X_NB_NH_BS_TWO_HS` support with correct opaque handling of the GDN recurrent-state pages.** The patch is kept for historical reference only.
+> **⚠️ WITHDRAWN (2026-07-18) — this patch restores corrupted content on hybrid models. Do not use it.** LMCache `main` (≥ 0.5.2.dev66) ships the native `NL_X_NB_NH_BS_TWO_HS` kernels, and its **bf16** hybrid path passes a cross-restart needle test — but as of `e38ee415` the **fp8** fused layout still restores corrupted context (metadata regrouping gap, details in the table and [docs/LMCACHE.md](../docs/LMCACHE.md)); a stride-aware fix is in progress. The patch is kept for historical reference only.
 
 `lmcache-0.5.1-format10-NL_X_NB_NH_BS_TWO_HS.patch` is **not** for vLLM — it patches [LMCache](https://github.com/LMCache/LMCache) `csrc/mp_mem_kernels.cu` (a CUDA recompile, unlike the pure-Python patches above). It targeted the [MTP + LMCache](../docs/LMCACHE.md) profile **on the nightly pairing**.
 
