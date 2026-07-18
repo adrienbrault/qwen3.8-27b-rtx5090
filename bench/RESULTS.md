@@ -9,7 +9,7 @@ Tool: [llama-benchy](https://github.com/eugr/llama-benchy) — *not* ad-hoc curl
 
 ## The daily: Lorbus INT4-AutoRound + fp8 + FlashInfer + MTP ns=4 (PR #42603)
 
-Config: **Qwen3.6-27B INT4 ([Lorbus AutoRound](https://huggingface.co/Lorbus/Qwen3.6-27B-int4-AutoRound)) + `fp8_e4m3` KV + FlashInfer 0.6.15 + `--mamba-cache-mode align` + MTP `ns=4`**, image `k8v4-so-pr42603` (base image + [PR #42603](https://github.com/vllm-project/vllm/pull/42603)). Pool **270,422 tok** at util 0.96 / `--max-num-batched-tokens 4096`, 200K max-len. (The decode / long-context / tool-eval tables below were measured at the earlier util 0.94 config, pool 253,521 — decode is bandwidth-bound and util-invariant, so they hold unchanged; see [the util sweep](#pool-vs-util--the-util096-corner) for the pool bump.)
+Config: **Qwen3.6-27B INT4 ([Lorbus AutoRound](https://huggingface.co/Lorbus/Qwen3.6-27B-int4-AutoRound)) + `fp8_e4m3` KV + FlashInfer 0.6.15 + `--mamba-cache-mode align` + MTP `ns=4`**, image `k8v4-so-pr42603` (base image + [PR #42603](https://github.com/vllm-project/vllm/pull/42603)). Pool **287,323 tok** at util 0.98 / `--max-num-batched-tokens 4096`, 200K max-len. (The decode / long-context / tool-eval tables below were measured at the earlier util 0.94 config, pool 253,521 — decode is bandwidth-bound and util-invariant, so they hold unchanged; see [the util sweep + ceiling probe](#pool-vs-util--the-util-ceiling) for the pool bump.)
 
 **The bug it fixes** is a known, still-open upstream class: **MTP × fp8 KV × Blackwell `sm_120`** illegal-memory-access under concurrency ([vllm#40756](https://github.com/vllm-project/vllm/issues/40756) — same Qwen3.6-27B-FP8 model; [vllm#35288](https://github.com/vllm-project/vllm/issues/35288) — "MTP corrupted output at concurrency ≥ 4"). Under concurrency the crash is 100% reproducible (`rejection_sampler.py:267 parse_output` → `cudaErrorIllegalAddress`); single-stream and `ns=1` are both clean; `CUDA_LAUNCH_BLOCKING=1` masks it (→ a timing race). Root cause ([PR #42603](https://github.com/vllm-project/vllm/pull/42603)): the MTP draft loop in `llm_base_proposer.py` writes shared cudagraph buffers (`input_ids`/`hidden_states`) then launches the draft forward that reads them *without a sync* — async, so the draft FlashInfer kernels observe stale buffers. Fix is one `torch.accelerator.current_stream().synchronize()` after the writes. (Device-wide barriers placed *around* the proposer in `gpu_model_runner` do **not** fix it — the race is *inside* the proposer loop; `--mamba-cache-mode all` and a draft-token sanitizer both failed too. Full bisection: [HISTORY.md](../docs/HISTORY.md).)
 
@@ -32,7 +32,7 @@ Config: **Qwen3.6-27B INT4 ([Lorbus AutoRound](https://huggingface.co/Lorbus/Qwe
 
 Deep context also holds *under* concurrency — pp90000 × c4 stays alive at ~102 t/s/req. **tool-eval-bench: 90** (full 69-scenario suite ×2 trials; mean 88 ± 2.8). The PR #42603 sync is **perf-neutral** (an `align`+sync image matched an `all`-without-sync image on decode), so restoring the sync costs no measurable throughput.
 
-### Pool vs util — the util-0.96 corner
+### Pool vs util — the util ceiling
 
 Sweep of `--gpu-memory-utilization × --max-num-batched-tokens` over `{0.94, 0.95, 0.96} × {8192, 4096}`, everything else fixed. Each cell was checked for a boot-profiling OOM **and** a runtime cold-start OOM (8 simultaneous fresh ~16K-token completions, which a ramping benchmark never trips). Prefill t/s is `--pp … --concurrency 1`:
 
@@ -45,7 +45,16 @@ Sweep of `--gpu-memory-utilization × --max-num-batched-tokens` over `{0.94, 0.9
 | 0.96 | 8192 | 270,422 | 132 | 932 | 8,359 | **2,650** | alive |
 | **0.96** | **4096** | **270,422** | 135 | 908 | 7,519 | **2,833** | alive |
 
-Findings: (1) **`mnbt` does not change the pool** — it is identical at each util (chunked prefill already bounds the transient, so `mnbt` only sets the chunk size, not the steady-state allocation). **util is the only pool lever here: +8.4K tok per 0.01**, so 0.94→0.96 buys **+16.9K (+6.7%)**. (2) **No OOM anywhere** — 0.96 survives boot and the cold-start burst, so the ceiling is above 0.96 within this envelope. (3) The one real interaction: at util 0.96, `mnbt 8192` slows deep prefill ~9% (allocator pressure at the big-pool + big-chunk corner); `mnbt 4096` recovers to the 0.94 baseline. **The daily runs 0.96 / 4096** — the clean corner. 0.94 remains the conservative floor if a near-pool-full burst ever OOMs (not observed here). This also **reverses** the earlier `mnbt 4096` rejection, which was measured on the TurboQuant NVFP4 config where lowering `mnbt` freed pool at a prefill cost — neither effect holds on this AR + fp8 stack.
+Findings: (1) **`mnbt` does not change the pool** — it is identical at each util (chunked prefill already bounds the transient, so `mnbt` only sets the chunk size, not the steady-state allocation). **util is the only pool lever here: +8,450 tok per 0.01.** (2) **No OOM anywhere** in the sweep. (3) The one real interaction: at high util, `mnbt 8192` slows deep prefill ~9% (allocator pressure at the big-pool + big-chunk corner); `mnbt 4096` recovers to the 0.94 baseline — so `mnbt 4096` is the daily. This also **reverses** the earlier `mnbt 4096` rejection, which was measured on the TurboQuant NVFP4 config where lowering `mnbt` freed pool at a prefill cost — neither effect holds on this AR + fp8 stack.
+
+**Ceiling probe — 0.97 and 0.98 both survive, text *and* vision.** Two traps make naive burst tests lie: (a) **identical prompts are collapsed by prefix caching** and never actually fill the pool — capacity bursts must use prompts that differ from token 0; (b) text-only bursts miss the **vision-encoder transient**, the classic post-profiling OOM on a multimodal daily. With both fixed:
+
+| util | pool | text burst ~98% of pool | text burst ~104% (oversubscribed) | vision burst | mixed |
+|---|---|---|---|---|---|
+| 0.97 | 278,873 | ✅ 8× 200 | ✅ 8× 200 | *(covered by 0.98)* | |
+| **0.98** | **287,323** | ✅ 8× 200 | ✅ 8× 200 | ✅ **8× concurrent, 4× 2048² images each — 8/8 real replies** | ✅ 4 vision + 4 deep-text (~30K) |
+
+Zero OOM/IMA anywhere; oversubscription preempts cleanly. **The daily runs util 0.98 / `mnbt` 4096 → pool 287,323**, leaving ~600 MB VRAM. What 0.98 does *not* have is margin for the unprobeable: multi-day fragmentation or a future colocated sidecar — if either ever bites, fall back to 0.96 (270,422) or 0.94 (253,521).
 
 ---
 
@@ -179,7 +188,7 @@ A full 89-task run against that baseline is the obvious next measurement; it is 
 | `--async-scheduling` (not passing `--no-async-scheduling`) | c4 552 → 526 on throughput **and** corrupts KV under MTP (0/8 on 4bit_nc, ~10% on k8v4). Rejected — `--no-async-scheduling` is mandatory. |
 | **nvfp4-FA2** (FlashInfer FA2 nvfp4 KV) | Builds & runs byte-identical (jethac/vllm + FlashInfer #3684, JIT sm120), but loses to `4bit_nc`: stable pool 184K, decode −8..−23%, tool-eval 82, OOMs at util 0.97, 2-branch dev build + ~15min JIT. Rejected — see [REJECTED.md](../docs/REJECTED.md). |
 | smaller-bit TQ presets `k3v4_nc` / `3bit_nc` | PPL delta vs bf16: k8v4 +1.17% → 4bit_nc +2.71% → k3v4_nc +10.63% → 3bit_nc +20.59%. Every preset below 4bit_nc attacks the keys. Rejected. |
-| `--max-num-batched-tokens 4096` (on the TurboQuant NVFP4 config) | prefill 9,607 → 2,556 (**−73%**) for +28K ctx. Rejected **here**. Note: on the current AR + fp8 daily this reverses — `mnbt 4096` neither changes the pool nor costs prefill, and *is* the daily (see [the util sweep](#pool-vs-util--the-util096-corner)). |
+| `--max-num-batched-tokens 4096` (on the TurboQuant NVFP4 config) | prefill 9,607 → 2,556 (**−73%**) for +28K ctx. Rejected **here**. Note: on the current AR + fp8 daily this reverses — `mnbt 4096` neither changes the pool nor costs prefill, and *is* the daily (see [the util sweep](#pool-vs-util--the-util-ceiling)). |
 | `VLLM_TQ_KV_SPLITS=8` | c1 143 → 132, c8 unchanged. Rejected (default 32 is right). |
 | froggeric chat template | 4/4 vs bundled 4/4 on a behavioural tool-call probe. No gain. |
 | DFlash | 3.3 GB draft model → 1,616-token context. Fatal on 32 GB. |

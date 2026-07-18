@@ -1,13 +1,13 @@
-# Qwen3.6-27B on a single RTX 5090 — 270K KV pool, fp8 cache, MTP K=4 speculative decoding
+# Qwen3.6-27B on a single RTX 5090 — 287K KV pool, fp8 cache, MTP K=4 speculative decoding
 
-Serving **Qwen3.6-27B with a 270K-token KV pool (200K usable context), MTP speculative decoding at `ns=4`, and vision** on one 32 GB consumer GPU (RTX 5090, Blackwell `sm_120`).
+Serving **Qwen3.6-27B with a 287K-token KV pool (200K usable context), MTP speculative decoding at `ns=4`, and vision** on one 32 GB consumer GPU (RTX 5090, Blackwell `sm_120`).
 
 The daily is the **[Lorbus INT4-AutoRound](https://huggingface.co/Lorbus/Qwen3.6-27B-int4-AutoRound)** weights + **`fp8_e4m3` KV cache** + **FlashInfer** attention + **MTP `ns=4`**, on a patched vLLM image. The one patch that makes `ns=4` possible on Blackwell is [vLLM PR #42603](https://github.com/vllm-project/vllm/pull/42603) — without it, MTP + fp8 KV illegal-memory-access-crashes under any real concurrency.
 
 ## What you get
 
 - **Qwen3.6-27B** (Lorbus INT4-AutoRound weights, `--quantization auto-round`) over an OpenAI-compatible endpoint.
-- **270K-token KV pool → 200K usable context** on `fp8_e4m3` KV — the fp8 attention path is flat with depth (no decode crater) where custom 4-bit-KV kernels crater.
+- **287K-token KV pool → 200K usable context** on `fp8_e4m3` KV — the fp8 attention path is flat with depth (no decode crater) where custom 4-bit-KV kernels crater.
 - **MTP speculative decoding at `ns=4`** — draft head inside the weights, ~0 VRAM — crash-free under concurrency thanks to [PR #42603](https://github.com/vllm-project/vllm/pull/42603).
 - **Vision** — the model's image tower, on.
 - All of it on **one 32 GB RTX 5090** (`sm_120`), memory-OC'd, 600 W.
@@ -15,7 +15,7 @@ The daily is the **[Lorbus INT4-AutoRound](https://huggingface.co/Lorbus/Qwen3.6
 ## Benchmarks
 
 Hardware: RTX 5090 32 GB (`sm_120`, +4500 MHz mem OC, 600 W) + Ryzen 9 5900X + 64 GB RAM, Ubuntu 24.04.
-Model: Qwen3.6-27B Lorbus INT4-AutoRound + `fp8_e4m3` KV + FlashInfer 0.6.15 + MTP `ns=4` + vision, `--no-async-scheduling`, util 0.96, pool **270,422 tok**.
+Model: Qwen3.6-27B Lorbus INT4-AutoRound + `fp8_e4m3` KV + FlashInfer 0.6.15 + MTP `ns=4` + vision, `--no-async-scheduling`, util 0.98, pool **287,323 tok**.
 Tool: [llama-benchy](https://github.com/eugr/llama-benchy) 0.3.8. Full detail in [bench/RESULTS.md](bench/RESULTS.md).
 
 **Stability — the point of the patch.** Every axis that reliably IMA-crashed on stock (with `ns=4`) now runs zero-crash: full concurrent c4/c8 (pp512+pp4096, ×3), a repeat c8 ×5 stress, deep pp30000 × c4, **deep pp90000 × c4** (worst case — deep + concurrent + `ns=4`), and the full **69×2 tool-eval** under load.
@@ -86,25 +86,25 @@ The daily uses these three; the image also carries an (unused-by-this-config) Tu
 - `--kv-cache-dtype fp8_e4m3` + `-e VLLM_ATTENTION_BACKEND=FLASHINFER` — the flat-with-depth attention path; `e5m2` is **not** usable on this checkpoint (vLLM: "fp8_e5m2 not supported with fp8 checkpoints").
 - `--speculative-config '{"method":"qwen3_5_mtp","num_speculative_tokens":4}'` — MTP `ns=4`. **Requires the [PR #42603](https://github.com/vllm-project/vllm/pull/42603) graft** or it IMA-crashes under concurrency.
 - **`--no-async-scheduling` — keep it.** MTP emits a multi-token verify batch every step; vLLM's async scheduler desyncs its request-ID→batch-row mapping under spec decode ([vllm#42655](https://github.com/vllm-project/vllm/issues/42655)) and corrupts KV. Async-off is the documented fix.
-- `--mamba-cache-mode align --enable-prefix-caching --enable-chunked-prefill` — hybrid-model prefix caching; **`align` is load-bearing for the 270K pool** (it packs the GDN/Mamba state into the unified KV pool). Mode `all` is same speed / same pool and does **not** avoid the crash — don't bother.
-- `--gpu-memory-utilization 0.96 --max-model-len 200000 --max-num-batched-tokens 4096` — let vLLM profile the pool; don't hand-set `--kv-cache-memory` (its "fully utilize" hint ignores warmup transients and OOMs). util is the only pool lever here (~+8.4K tok/0.01); `mnbt` doesn't change the pool, and at util 0.96 `mnbt 4096` avoids a ~9% deep-prefill slowdown that `mnbt 8192` incurs. See the [util sweep](bench/RESULTS.md#pool-vs-util--the-util096-corner). 0.94 is the conservative floor.
+- `--mamba-cache-mode align --enable-prefix-caching --enable-chunked-prefill` — hybrid-model prefix caching; **`align` is load-bearing for the 287K pool** (it packs the GDN/Mamba state into the unified KV pool). Mode `all` is same speed / same pool and does **not** avoid the crash — don't bother.
+- `--gpu-memory-utilization 0.98 --max-model-len 200000 --max-num-batched-tokens 4096` — let vLLM profile the pool; don't hand-set `--kv-cache-memory` (its "fully utilize" hint ignores warmup transients and OOMs). util is the only pool lever here (~+8.4K tok/0.01 → 287,323 at 0.98); `mnbt` doesn't change the pool, and at high util `mnbt 4096` avoids a ~9% deep-prefill slowdown that `mnbt 8192` incurs. The ceiling was probed above 0.98 with near-full text bursts **and** concurrent max-res vision bursts — see the [util sweep + ceiling probe](bench/RESULTS.md#pool-vs-util--the-util-ceiling). 0.96 / 0.94 are the fallback floors.
 - `--reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_xml` — `qwen3_xml` is correct; `hermes` silently drops tool calls.
 - `--override-generation-config '{"temperature":0.6,"top_p":0.95,"top_k":20}'` + `--default-chat-template-kwargs '{"preserve_thinking":true}'` — keep historical `<think>` blocks across turns. **Caveat:** the *client* must resend prior reasoning in the **`reasoning`** field (not the deprecated `reasoning_content`, which vLLM ignores on input).
 - `--structured-outputs-config '{"backend":"xgrammar","reasoning_parser":"qwen3","enable_in_reasoning":false}'` — enables the reasoning gate the [#44993](https://github.com/vllm-project/vllm/pull/44993) graft needs. Give it an adequate `max_tokens` budget (reasoning + JSON) or it truncates mid-think and looks empty.
 - `--limit-mm-per-prompt '{"image":4,"video":0}'` — vision on.
 
-**Verify container identity after launch.** Confirm the startup log reports a **~270K-token KV pool** (at util 0.96). A wrong pool size means a preset/dtype/align mismatch reading as a perfectly healthy server at the *wrong* config.
+**Verify container identity after launch.** Confirm the startup log reports a **~287K-token KV pool** (at util 0.98). A wrong pool size means a preset/dtype/align mismatch reading as a perfectly healthy server at the *wrong* config.
 
 ## Gotchas that bite during setup
 
 1. **MTP `ns≥2` needs [PR #42603](https://github.com/vllm-project/vllm/pull/42603) or it IMA-crashes under concurrency.** Single-stream and `ns=1` pass every test and hide it; `CUDA_LAUNCH_BLOCKING=1` masks it. **Load-test with 3+ parallel streams on day one** — that's the only thing that reproduces it.
 2. **`--no-async-scheduling` is mandatory with MTP.** Async scheduling desyncs the request-ID→batch-row mapping under spec decode ([#42655](https://github.com/vllm-project/vllm/issues/42655)) and corrupts KV.
-3. **Verify the ~270K KV pool in the launch log.** A silent config fallback (wrong preset, `align` off, wrong image) looks like a healthy server at the wrong pool.
+3. **Verify the ~287K KV pool in the launch log.** A silent config fallback (wrong preset, `align` off, wrong image) looks like a healthy server at the wrong pool.
 4. **flashinfer JIT eats all host RAM (non-nightly images).** Any non-nightly vLLM image on `sm_120` JIT-compiles CUTLASS kernels on the first forward with unbounded `nvcc` parallelism — multi-GB per job, reads as a mystery "hang" or whole-host livelock. Cap it (`MAX_JOBS=4` + `FLASHINFER_NUM_COMPILE_JOBS=4`) and **mount a persistent `/root/.cache/flashinfer`** (one build, warm forever).
 5. **vLLM's prefix-cache metric lies on this model.** `vllm:prefix_cache_hits_total` / "Prefix cache hit rate: 0.0%" report **0% while the cache works**. Don't debug the counter — time a repeated prompt ([`bench/prefix_probe.py`](bench/prefix_probe.py)).
 6. **Validate coherence via raw `/v1/completions`.** The chat endpoint's reasoning parser swallows degenerate output as *empty content*, so a broken model looks "fine but quiet." Tells: constant-token output, or **flat 100% MTP acceptance** (draft and verify locked in step).
 7. **Re-verify after every vLLM bump.** These grafts are version-sensitive; a nightly that moves `llm_base_proposer.py` will fail the `ast` check at build (loud) or, worse, shift the anchor.
-8. **Burst-test the util ceiling — a ramping benchmark won't.** The failure mode at high util is a *cold-start* OOM: ~8 simultaneous fresh prompts hit the GDN prefill kernel at once and can kill the engine, where a benchmark that ramps concurrency never trips it. A [util × mnbt sweep](bench/RESULTS.md#pool-vs-util--the-util096-corner) burst-tested `{0.94, 0.95, 0.96}` — all survive, so the daily runs **0.96** (270K pool). If you change model/context/hardware, re-run the burst before trusting a higher util; 0.94 is the safe floor. (An earlier note here claimed 0.95 crashes — that was pre-sweep and is superseded.)
+8. **Burst-test the util ceiling — a ramping benchmark won't.** The failure mode at high util is a *cold-start* transient: many simultaneous fresh prompts hitting prefill (or the vision encoder) at once, which a benchmark that ramps concurrency never reproduces. A [util × mnbt sweep + ceiling probe](bench/RESULTS.md#pool-vs-util--the-util-ceiling) burst-tested `{0.94 … 0.98}` with near-pool-full **distinct-prompt** text bursts, 8× concurrent 4-image (2048²) vision bursts, and mixed vision+deep-text — all survive, so the daily runs **0.98** (287K pool, ~600 MB VRAM margin). Two traps when you reproduce this: (a) identical prompts are silently collapsed by prefix caching and never fill the pool — use distinct prompts; (b) text-only bursts miss the vision-encoder transient. If you change model/context/hardware, re-run the bursts before trusting high util; 0.96/0.94 are the fallback floors. (An earlier note here claimed 0.95 crashes — that was pre-sweep and is superseded.)
 
 ## Daily lineage — what each daily was, and why the next took over
 
@@ -112,7 +112,7 @@ Newest first. Every switch is documented with numbers in [docs/HISTORY.md](docs/
 
 | daily | weights · KV | pool | why it took over |
 |---|---|---|---|
-| **Lorbus INT4-AutoRound · fp8_e4m3** + FlashInfer + MTP `ns=4` **(current, 2026-07-18)** | INT4-AutoRound · fp8 | **~270K** | Flat deep decode (fp8+FlashInfer has **no** decode crater at depth, where the custom TurboQuant kernel drops); biggest pool yet; **MTP `ns=4`** restored by [PR #42603](https://github.com/vllm-project/vllm/pull/42603); tool-eval 90; and it drops the experimental TurboQuant KV kernel for the **battle-tested fp8** path. Smaller INT4-AutoRound weights free more VRAM for KV than NVFP4, so fp8 KV reaches 253K at util 0.94 (vs ~136K under NVFP4 weights), and **270K at util 0.96** after a burst-tested [util sweep](bench/RESULTS.md#pool-vs-util--the-util096-corner). |
+| **Lorbus INT4-AutoRound · fp8_e4m3** + FlashInfer + MTP `ns=4` **(current, 2026-07-18)** | INT4-AutoRound · fp8 | **~287K** | Flat deep decode (fp8+FlashInfer has **no** decode crater at depth, where the custom TurboQuant kernel drops); biggest pool yet; **MTP `ns=4`** restored by [PR #42603](https://github.com/vllm-project/vllm/pull/42603); tool-eval 90; and it drops the experimental TurboQuant KV kernel for the **battle-tested fp8** path. Smaller INT4-AutoRound weights free more VRAM for KV than NVFP4, so fp8 KV reaches 253K at util 0.94 (vs ~136K under NVFP4 weights), and **287K at util 0.98** after a burst-tested [util sweep + ceiling probe](bench/RESULTS.md#pool-vs-util--the-util-ceiling) (text near-full + concurrent vision bursts all pass). |
 | turboquant_4bit_nc (NVFP4) + MTP `ns=3` (2026-07-15) | NVFP4 · TQ 4-bit K/V | ~235K | +42% pool over k8v4, once the "4bit_nc destroys retrieval" **0/8** was traced to the async×spec KV confound and fixed with `--no-async-scheduling`. Decode still craters at deep single-stream (the custom-kernel cost). |
 | turboquant_k8v4 (NVFP4) | NVFP4 · TQ 8-bit K/4-bit V | ~165K | +21% pool over fp8 at fp8-equal retrieval quality (8-bit keys). |
 | fp8_e4m3 (stock nightly) | NVFP4 · fp8 | ~136K | The original battle-tested baseline — flat deep decode, no patches, smallest pool. |
