@@ -192,3 +192,9 @@ A full 89-task run against that baseline is the obvious next measurement; it is 
 | `VLLM_TQ_KV_SPLITS=8` | c1 143 → 132, c8 unchanged. Rejected (default 32 is right). |
 | froggeric chat template | 4/4 vs bundled 4/4 on a behavioural tool-call probe. No gain. |
 | DFlash | 3.3 GB draft model → 1,616-token context. Fatal on 32 GB. |
+
+## Correction (2026-07-19): util 0.98 retired — serve-time autotune OOM; deep-concurrency numbers re-based
+
+The "Pool vs util — the util ceiling" section above promoted util 0.98 off boot-margin + burst evidence. **Superseded:** the first genuinely new deep batch shape (`pp8192 × c8`) makes the fp4-GEMM/FlashInfer autotuner allocate ~266 MiB of serve-time workspace (mnbt-4096 shapes; ~486 MiB for 8192 shapes), which OOM-kills the engine at 0.98's ~600 MB margin — 2/2 reproducible, zero warning in any boot-time probe. Daily = **util 0.96, pool 270,422**, validated against the killer shape + full burst battery. `mnbt 8192` needs ≲0.94.
+
+Deep-concurrency re-base (pp30000, util 0.96, `tg 512`): sustained aggregate c1 122 / c4 76 / c8 67 — but **peak 510 (c4) / 604 (c8)**, ~135 t/s per stream during overlap. Sustained is prefill-gated (cold 30K prefill ≈ 8.6 s of the shared ~3.5K t/s chunk lane shadows all decoders to ~1–5 t/s), not decode-gated. Warm/prefix-cached fleets run at the peaks. `tg 128` deep cells (19–22 t/s "aggregate") measure only the prefill shadow — protocol now requires `tg ≥ 512` for steady state. Raw: `/srv/qwen5090/results/2026-07-18-mnbt-sweep/`.
