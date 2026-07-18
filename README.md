@@ -12,6 +12,33 @@ The daily is the **Lorbus INT4-AutoRound** weights + **`fp8_e4m3` KV cache** + *
 - **Vision** — the model's image tower, on.
 - All of it on **one 32 GB RTX 5090** (`sm_120`), memory-OC'd, 600 W.
 
+## Benchmarks
+
+Hardware: RTX 5090 32 GB (`sm_120`, +4500 MHz mem OC, 600 W) + Ryzen 9 5900X + 64 GB RAM, Ubuntu 24.04.
+Model: Qwen3.6-27B Lorbus INT4-AutoRound + `fp8_e4m3` KV + FlashInfer 0.6.15 + MTP `ns=4` + vision, `--no-async-scheduling`, util 0.94, pool **253,521 tok**.
+Tool: [llama-benchy](https://github.com/eugr/llama-benchy) 0.3.8. Full detail in [bench/RESULTS.md](bench/RESULTS.md).
+
+**Stability — the point of the patch.** Every axis that reliably IMA-crashed on stock (with `ns=4`) now runs zero-crash: full concurrent c4/c8 (pp512+pp4096, ×3), a repeat c8 ×5 stress, deep pp30000 × c4, **deep pp90000 × c4** (worst case — deep + concurrent + `ns=4`), and the full **69×2 tool-eval** under load.
+
+**Decode — `t/s (total)` (aggregate), `--pp 512 4096 --tg 128 --concurrency 1 2 4 8 --runs 3`:**
+
+| decode t/s (total) | c1 | c2 | c4 | c8 |
+|---|---|---|---|---|
+| pp512 | 114 | 212 | 355 | 496 |
+| pp4096 | 129 | 164 | 198 | 157 |
+
+**Long context (c1) — prefill / e2e-TTFT / decode.** Decode is **flat ~128–133 t/s from 30K → 180K** — the fp8 + FlashInfer attention kernel has no deep-context crater, now with `ns=4` spec on top:
+
+| context | prefill t/s | e2e TTFT | decode t/s |
+|---|---|---|---|
+| 30K | 3,653 | 7.4 s | 128 |
+| 90K | 2,924 | 27.9 s | 132 |
+| 180K | 2,249 | 72.4 s | 133 |
+
+Deep context holds *under* concurrency too — pp90000 × c4 stays alive at ~102 t/s/req.
+
+**Quality — [tool-eval-bench](https://github.com/SeraphimSerapis/tool-eval-bench): 90** / 100 (full 69-scenario suite × 2 trials; mean 88 ± 2.8, pass@k 89.9). The run doubles as the heaviest concurrent-load stability stress on the fix.
+
 ## Why it needs a patch: MTP × fp8-KV × Blackwell crashes on stock vLLM
 
 > ⚠️ **`ns≥2` MTP with `fp8_e4m3` KV on `sm_120` is a 100%-reproducible illegal-memory-access under concurrency** — a known, still-open upstream bug ([vllm#40756](https://github.com/vllm-project/vllm/issues/40756), same Qwen3.6-27B model; [vllm#35288](https://github.com/vllm-project/vllm/issues/35288) "MTP corrupted output at concurrency ≥ 4"). It crashes at `rejection_sampler.py:267 parse_output → cudaErrorIllegalAddress`. Single-stream and `ns=1` are both clean; `CUDA_LAUNCH_BLOCKING=1` masks it (→ a timing race).
@@ -50,33 +77,6 @@ The daily uses these three; the image also carries an (unused-by-this-config) Tu
 | [`install_pr42603_sync.py`](patches/install_pr42603_sync.py) — [PR #42603](https://github.com/vllm-project/vllm/pull/42603) | **The fix that makes MTP `ns=4` usable on Blackwell.** One `torch.accelerator.current_stream().synchronize()` in the MTP draft loop, after the cudagraph-buffer writes and before the draft forward — closes the stale-buffer race that IMA-crashes `ns≥2` + fp8 KV under concurrency ([#40756](https://github.com/vllm-project/vllm/issues/40756), [#35288](https://github.com/vllm-project/vllm/issues/35288)). Perf-neutral. [Validated numbers](bench/RESULTS.md#mtp-k4-restored-on-blackwell--the-fp8-kv-spec-decode-crash-pr-42603). |
 | FlashInfer 0.6.15 (Dockerfile pip step) | Latest FlashInfer, carrying the `sm_120` GDN/TMA fixes. cu130 AOT cubin/jit-cache isn't published for .15, so the image drops the mismatched 0.6.13 caches and lets 0.6.15 JIT-compile at runtime — **mount `/root/.cache/flashinfer`** (one build, warm forever). |
 | [PR #44993 graft](https://github.com/vllm-project/vllm/pull/44993) — `v1/structured_output/__init__.py`, `v1/core/sched/scheduler.py` | **Structured output that survives thinking.** With a reasoning model, `response_format` json_schema + thinking-on returned EMPTY `content` (the schema JSON leaked into `reasoning_content`) — `should_advance`'s delta window skips `</think>` when MTP rejects drafts, so the grammar never re-engages. Needs `--structured-outputs-config '{"backend":"xgrammar","reasoning_parser":"qwen3","enable_in_reasoning":false}'`. Two pure-Python files. |
-
-## Benchmarks
-
-Hardware: RTX 5090 32 GB (`sm_120`, +4500 MHz mem OC, 600 W) + Ryzen 9 5900X + 64 GB RAM, Ubuntu 24.04.
-Model: Qwen3.6-27B Lorbus INT4-AutoRound + `fp8_e4m3` KV + FlashInfer 0.6.15 + MTP `ns=4` + vision, `--no-async-scheduling`, util 0.94, pool **253,521 tok**.
-Tool: [llama-benchy](https://github.com/eugr/llama-benchy) 0.3.8. Full detail in [bench/RESULTS.md](bench/RESULTS.md).
-
-**Stability — the point of the patch.** Every axis that reliably IMA-crashed on stock (with `ns=4`) now runs zero-crash: full concurrent c4/c8 (pp512+pp4096, ×3), a repeat c8 ×5 stress, deep pp30000 × c4, **deep pp90000 × c4** (worst case — deep + concurrent + `ns=4`), and the full **69×2 tool-eval** under load.
-
-**Decode — `t/s (total)` (aggregate), `--pp 512 4096 --tg 128 --concurrency 1 2 4 8 --runs 3`:**
-
-| decode t/s (total) | c1 | c2 | c4 | c8 |
-|---|---|---|---|---|
-| pp512 | 114 | 212 | 355 | 496 |
-| pp4096 | 129 | 164 | 198 | 157 |
-
-**Long context (c1) — prefill / e2e-TTFT / decode.** Decode is **flat ~128–133 t/s from 30K → 180K** — the fp8 + FlashInfer attention kernel has no deep-context crater, now with `ns=4` spec on top:
-
-| context | prefill t/s | e2e TTFT | decode t/s |
-|---|---|---|---|
-| 30K | 3,653 | 7.4 s | 128 |
-| 90K | 2,924 | 27.9 s | 132 |
-| 180K | 2,249 | 72.4 s | 133 |
-
-Deep context holds *under* concurrency too — pp90000 × c4 stays alive at ~102 t/s/req.
-
-**Quality — [tool-eval-bench](https://github.com/SeraphimSerapis/tool-eval-bench): 90** / 100 (full 69-scenario suite × 2 trials; mean 88 ± 2.8, pass@k 89.9). The run doubles as the heaviest concurrent-load stability stress on the fix.
 
 ## Config essentials
 
