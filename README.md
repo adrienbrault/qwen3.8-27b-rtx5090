@@ -128,8 +128,8 @@ What each token costs and what a cache hit is worth (60K-token context, measured
 | tier | capacity | revisit cost | status |
 |---|---|---|---|
 | GPU pool (vLLM prefix cache) | 239,436 tok | **~1–2 s** (≈ decode time only) | production |
-| host RAM (LMCache L1, 24 GiB pinned) | ~245K tok @ ~98 KiB/tok serialized | ~2 s | **experimental — failed fidelity validation, see below** |
-| NVMe (LMCache L2) | ~640K tok per 60 GiB | **3.4 s** (survives restarts) | **experimental — failed fidelity validation, see below** |
+| host RAM (LMCache L1, 24 GiB pinned) | ~245K tok @ ~98 KiB/tok serialized | ~2 s | **works with 3 local patches — pre-production, see below** |
+| NVMe (LMCache L2) | ~640K tok per 60 GiB | **~5–7.5 s** (survives restarts) | **works with 3 local patches — pre-production, see below** |
 | miss → full re-prefill | — | **~10 s** (was ~23 s on the W4A16 daily — the FP4-GEMM dividend) | the thing caches exist to avoid |
 
 Notes that save you from wrong conclusions:
@@ -137,7 +137,7 @@ Notes that save you from wrong conclusions:
 - **util is the only pool lever** (+~8.4K tok per 0.01: 222,535 @0.96 → 239,436 @0.98 measured); `max-num-seqs` provably isn't on this hybrid (`align` packs GDN state *into* the unified pool, consumed per **active** request — seqs 4 vs 8 gave the identical pool).
 - The in-pool ~39 KiB/tok is an *effective average*: full-attention layers pay per-token fp8 KV; GDN layers pay a fixed per-sequence state that amortizes with depth. Serialized tiers pay ~98 KiB/tok because LMCache ships whole 1616-token unified blocks (attention KV + state page + metadata, padded to full block).
 - Effective deep concurrency is **pool-bound, not `max-num-seqs`-bound**: 4 × ~70K-token agent sessions fill the pool; request 5 queues.
-- The RAM/NVMe tiers require LMCache ≥ the [PR #4128](https://github.com/LMCache/LMCache/pull/4128) kernels for this model's fused hybrid layout — release pairings up to 0.5.1 silently store nothing, and our own [withdrawn kernel patch](patches/README.md#lmcache-format-10-kernel-patch-separate-project) stored corrupted GDN state. Until a pairing passes a **cross-restart needle test**, treat every external tier as unvalidated ([details](docs/LMCACHE.md)).
+- The RAM/NVMe tiers now **pass the cross-restart needle test and score quality parity (88 vs 86–90 controls on the full 69×2)** — but only with **three local patches**, none upstream yet: two on LMCache `main` (a stride-aware regroup of the fp8 backend's 16-token kernel pages into logical hybrid pages — releases through 0.5.1 silently store *nothing* on this layout, and our earlier [withdrawn kernel patch](patches/README.md#lmcache-format-10-kernel-patch-separate-project) corrupted state) and one on **vLLM itself**: with any KV connector configured *and* MTP enabled on a hybrid model, the scheduler's connector-path prefix-hit lookup mixes an EAGLE-adjusted attention hit with an unadjusted Mamba hit and takes `max()` — leaving one **allocated-but-never-filled attention block** at every local cache hit (cost: ~10 eval points, in either connector role, even at concurrency 1). One narrow MTP-rehit edge case is still under investigation, so the tiered profile is **pre-production**. Full story in [docs/LMCACHE.md](docs/LMCACHE.md). Whatever you run: **needle-test across a restart before trusting any external KV tier on a hybrid model** — hit counters and coherent output do not prove fidelity.
 
 ## Why it needs a patch: MTP × fp8-KV × Blackwell crashes on stock vLLM
 
