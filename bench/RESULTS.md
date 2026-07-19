@@ -198,3 +198,19 @@ A full 89-task run against that baseline is the obvious next measurement; it is 
 The "Pool vs util — the util ceiling" section above promoted util 0.98 off boot-margin + burst evidence. **Superseded:** the first genuinely new deep batch shape (`pp8192 × c8`) makes the fp4-GEMM/FlashInfer autotuner allocate ~266 MiB of serve-time workspace (mnbt-4096 shapes; ~486 MiB for 8192 shapes), which OOM-kills the engine at 0.98's ~600 MB margin — 2/2 reproducible, zero warning in any boot-time probe. Daily = **util 0.96, pool 270,422**, validated against the killer shape + full burst battery. `mnbt 8192` needs ≲0.94.
 
 Deep-concurrency re-base (pp30000, util 0.96, `tg 512`): sustained aggregate c1 122 / c4 76 / c8 67 — but **peak 510 (c4) / 604 (c8)**, ~135 t/s per stream during overlap. Sustained is prefill-gated (cold 30K prefill ≈ 8.6 s of the shared ~3.5K t/s chunk lane shadows all decoders to ~1–5 t/s), not decode-gated. Warm/prefix-cached fleets run at the peaks. `tg 128` deep cells (19–22 t/s "aggregate") measure only the prefill shadow — protocol now requires `tg ≥ 512` for steady state. Raw: `/srv/qwen5090/results/2026-07-18-mnbt-sweep/`.
+
+## Promotion (2026-07-19): natfii NVFP4 W4A4 is the daily — util 0.98, pool 239,436
+
+All numbers measured on the promoted config (natfii W4A4 + fp8_e4m3 KV + FlashInfer 0.6.15 + MTP ns=4 + vision, `mnbt` 4096, `VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE=134217728`), llama-benchy 0.3.8, raw output in `/srv/qwen5090/results/2026-07-19-natfii-daily-bench/` and `/srv/qwen5090/results/2026-07-19-natfii-ceiling/`.
+
+**Decode (tg128 total t/s):** pp512 116/213/358/706 (c1/c2/c4/c8, peak 933) · pp4096 126/204/280/352 (peak 854).
+
+**Sustained deep concurrency (tg512 aggregate, c8):** pp512 **769** · pp8192 **326** · pp30000 **148** — vs the AR daily's 604/225/67 on the identical protocol. The gap is the prefill lane: W4A4 widened it ~3.4×.
+
+**Prefill lane (aggregate, flat with concurrency):** pp8192 13,315 (c1) / 13,577 (c4) / 13,347 (c8) · pp30000 10,117 / 10,001 / 9,878. Per-request divides by N as always; the queue just drains 3× faster (c8×30K worst-case TTFT ~12.3 ± 6.3 s, was ~30 ± 19 s).
+
+**Long context c1 (prefill / e2e TTFT / decode):** 30K: 10,167 / 2.7 s / 136 · 90K: 5,780 / 14.1 s / 140 · 180K: 3,472 / 47.0 s / 138. Decode flat with depth; prefill advantage narrows with depth (attention's O(n²) share is not FP4) but never inverts.
+
+**Quality (tool-eval-bench, full 69×2):** natfii pooled **89.8** over 4 independent trials vs AR 87.8 (4 trials) — parity within noise. The W4A4-activation cost was bounded at ≈1 pt by a chimera A/B (natfii MLPs + NVIDIA fp8 attention, one merged checkpoint: 90.0; NVIDIA W4A16: 91.0). The quick-15 subset has a ±7 noise band (106-sample distribution, median 93) — promotions are scored on the full suite only.
+
+**Util ceiling (this model):** 0.98 = 239,436 tok, boot free ~1.4 GiB, steady-state floor ~130–190 MiB after autotune workspaces allocate. Battery: needle (60K), pp8192×c8, pp30000×c8, pp512×c8 tg512, 8× distinct ~34K floods, 8× 4-image vision bursts, then two simultaneous combined waves (16 requests + benchy) on a cold engine — zero crash signatures; plus a 106-cycle overnight soak. 0.96 = 222,535 (validated fallback). The previous daily's 0.98 serve-time OOM does not reproduce here (smaller margin pressure + 128 MiB workspace cap + boot pre-warm) — the ceiling is model-specific.
