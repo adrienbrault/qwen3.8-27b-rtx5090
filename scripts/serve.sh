@@ -117,6 +117,6 @@ sudo docker restart owui-proxy >/dev/null 2>&1 || true   # so Open WebUI re-disc
 #                                Fall back to 0.96 (222K) if fragmentation or a sidecar ever bites.
 #   tokenizer guard            : see gotcha #9 in the README — baked truncation:8192 in the
 #                                shipped tokenizer.json breaks >8K-token multimodal requests.
-# SPEED: prefill ~13.5K t/s @8K (c1). Deep-concurrent sustained (tg512): pp512xc8 769,
-#   pp8192xc8 326, pp30000xc8 148 t/s aggregate. tool-eval-bench ~90 (full 69x2, 4 trials).
+# SPEED: prefill ~13.5K t/s @8K (c1). Deep-concurrent sustained (tg512): pp512xc8 778,
+#   pp8192xc8 466, pp30000xc8 149 t/s aggregate. tool-eval-bench ~90 (full 69x2, 4 trials).
 # ------------------------------------------------------------------------------

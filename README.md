@@ -61,7 +61,9 @@ Tool: [llama-benchy](https://github.com/eugr/llama-benchy) 0.3.8. Full detail in
 | pp512 | 116 | 213 | 358 | **706** (peak 933) |
 | pp4096 | 126 | 204 | 280 | 352 (peak 854) |
 
-**Concurrency at depth — two regimes, not one number.** Batched decode at depth is *fast* on this hybrid (GDN layers pay no per-token KV reads): warm-fleet decode peaks at **732–933 t/s aggregate** (c8, pp512→pp8192), ~95–118 t/s per stream. What drags *sustained* cold-context numbers down is the **prefill lane** — but W4A4 widened that lane ~3×, so the penalty shrank in proportion. Sustained `tg 512` aggregate at c8: **769 t/s** (pp512), **326** (pp8192), **148** (pp30000) — the previous daily managed 604/225/67 on the same protocol. The practical split:
+Over-capacity is safe: c16 (2× `max-num-seqs`) queues cleanly at 593 t/s aggregate (peak 898) — the scheduler caps active streams at 8, so extra requests wait instead of destabilizing the engine.
+
+**Concurrency at depth — two regimes, not one number.** Batched decode at depth is *fast* on this hybrid (GDN layers pay no per-token KV reads): warm-fleet decode peaks at **732–933 t/s aggregate** (c8, pp512→pp8192), ~95–118 t/s per stream. What drags *sustained* cold-context numbers down is the **prefill lane** — but W4A4 widened that lane ~3×, so the penalty shrank in proportion. Sustained `tg 512` aggregate at c8: **778 t/s** (pp512), **466** (pp8192), **149** (pp30000) — the previous daily managed 604/225/67 on the same protocol. The practical split:
 
 - **Warm fleet** (prefix-cache hits — the normal agent-revisit case): decode aggregate ≈ the peaks, 700–930 t/s.
 - **Cold fleet** (N fresh deep contexts at once): prefill-bound — ~10–13.5K t/s shared prefill lane; a cold 30K prefill now occupies ~3.0 s of it (was ~8.6 s), so the decode shadow drains 3× faster.
@@ -86,6 +88,8 @@ Consequence: N simultaneous cold contexts still serialize through the lane, but 
 | 180K | 3,472 | **47.0 s** (was 72.4) | 138 |
 
 (Prefill t/s falls with depth as attention's O(n²) share grows — the FP4 GEMM speedup applies to the MLP share, so the advantage narrows from ~3.4× at 8K to ~1.5× at 180K. Still faster everywhere.)
+
+Deep context holds under concurrency too: **pp90000 × c4** runs to completion at 135 t/s per-stream decode peak (vs ~102 on the previous daily); the sustained aggregate (39 t/s) is pure prefill-lane arithmetic — four cold 90K contexts share the ~5.3K t/s deep lane, worst-case TTFT ~56 s. Warm revisits skip all of it.
 
 **Quality — [tool-eval-bench](https://github.com/SeraphimSerapis/tool-eval-bench): ~90** / 100 (full 69-scenario suite × 2 trials, ×4 independent runs, pooled mean 89.8) — statistically indistinguishable from the best W4A16 daily (87.8 pooled, same protocol; the quick-15 subset's noise band is ±7, which is why we score promotions on the full suite only). The runs double as the heaviest concurrent-load stability stress on the fix.
 
