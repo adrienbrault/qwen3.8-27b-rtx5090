@@ -1,17 +1,30 @@
 #!/usr/bin/env bash
-# Serve Qwen3.6-27B: natfii NVFP4 W4A4 weights + fp8_e4m3 KV + FlashInfer + MTP ns=4 + vision.
-# 200K context (~239K pool at util 0.98) on one RTX 5090. Requires the patched image (see ../patches/).
-# CRITICAL: MTP ns>=2 + fp8 KV IMA-crashes under concurrency on stock vLLM — the image's
-# PR #42603 graft is what fixes it. And --no-async-scheduling (vllm#42655). See NOTES.
-# Idempotent: removes the existing container first.
+# THE DAILY. Qwen3.6-27B: natfii NVFP4 W4A4 + fp8_e4m3 KV + FlashInfer + MTP ns=4 + vision,
+# with LMCache tiered KV offload: 214K on-GPU + ~245K pinned DRAM + ~640K NVMe
+# = ~1.10M reusable tokens, and the NVMe tier survives restarts.
+#
+# Requires the TIER image (../patches/lmcache/) — six local patches on top of the base image.
+# Running this profile on stock LMCache is WORSE THAN NOT CACHING: stores are silently
+# wrong-addressed and retrieves restore garbage state. Read ../patches/lmcache/README.md.
+#
+# For the no-LMCache variant (bigger hot pool, no tiers, no patches), see ./serve-plain.sh
+# and the README's "What removing LMCache changes".
 #
 #   MODEL_DIR=/path/to/Qwen3.6-27B-VLM-NVFP4-MTP ./serve.sh
 set -euo pipefail
 
 MODEL_DIR=${MODEL_DIR:-/srv/qwen5090/models/natfii-27b-nvfp4}   # natfii/Qwen3.6-27B-VLM-NVFP4-MTP
-IMAGE=${IMAGE:-vllm-qwen36:patched}   # build from ../patches/Dockerfile
-PORT=8020
+IMAGE=${IMAGE:-vllm-qwen36:tiers}    # build from ../patches/lmcache/Dockerfile
+PORT=${PORT:-8020}
 NAME=vllm-27b
+BLK=1616                             # unified block size with MTP ns=4 (1568 without). NOT 16.
+BATCHED=$((2 * BLK - 1))             # LMCache MP requires batched tokens in [chunk, 2*chunk)
+
+# L2 NVMe tier. 60 GB ~= 640K tokens, survives container restarts.
+# The cap is only real because of patch 0008 + the eviction block below — verify both.
+L2DIR=${L2DIR:-/srv/qwen5090/lmcache-l2-natfii}
+L2CAP=${L2CAP:-60}
+sudo mkdir -p "$L2DIR"
 
 # --- tokenizer truncation guard (gotcha #9) -----------------------------------
 # The published checkpoint ships tokenizer.json with truncation baked at 8192
@@ -39,39 +52,50 @@ CACHE="-v ${CACHE_DIR}/torch_compile_natfii:/root/.cache/vllm/torch_compile_cach
        -v ${CACHE_DIR}/flashinfer:/root/.cache/flashinfer"
 
 sudo docker rm -f "$NAME" >/dev/null 2>&1 || true
+sync && echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null   # the 24 GB L1 is PINNED RAM
 
-sudo docker run -d --name "$NAME" --runtime nvidia --gpus all --ipc=host \
-  -p ${PORT}:8000 --restart unless-stopped --shm-size 16g \
-  -e VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE=134217728 \
+sudo docker run -d --name "$NAME" --restart unless-stopped \
+  --entrypoint bash --runtime nvidia --gpus all --ipc=host \
+  -p ${PORT}:8000 --shm-size 8g --memory 52g --memory-swap 52g \
+  -e LMCACHE_DISABLE_BANNER=1 \
   -e VLLM_ATTENTION_BACKEND=FLASHINFER \
-  -v "$MODEL_DIR":/model $CACHE \
-  "$IMAGE" \
-  --model /model --served-model-name qwen3.6-27b --trust-remote-code \
-  --kv-cache-dtype fp8_e4m3 \
-  --no-async-scheduling \
-  --gpu-memory-utilization 0.98 --max-model-len 200000 \
-  --max-num-seqs 8 --max-num-batched-tokens 4096 \
-  --limit-mm-per-prompt '{"image":4,"video":0}' \
-  --mamba-cache-mode align --enable-prefix-caching --enable-chunked-prefill \
-  --speculative-config '{"method":"qwen3_5_mtp","num_speculative_tokens":4}' \
-  --structured-outputs-config '{"backend":"xgrammar","reasoning_parser":"qwen3","enable_in_reasoning":false}' \
-  --default-chat-template-kwargs '{"preserve_thinking":true}' \
-  --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_xml \
-  --override-generation-config '{"temperature":0.6,"top_p":0.95,"top_k":20}'
+  -e VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE=134217728 \
+  -e LMCACHE_MP_GPU_STAGING_BATCH_SIZE=1 -e CUDA_MODULE_LOADING=LAZY \
+  -e TORCHINDUCTOR_COMPILE_THREADS=8 -e MAX_JOBS=4 -e FLASHINFER_NUM_COMPILE_JOBS=4 \
+  $CACHE -v "$L2DIR":/l2 -v "$MODEL_DIR":/model \
+  "$IMAGE" -c "
+    lmcache server --host 0.0.0.0 --port 5555 --chunk-size $BLK \
+      --l1-size-gb 24 --l1-init-size-gb 2 --eviction-policy LRU \
+      --worker-reap-timeout-seconds 0 \
+      --l2-adapter '{\"type\":\"fs_native\",\"base_path\":\"/l2\",\"max_capacity_gb\":$L2CAP,\"num_workers\":4,\"eviction\":{\"eviction_policy\":\"LRU\",\"trigger_watermark\":0.8,\"eviction_ratio\":0.2}}' \
+      > /tmp/lmcache-server.log 2>&1 &
+    sleep 8
+    exec python3 -m vllm.entrypoints.openai.api_server \
+      --model /model --served-model-name qwen3.6-27b --trust-remote-code \
+      --kv-cache-dtype fp8_e4m3 --no-async-scheduling \
+      --gpu-memory-utilization 0.95 --max-model-len 200000 \
+      --max-num-seqs 8 --max-num-batched-tokens $BATCHED \
+      --limit-mm-per-prompt '{\"image\":4,\"video\":0}' \
+      --mamba-cache-mode align --enable-prefix-caching --enable-chunked-prefill \
+      --kv-transfer-config '{\"kv_connector\":\"LMCacheMPConnector\",\"kv_role\":\"kv_both\"}' \
+      --speculative-config '{\"method\":\"qwen3_5_mtp\",\"num_speculative_tokens\":4}' \
+      --structured-outputs-config '{\"backend\":\"xgrammar\",\"reasoning_parser\":\"qwen3\",\"enable_in_reasoning\":false}' \
+      --default-chat-template-kwargs '{\"preserve_thinking\":true}' \
+      --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_xml \
+      --override-generation-config '{\"temperature\":0.6,\"top_p\":0.95,\"top_k\":20}'
+  "
 
-echo "launching $NAME (natfii NVFP4 W4A4 + fp8 KV + FlashInfer + MTP ns=4) on :$PORT ..."
-for i in $(seq 1 90); do
+echo "launching $NAME (natfii W4A4 + fp8 KV + MTP ns=4 + LMCache 24G DRAM / ${L2CAP}G NVMe) on :$PORT ..."
+for i in $(seq 1 150); do
   curl -sf http://localhost:${PORT}/health >/dev/null 2>&1 && { echo "HEALTHY"; break; }
-  sudo docker ps --filter name="$NAME" --format x | grep -q x || { echo "DIED — see: sudo docker logs $NAME"; exit 1; }
-  sleep 5
+  sudo docker ps --filter name="$NAME" --format x | grep -q x || { echo "DIED — see: sudo docker logs $NAME"; sudo docker logs "$NAME" 2>&1 | tail -20; exit 1; }
+  sleep 10
 done
-echo "daily up. KV pool: $(sudo docker logs $NAME 2>&1 | grep 'GPU KV cache size' | tail -1)"
-echo "  ^ VERIFY this is ~239K (util 0.98). A wrong pool size means a dtype/align/preset mismatch (wrong config)."
+echo "daily up. KV pool: $(sudo docker logs $NAME 2>&1 | grep -a 'GPU KV cache size' | tail -1)"
+echo "  ^ VERIFY this is ~214K (util 0.95 + sidecar). 239K means the connector did NOT attach"
+echo "    (you booted the plain profile by accident); 165K/185K/205K mean a stale util."
 
 # --- autotune shape pre-warm (gotcha #8) --------------------------------------
-# The fp4-GEMM/FlashInfer autotuner allocates its workspace lazily, the first time
-# it meets a big fresh batch shape. Trigger that at boot — not when 8 agents wake
-# up at once against a ~150 MiB margin. Best-effort; needs llama-benchy on PATH.
 if command -v llama-benchy >/dev/null 2>&1; then
   echo "pre-warming autotune shapes (pp8192 c8, ~60s)..."
   llama-benchy --base-url http://localhost:${PORT}/v1 --model qwen3.6-27b \
@@ -82,41 +106,47 @@ fi
 sudo docker restart owui-proxy >/dev/null 2>&1 || true   # so Open WebUI re-discovers
 
 # ------------------------------------------------------------------------------
-# NOTES / KNOBS
-#   IMAGE                      : MUST be the patched build — stock vLLM IMA-crashes with
-#                                MTP ns>=2 + fp8 KV under concurrency (vllm#40756/#35288).
-#                                Build: ../patches/ (PR #42603 + FlashInfer 0.6.15 + #44993).
-#   PR #42603 (in the image)   : one current-stream sync in the MTP draft loop; the whole reason
-#                                ns=4 is usable here. Single-stream/ns=1 hide the bug; load-test
-#                                with 3+ parallel streams to reproduce/verify.
-#   --no-async-scheduling      : CRITICAL. vLLM's async scheduler desyncs the request-ID->batch-row
-#                                mapping under MTP's multi-token verify batches (vllm#42655) and
-#                                corrupts KV. Keep it off.
-#   (no --quantization flag)   : the checkpoint is a ModelOpt NVFP4 W4A4 export; vLLM auto-detects
-#                                it and dispatches CUTLASS FP4 GEMM (FlashInferCutlassNvFp4Linear).
-#                                W4A4 = the 3.4x prefill vs W4A16 (native FP4 tensor cores vs
-#                                Marlin dequant-to-bf16). Forcing a flag selects the wrong path.
-#   --kv-cache-dtype fp8_e4m3  : flat-with-depth attention via FlashInfer. e5m2 is NOT usable on this
-#                                checkpoint. --mamba-cache-mode align packs GDN state into the unified
-#                                pool -> ~239K at util 0.98. Do NOT set --block-size (hybrid allocator resolves it).
-#   --structured-outputs-config: enables the reasoning gate for the #44993 graft — response_format
-#                                json_schema with thinking-on otherwise returns EMPTY content.
-#                                Needs adequate max_tokens (reasoning + JSON).
-#   --default-chat-template-kwargs preserve_thinking:true
-#                              : keep historical <think> across turns. CLIENT must resend prior
-#                                reasoning in the `reasoning` field (NOT reasoning_content).
-#   --speculative-config ns=4  : MTP. --mamba-cache-mode all is same speed / same pool and does NOT
-#                                avoid the crash — don't bother; PR #42603 is the fix.
-#   util 0.98 + mnbt 4096      : util is the ONLY pool lever (+~8.4K tok/0.01 -> 239,436 at 0.98,
-#                                222,535 at 0.96). The ceiling is MODEL-SPECIFIC: 0.98 serve-time-
-#                                OOM'd the previous heavier W4A16 daily (lazy autotune workspace,
-#                                gotcha #8) but passes here WITH the 128MiB workspace cap env +
-#                                the boot pre-warm above. Battery that earned it: needle, pp8192xc8,
-#                                pp30000xc8, 8x text flood, 8x 4-image vision, then two SIMULTANEOUS
-#                                combined waves on a cold engine. Steady-state floor ~130-190 MiB.
-#                                Fall back to 0.96 (222K) if fragmentation or a sidecar ever bites.
-#   tokenizer guard            : see gotcha #9 in the README — baked truncation:8192 in the
-#                                shipped tokenizer.json breaks >8K-token multimodal requests.
-# SPEED: prefill ~13.5K t/s @8K (c1). Deep-concurrent sustained (tg512): pp512xc8 778,
-#   pp8192xc8 466, pp30000xc8 149 t/s aggregate. tool-eval-bench ~90 (full 69x2, 4 trials).
+# NOTES / KNOBS — the tier-specific ones. For everything shared with the plain
+# profile (PR #42603, --no-async-scheduling, no --quantization flag, the tokenizer
+# guard, util-vs-pool arithmetic) see ./serve-plain.sh, which annotates them all.
+#
+#   IMAGE vllm-qwen36:tiers    : MUST carry patches 0001/0002/0007/0008 (LMCache) and
+#                                0003/0005 (vLLM). On stock LMCache this profile stores
+#                                wrong-addressed pages and restores garbage recurrent
+#                                state — fluent output, vanished facts, no errors logged.
+#                                ../patches/lmcache/README.md has the full table.
+#   --ipc=host, --entrypoint bash : CUDA-IPC needs host IPC; the image entrypoint is
+#                                `vllm serve` and would swallow our `bash -c`.
+#   NO expandable_segments     : NEVER set PYTORCH_ALLOC_CONF=expandable_segments — cuMem/VMM
+#                                memory is not CUDA-IPC-exportable (pytorch#165685,
+#                                vllm#29544); the sidecar can't import the KV handles and
+#                                register_kv_caches silently times out at 300s.
+#   chunk 1616 / batched 3231  : chunk MUST equal vLLM's unified block size (1616 with MTP
+#                                ns=4, 1568 without — discovered, not documented) and
+#                                batched MUST be 2*chunk-1. This ceiling is why the tier
+#                                profile can't use the plain daily's mnbt 4096.
+#   --l1-size-gb 24            : PINNED host RAM; drop_caches first (done above), and the
+#                                cgroup --memory 52g must leave room for it. L1 must exceed
+#                                hot-working-set/0.8 or an LRU head-chunk cascade drops the
+#                                hit rate to 0% — partial caching does NOT degrade gracefully.
+#   --worker-reap-timeout-seconds 0 : reaper OFF. Lazy-heartbeat reap turns the cache into an
+#                                unrecoverable zombie (found_count=0, stores silently dropped).
+#   L2 eviction block          : patch 0008 enforces max_capacity_gb; this JSON block is what
+#                                actually evicts. You need BOTH. Unpatched + unset, L2 grew to
+#                                876 GB against a 60 GB cap and filled the root filesystem.
+#                                Monitor `du -sh $L2DIR` for the first day of any rollout.
+#   staging=1 + LAZY modules   : sidecar VRAM 1412 -> 796 MiB, zero latency cost. That's what
+#                                bought util 0.95 (pool 214,084) instead of 0.92 (185,538).
+#   --gpu-memory-utilization 0.95 : the sidecar's ~796 MiB is invisible to this flag, so the
+#                                tier ceiling sits BELOW the plain daily's 0.98. Validated by
+#                                an 858-cycle soak (needle+killer+vision per cycle, free VRAM
+#                                flat at 701 MiB, L2 oscillating 39-47G under the 60G cap).
+#                                Fallbacks: 0.94 -> 205,633 (killer floor 255 MiB), 0.92 -> 185,538.
+#   WIPE poisoned L2           : any namespace written by a pre-0005 build must be deleted.
+#                                0005 stops new poisoning; it does not repair stored chunks.
+#   --structured-outputs-config: carried over from the plain daily (the #44993 graft is in the
+#                                base image). This is the ONE flag not covered by the tier
+#                                battery — probe response_format+thinking after first boot.
+# TIERS: GPU 214,084 tok (~1-2s revisit) / DRAM ~245K (~2s) / NVMe ~640K (~4.4-7.5s, survives
+#   restarts) vs ~11-13s cold re-prefill. Quality 69x2 = 89 (baseline ~89.8).
 # ------------------------------------------------------------------------------

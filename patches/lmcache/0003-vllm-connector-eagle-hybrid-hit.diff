@@ -1,0 +1,258 @@
+diff --git a/tests/v1/core/test_connector_eagle_hybrid_hit.py b/tests/v1/core/test_connector_eagle_hybrid_hit.py
+new file mode 100644
+index 0000000..185c420
+--- /dev/null
++++ b/tests/v1/core/test_connector_eagle_hybrid_hit.py
+@@ -0,0 +1,197 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""CPU-only regression for connector + EAGLE/MTP hybrid prefix hits.
++
++The serving-image source dump does not include vLLM's test dependencies, so
++this test extracts the two coordinator methods under test with ``ast`` and
++runs them against small fake specs/managers. It is also directly runnable with
++the Python standard library.
++"""
++
++from __future__ import annotations
++
++import ast
++from collections import namedtuple
++from pathlib import Path
++from types import SimpleNamespace
++from typing import Any
++
++
++def _package_root() -> Path:
++    repo_root = Path(__file__).resolve().parents[3]
++    if (repo_root / "vllm" / "v1").is_dir():
++        return repo_root / "vllm"
++    return repo_root
++
++
++PACKAGE_ROOT = _package_root()
++COORDINATOR_PATH = PACKAGE_ROOT / "v1/core/kv_cache_coordinator.py"
++SCHEDULER_PATH = PACKAGE_ROOT / "v1/core/sched/scheduler.py"
++
++
++class FullAttentionSpec:
++    def __init__(self, block_size: int):
++        self.block_size = block_size
++
++
++class MambaSpec:
++    def __init__(self, block_size: int):
++        self.block_size = block_size
++
++
++SpecGroup = namedtuple("SpecGroup", "spec group_ids manager_cls use_eagle")
++
++
++class BlockHashListWithBlockSize:
++    def __init__(self, *_args: Any):
++        raise AssertionError("the fixture uses one common block size")
++
++
++BLOCK_SIZE = 16
++CACHE_BOUNDARY = 64
++
++
++class FullAttentionManager:
++    calls: list[tuple[int, bool, int]] = []
++
++    @classmethod
++    def find_longest_cache_hit(
++        cls, *, max_length: int, drop_eagle_block: bool, **_kwargs: Any
++    ) -> tuple[list[object]]:
++        num_blocks = min(max_length, CACHE_BOUNDARY) // BLOCK_SIZE
++        if drop_eagle_block and num_blocks:
++            num_blocks -= 1
++        hit = num_blocks * BLOCK_SIZE
++        cls.calls.append((max_length, drop_eagle_block, hit))
++        return ([object()] * num_blocks,)
++
++
++class MambaManager:
++    calls: list[tuple[int, bool, int]] = []
++
++    @classmethod
++    def find_longest_cache_hit(
++        cls, *, max_length: int, drop_eagle_block: bool, **_kwargs: Any
++    ) -> tuple[list[object | None]]:
++        # Match the production manager's semantics: the final entry is the
++        # actual state snapshot at the matched boundary; earlier entries are
++        # only position-preserving null placeholders. It intentionally ignores
++        # drop_eagle_block because draft models have no Mamba layers.
++        num_blocks = min(max_length, CACHE_BOUNDARY) // BLOCK_SIZE
++        hit = num_blocks * BLOCK_SIZE
++        cls.calls.append((max_length, drop_eagle_block, hit))
++        if not num_blocks:
++            return ([],)
++        return ([None] * (num_blocks - 1) + [object()],)
++
++
++def _load_coordinator_method(name: str):
++    tree = ast.parse(COORDINATOR_PATH.read_text())
++    coordinator = next(
++        node
++        for node in tree.body
++        if isinstance(node, ast.ClassDef)
++        and node.name == "HybridKVCacheCoordinator"
++    )
++    method = next(
++        node
++        for node in coordinator.body
++        if isinstance(node, ast.FunctionDef) and node.name == name
++    )
++    module = ast.Module(
++        body=[
++            ast.ImportFrom(
++                module="__future__",
++                names=[ast.alias(name="annotations")],
++                level=0,
++            ),
++            method,
++        ],
++        type_ignores=[],
++    )
++    ast.fix_missing_locations(module)
++    namespace = {
++        "BlockHashListWithBlockSize": BlockHashListWithBlockSize,
++        "FullAttentionSpec": FullAttentionSpec,
++        "MambaSpec": MambaSpec,
++        "SpecGroup": SpecGroup,
++    }
++    exec(compile(module, str(COORDINATOR_PATH), "exec"), namespace)
++    return namespace[name]
++
++
++def _make_coordinator(eagle_group_ids: set[int]) -> SimpleNamespace:
++    full_spec = FullAttentionSpec(BLOCK_SIZE)
++    mamba_spec = MambaSpec(BLOCK_SIZE)
++    # Use instances so verify_and_split_kv_cache_groups sees the fake manager
++    # classes exactly as it sees production manager classes.
++    managers = [FullAttentionManager(), MambaManager()]
++    for manager in managers:
++        manager.block_size = BLOCK_SIZE
++        manager.use_eagle = False
++    return SimpleNamespace(
++        kv_cache_config=SimpleNamespace(
++            kv_cache_groups=[
++                SimpleNamespace(kv_cache_spec=full_spec),
++                SimpleNamespace(kv_cache_spec=mamba_spec),
++            ]
++        ),
++        single_type_managers=managers,
++        eagle_group_ids=eagle_group_ids,
++        hash_block_size=BLOCK_SIZE,
++        scheduler_block_size=BLOCK_SIZE,
++        block_pool=object(),
++        dcp_world_size=1,
++    )
++
++
++def _run_common_lookup(eagle_group_ids: set[int]):
++    verify = _load_coordinator_method("verify_and_split_kv_cache_groups")
++    find_hit = _load_coordinator_method("find_longest_cache_hit")
++    coordinator = _make_coordinator(eagle_group_ids)
++    verify(coordinator)
++    blocks, common_hit = find_hit(
++        coordinator,
++        block_hashes=[object()] * (CACHE_BOUNDARY // BLOCK_SIZE),
++        max_cache_hit_length=CACHE_BOUNDARY,
++    )
++    return coordinator, blocks, common_hit
++
++
++def test_connector_uses_hybrid_common_lookup() -> None:
++    tree = ast.parse(SCHEDULER_PATH.read_text())
++    calls = {
++        node.func.attr
++        for node in ast.walk(tree)
++        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
++    }
++    assert "find_longest_cache_hit" in calls
++    assert "find_longest_cache_hit_per_group" not in calls
++
++
++def test_eagle_mamba_hit_is_bounded_by_safe_attention_hit() -> None:
++    FullAttentionManager.calls.clear()
++    MambaManager.calls.clear()
++    coordinator, blocks, common_hit = _run_common_lookup({0, 1})
++
++    attention_safe_hit = len(blocks[0]) * BLOCK_SIZE
++    assert common_hit <= attention_safe_hit
++    assert [group.use_eagle for group in coordinator.attention_groups] == [True, False]
++    assert MambaManager.calls == [(attention_safe_hit, False, attention_safe_hit)]
++    assert common_hit == attention_safe_hit == CACHE_BOUNDARY - BLOCK_SIZE
++    assert len(blocks[1]) * BLOCK_SIZE == common_hit
++
++
++def test_no_mtp_keeps_the_full_common_hit() -> None:
++    coordinator, blocks, common_hit = _run_common_lookup(set())
++
++    assert [group.use_eagle for group in coordinator.attention_groups] == [False, False]
++    assert common_hit == CACHE_BOUNDARY
++    assert tuple(len(group_blocks) for group_blocks in blocks) == (4, 4)
++
++
++if __name__ == "__main__":
++    test_connector_uses_hybrid_common_lookup()
++    test_eagle_mamba_hit_is_bounded_by_safe_attention_hit()
++    test_no_mtp_keeps_the_full_common_hit()
++    print("PASS: connector hybrid hit is bounded by the EAGLE-safe attention hit")
+diff --git a/v1/core/kv_cache_coordinator.py b/v1/core/kv_cache_coordinator.py
+index 2e97845..74e7eb3 100644
+--- a/v1/core/kv_cache_coordinator.py
++++ b/v1/core/kv_cache_coordinator.py
+@@ -583,7 +583,11 @@ class HybridKVCacheCoordinator(KVCacheCoordinator):
+         for i, g in enumerate(self.kv_cache_config.kv_cache_groups):
+             manager_cls = self.single_type_managers[i].__class__
+             spec = g.kv_cache_spec
+-            use_eagle = i in self.eagle_group_ids
++            # Draft models do not have Mamba layers, so a Mamba cache hit is
++            # already the state snapshot at its exact boundary and must not
++            # receive the EAGLE last-block shift. The fixed-point lookup will
++            # bound it by the safe prefix established by full attention.
++            use_eagle = i in self.eagle_group_ids and not isinstance(spec, MambaSpec)
+ 
+             # Try to find an existing group with the same spec
+             for idx, group in enumerate(self.attention_groups):
+diff --git a/v1/core/sched/scheduler.py b/v1/core/sched/scheduler.py
+index 89c4800..a1bf6ed 100644
+--- a/v1/core/sched/scheduler.py
++++ b/v1/core/sched/scheduler.py
+@@ -694,8 +694,8 @@ class Scheduler(SchedulerInterface):
+                             HybridKVCacheCoordinator,
+                         )
+                     ):
+-                        computed, per_group_hits = (
+-                            self.kv_cache_manager.coordinator.find_longest_cache_hit_per_group(
++                        computed, num_new_local_computed_tokens = (
++                            self.kv_cache_manager.coordinator.find_longest_cache_hit(
+                                 request.block_hashes,
+                                 request.num_tokens - 1,
+                             )
+@@ -703,16 +703,12 @@ class Scheduler(SchedulerInterface):
+                         new_computed_blocks = (
+                             self.kv_cache_manager.create_kv_cache_blocks(computed)
+                         )
+-                        # NOTE(ZhanqiuHu): For Mamba hybrid models,
+-                        # num_new_local_computed_tokens should be the FA hit
+-                        # length. This value is passed to the connector's
+-                        # get_num_new_matched_tokens which computes:
+-                        # external = total - local_computed.
+-                        # Using the FA hit skips re-transferring FA blocks
+-                        # already cached on D-side. The Mamba state (always
+-                        # the last block) is transferred unconditionally by
+-                        # _apply_prefix_caching in nixl/worker.py.
+-                        num_new_local_computed_tokens = max(per_group_hits)
++                        # The connector receives one local-hit length for all
++                        # groups, so it must be the coordinator's safe common
++                        # boundary. In particular, EAGLE/MTP may shorten the
++                        # full-attention hit by one block; an independently
++                        # matched Mamba state beyond that boundary cannot make
++                        # the skipped attention KV valid.
+                         if self.kv_cache_manager.log_stats:
+                             assert self.kv_cache_manager.prefix_cache_stats is not None
+                             self.kv_cache_manager.prefix_cache_stats.record(

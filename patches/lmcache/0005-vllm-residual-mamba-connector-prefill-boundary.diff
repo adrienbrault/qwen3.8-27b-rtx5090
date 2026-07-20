@@ -1,0 +1,121 @@
+diff --git a/tests/v1/core/test_connector_mamba_prefill_boundary.py b/tests/v1/core/test_connector_mamba_prefill_boundary.py
+new file mode 100644
+index 0000000..7e43c31
+--- /dev/null
++++ b/tests/v1/core/test_connector_mamba_prefill_boundary.py
+@@ -0,0 +1,94 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""CPU-only regression for connector-visible align-mode Mamba boundaries.
++
++The serving-image source dump does not include vLLM's test dependencies, so
++this test extracts ``Scheduler._mamba_block_aligned_split`` with ``ast`` and
++runs it against small stdlib-only fakes. It is directly runnable with Python.
++"""
++
++from __future__ import annotations
++
++import ast
++from pathlib import Path
++from types import SimpleNamespace
++
++
++def _package_root() -> Path:
++    repo_root = Path(__file__).resolve().parents[3]
++    if (repo_root / "vllm" / "v1").is_dir():
++        return repo_root / "vllm"
++    return repo_root
++
++
++SCHEDULER_PATH = _package_root() / "v1/core/sched/scheduler.py"
++BLOCK_SIZE = 16
++PROMPT_TOKENS = 45
++CACHED_TOKENS = BLOCK_SIZE
++REMAINING_TOKENS = PROMPT_TOKENS - CACHED_TOKENS
++
++
++def _load_split_method():
++    tree = ast.parse(SCHEDULER_PATH.read_text())
++    scheduler = next(
++        node
++        for node in tree.body
++        if isinstance(node, ast.ClassDef) and node.name == "Scheduler"
++    )
++    method = next(
++        node
++        for node in scheduler.body
++        if isinstance(node, ast.FunctionDef)
++        and node.name == "_mamba_block_aligned_split"
++    )
++    module = ast.Module(
++        body=[
++            ast.ImportFrom(
++                module="__future__",
++                names=[ast.alias(name="annotations")],
++                level=0,
++            ),
++            method,
++        ],
++        type_ignores=[],
++    )
++    ast.fix_missing_locations(module)
++    namespace: dict[str, object] = {}
++    exec(compile(module, str(SCHEDULER_PATH), "exec"), namespace)
++    return namespace["_mamba_block_aligned_split"]
++
++
++def _run_split(*, use_eagle: bool, connector: object | None) -> int:
++    split = _load_split_method()
++    scheduler = SimpleNamespace(
++        cache_config=SimpleNamespace(block_size=BLOCK_SIZE),
++        use_eagle=use_eagle,
++        connector=connector,
++    )
++    request = SimpleNamespace(
++        num_computed_tokens=CACHED_TOKENS,
++        num_prompt_tokens=PROMPT_TOKENS,
++        num_tokens=PROMPT_TOKENS,
++    )
++    return split(scheduler, request, REMAINING_TOKENS)
++
++
++def test_connector_mtp_stops_at_storable_mamba_boundary() -> None:
++    # From B computed tokens, a final (B + tail) step would skip the real Mamba
++    # state at 2B. A connector can persist that null table entry as a full chunk.
++    assert _run_split(use_eagle=True, connector=object()) == BLOCK_SIZE
++
++
++def test_no_connector_keeps_existing_eagle_split() -> None:
++    assert _run_split(use_eagle=True, connector=None) == REMAINING_TOKENS
++
++
++def test_connector_without_mtp_is_unchanged() -> None:
++    assert _run_split(use_eagle=False, connector=object()) == BLOCK_SIZE
++
++
++if __name__ == "__main__":
++    test_connector_mtp_stops_at_storable_mamba_boundary()
++    test_no_connector_keeps_existing_eagle_split()
++    test_connector_without_mtp_is_unchanged()
++    print("PASS: connector + MTP preserves each storable Mamba boundary")
+diff --git a/v1/core/sched/scheduler.py b/v1/core/sched/scheduler.py
+index a1bf6ed..5a3cf01 100644
+--- a/v1/core/sched/scheduler.py
++++ b/v1/core/sched/scheduler.py
+@@ -364,8 +364,14 @@ class Scheduler(SchedulerInterface):
+             # last chunk must be not smaller than `block_size`.
+             block_size = self.cache_config.block_size
+             last_cache_position = request.num_tokens - request.num_tokens % block_size
+-            # eagle prune
+-            if self.use_eagle:
++            # Without an external connector, EAGLE can skip the final full
++            # boundary because full attention drops that block from local APC.
++            # A connector, however, can persist every full token chunk from the
++            # block tables and cannot distinguish an align-mode Mamba null
++            # placeholder from a real state. Keep the unpruned boundary so the
++            # scheduler materializes a real recurrent-state snapshot before the
++            # connector is allowed to store that chunk.
++            if self.use_eagle and self.connector is None:
+                 last_cache_position = max(last_cache_position - block_size, 0)
+             num_computed_tokens_after_sched = num_computed_tokens + num_new_tokens
+             if num_computed_tokens_after_sched < last_cache_position:

@@ -3,8 +3,10 @@
 Applied on top of `vllm/vllm-openai:nightly`. All pure-Python — no CUDA recompile, ~1 min build.
 
 ```bash
-docker build -t vllm-turboquant:patched .
+docker build -t vllm-qwen36:patched .
 ```
+
+> **The daily needs a second image on top of this one.** [`lmcache/`](lmcache/README.md) holds the six patches that make DRAM/NVMe KV offload *faithful* on this fp8 hybrid — four on LMCache, two on vLLM. Build it after this one. If you're running [`../scripts/serve-plain.sh`](../scripts/serve-plain.sh) (no tiers), this image is all you need.
 
 | file | purpose |
 |---|---|
@@ -21,7 +23,7 @@ as empty content.
 
 ## LMCache format-10 kernel patch (separate project)
 
-> **⚠️ WITHDRAWN (2026-07-18) — this patch restores corrupted content on hybrid models. Do not use it.** LMCache `main` (≥ 0.5.2.dev66) ships the native `NL_X_NB_NH_BS_TWO_HS` kernels, and its **bf16** hybrid path passes a cross-restart needle test — but as of `e38ee415` the **fp8** fused layout still restores corrupted context (metadata regrouping gap, details in the table and [docs/LMCACHE.md](../docs/LMCACHE.md)); a stride-aware fix is in progress. The patch is kept for historical reference only.
+> **⚠️ WITHDRAWN (2026-07-18) — this patch restores corrupted content on hybrid models. Do not use it.** It was aimed at the wrong layer: the fault was never the transfer kernel, it was LMCache's kernel-page→logical-page *metadata* regrouping for vLLM's fused fp8 layout. **[`lmcache/0001` + `0002`](lmcache/README.md) are the real fix**, and the profile they enable is the current daily. Kept for historical reference only.
 
 `lmcache-0.5.1-format10-NL_X_NB_NH_BS_TWO_HS.patch` is **not** for vLLM — it patches [LMCache](https://github.com/LMCache/LMCache) `csrc/mp_mem_kernels.cu` (a CUDA recompile, unlike the pure-Python patches above). It targeted the [MTP + LMCache](../docs/LMCACHE.md) profile **on the nightly pairing**.
 

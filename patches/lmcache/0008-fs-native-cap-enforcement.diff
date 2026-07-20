@@ -1,0 +1,438 @@
+diff --git a/csrc/storage_backends/fs/connector.cpp b/csrc/storage_backends/fs/connector.cpp
+index e54d98f5..9dbf10b5 100644
+--- a/csrc/storage_backends/fs/connector.cpp
++++ b/csrc/storage_backends/fs/connector.cpp
+@@ -125,13 +125,15 @@ static size_t read_all(int fd, void* buf, size_t len) {
+ 
+ FSConnector::FSConnector(std::string base_path, int num_workers,
+                          std::string relative_tmp_dir, bool use_odirect,
+-                         size_t read_ahead_size)
++                         size_t read_ahead_size, size_t max_capacity_bytes)
+     : ConnectorBase(num_workers),
+       base_path_(std::move(base_path)),
+       relative_tmp_dir_(std::move(relative_tmp_dir)),
+       use_odirect_(use_odirect),
+       disk_block_size_(0),
+-      read_ahead_size_(read_ahead_size) {
++      read_ahead_size_(read_ahead_size),
++      max_capacity_bytes_(max_capacity_bytes),
++      current_size_bytes_(0) {
+   // Create base directory
+   std::filesystem::create_directories(base_path_);
+ 
+@@ -141,6 +143,20 @@ FSConnector::FSConnector(std::string base_path, int num_workers,
+     std::filesystem::create_directories(tmp_path);
+   }
+ 
++  // A configured capacity is a hard limit on connector-owned bytes, not just
++  // a denominator for the Python eviction controller. Include persisted data
++  // and abandoned temporary files so a restart cannot reset admission to zero.
++  if (max_capacity_bytes_ > 0) {
++    for (const auto& entry :
++         std::filesystem::recursive_directory_iterator(base_path_)) {
++      if (!entry.is_regular_file()) continue;
++      const auto extension = entry.path().extension();
++      if (extension == FILE_EXT || extension == TMP_EXT) {
++        current_size_bytes_ += entry.file_size();
++      }
++    }
++  }
++
+   // Query disk block size for O_DIRECT
+   if (use_odirect_) {
+     struct statvfs st;
+@@ -226,8 +242,28 @@ void FSConnector::do_single_set(WorkerFSConn& conn, const std::string& key,
+   std::string filename = key_to_filename(key);
+   auto file_path = conn.base_path / filename;
+ 
+-  // Skip if already stored on disk
+-  if (std::filesystem::exists(file_path)) {
++  bool capacity_reserved = false;
++  if (max_capacity_bytes_ > 0) {
++    std::lock_guard<std::mutex> lock(capacity_mu_);
++    // Serialize capacity admission with the existence check. pending_files_
++    // prevents concurrent stores of one key from reserving the same bytes
++    // more than once while its final path does not exist yet.
++    if (std::filesystem::exists(file_path) ||
++        pending_files_.find(file_path.string()) != pending_files_.end()) {
++      return;
++    }
++    if (current_size_bytes_ > max_capacity_bytes_ ||
++        len > max_capacity_bytes_ - current_size_bytes_) {
++      throw std::runtime_error(
++          "FSConnector capacity exceeded: current=" +
++          std::to_string(current_size_bytes_) + ", requested=" +
++          std::to_string(len) + ", max=" +
++          std::to_string(max_capacity_bytes_));
++    }
++    current_size_bytes_ += len;
++    pending_files_.insert(file_path.string());
++    capacity_reserved = true;
++  } else if (std::filesystem::exists(file_path)) {
+     return;
+   }
+ 
+@@ -255,6 +291,11 @@ void FSConnector::do_single_set(WorkerFSConn& conn, const std::string& key,
+ 
+   int fd = ::open(tmp_path.c_str(), flags, 0644);
+   if (fd < 0) {
++    if (capacity_reserved) {
++      std::lock_guard<std::mutex> lock(capacity_mu_);
++      current_size_bytes_ -= len;
++      pending_files_.erase(file_path.string());
++    }
+     throw std::runtime_error("open for write failed: " + tmp_path.string() +
+                              ": " + strerror(errno));
+   }
+@@ -264,7 +305,13 @@ void FSConnector::do_single_set(WorkerFSConn& conn, const std::string& key,
+   } catch (...) {
+     ::close(fd);
+     // Clean up temp file on failure
+-    std::filesystem::remove(tmp_path);
++    std::error_code remove_ec;
++    std::filesystem::remove(tmp_path, remove_ec);
++    if (capacity_reserved) {
++      std::lock_guard<std::mutex> lock(capacity_mu_);
++      current_size_bytes_ -= len;
++      pending_files_.erase(file_path.string());
++    }
+     throw;
+   }
+   ::close(fd);
+@@ -276,9 +323,18 @@ void FSConnector::do_single_set(WorkerFSConn& conn, const std::string& key,
+     // Try to clean up, but prioritize reporting the original error.
+     std::error_code remove_ec;
+     std::filesystem::remove(tmp_path, remove_ec);
++    if (capacity_reserved) {
++      std::lock_guard<std::mutex> lock(capacity_mu_);
++      current_size_bytes_ -= len;
++      pending_files_.erase(file_path.string());
++    }
+     throw std::runtime_error("rename failed: " + tmp_path.string() + " -> " +
+                              file_path.string() + ": " + ec.message());
+   }
++  if (capacity_reserved) {
++    std::lock_guard<std::mutex> lock(capacity_mu_);
++    pending_files_.erase(file_path.string());
++  }
+ }
+ 
+ bool FSConnector::do_single_exists(WorkerFSConn& conn, const std::string& key) {
+@@ -290,8 +346,23 @@ bool FSConnector::do_single_exists(WorkerFSConn& conn, const std::string& key) {
+ bool FSConnector::do_single_delete(WorkerFSConn& conn, const std::string& key) {
+   std::string filename = key_to_filename(key);
+   auto file_path = conn.base_path / filename;
++  std::lock_guard<std::mutex> lock(capacity_mu_);
++  if (pending_files_.find(file_path.string()) != pending_files_.end()) {
++    return false;
++  }
++  std::error_code size_ec;
++  const size_t file_size = std::filesystem::file_size(file_path, size_ec);
+   std::error_code ec;
+-  return std::filesystem::remove(file_path, ec);
++  const bool removed = std::filesystem::remove(file_path, ec);
++  if (ec) {
++    throw std::runtime_error("remove failed: " + file_path.string() + ": " +
++                             ec.message());
++  }
++  if (removed && max_capacity_bytes_ > 0 && !size_ec) {
++    current_size_bytes_ =
++        file_size > current_size_bytes_ ? 0 : current_size_bytes_ - file_size;
++  }
++  return removed;
+ }
+ 
+ }  // namespace connector
+diff --git a/csrc/storage_backends/fs/connector.h b/csrc/storage_backends/fs/connector.h
+index 03b7b9cc..eea8b768 100644
+--- a/csrc/storage_backends/fs/connector.h
++++ b/csrc/storage_backends/fs/connector.h
+@@ -8,7 +8,9 @@
+ #include <unistd.h>
+ #include <cstring>
+ #include <filesystem>
++#include <mutex>
+ #include <string>
++#include <unordered_set>
+ #include <vector>
+ 
+ namespace lmcache {
+@@ -36,7 +38,7 @@ class FSConnector : public ConnectorBase<WorkerFSConn> {
+  public:
+   FSConnector(std::string base_path, int num_workers,
+               std::string relative_tmp_dir = "", bool use_odirect = false,
+-              size_t read_ahead_size = 0);
++              size_t read_ahead_size = 0, size_t max_capacity_bytes = 0);
+   ~FSConnector() override;
+ 
+  protected:
+@@ -74,6 +76,10 @@ class FSConnector : public ConnectorBase<WorkerFSConn> {
+   bool use_odirect_;
+   size_t disk_block_size_;
+   size_t read_ahead_size_;
++  size_t max_capacity_bytes_;
++  size_t current_size_bytes_;
++  std::mutex capacity_mu_;
++  std::unordered_set<std::string> pending_files_;
+ };
+ 
+ }  // namespace connector
+diff --git a/csrc/storage_backends/fs/pybind.cpp b/csrc/storage_backends/fs/pybind.cpp
+index 5fd53ced..ec3941ef 100644
+--- a/csrc/storage_backends/fs/pybind.cpp
++++ b/csrc/storage_backends/fs/pybind.cpp
+@@ -7,9 +7,10 @@ namespace py = pybind11;
+ 
+ PYBIND11_MODULE(lmcache_fs, m) {
+   py::class_<lmcache::connector::FSConnector>(m, "LMCacheFSClient")
+-      .def(py::init<std::string, int, std::string, bool, size_t>(),
++      .def(py::init<std::string, int, std::string, bool, size_t, size_t>(),
+            py::arg("base_path"), py::arg("num_workers"),
+            py::arg("relative_tmp_dir") = "", py::arg("use_odirect") = false,
+-           py::arg("read_ahead_size") = 0)
++           py::arg("read_ahead_size") = 0,
++           py::arg("max_capacity_bytes") = 0)
+           LMCACHE_BIND_CONNECTOR_METHODS(lmcache::connector::FSConnector);
+ }
+diff --git a/docs/design/v1/distributed/l2_adapters/l2_eviction.md b/docs/design/v1/distributed/l2_adapters/l2_eviction.md
+index 8d2a8451..2b41dd85 100644
+--- a/docs/design/v1/distributed/l2_adapters/l2_eviction.md
++++ b/docs/design/v1/distributed/l2_adapters/l2_eviction.md
+@@ -209,6 +209,13 @@ capacity) can omit steps 2–6 and rely on the base class no-op defaults.
+    size tracking for `get_usage()`. Without it, `get_usage()` returns `(-1, -1)` and
+    the eviction controller will not trigger.
+ 
++For the built-in `fs_native` connector, `max_capacity_gb` is also a hard write
++admission limit. The connector scans existing `.data` and `.tmp` files on
++startup, atomically reserves bytes across store workers, and rejects a store
++whose reservation would exceed the limit. This hard guard applies even when no
++`eviction` sub-object is configured. LRU remains opt-in and is useful for
++freeing older entries before stores reach the hard limit.
++
+ Example configuration with eviction enabled:
+ 
+ ```json
+diff --git a/lmcache/v1/distributed/l2_adapters/fs_native_l2_adapter.py b/lmcache/v1/distributed/l2_adapters/fs_native_l2_adapter.py
+index 2d703499..d35ffd39 100644
+--- a/lmcache/v1/distributed/l2_adapters/fs_native_l2_adapter.py
++++ b/lmcache/v1/distributed/l2_adapters/fs_native_l2_adapter.py
+@@ -45,6 +45,7 @@ class FSNativeL2AdapterConfig(L2AdapterConfigBase):
+     - use_odirect: bypass page cache via O_DIRECT.
+     - read_ahead_size: trigger filesystem readahead by
+       reading this many bytes first (optional).
++    - max_capacity_gb: hard maximum for connector-owned files; zero disables it.
+     """
+ 
+     def __init__(
+@@ -115,7 +116,7 @@ class FSNativeL2AdapterConfig(L2AdapterConfigBase):
+             "readahead by reading this many bytes "
+             "first (optional)\n"
+             "- max_capacity_gb (float): max L2 capacity "
+-            "in GB for usage tracking / eviction "
++            "in GiB; native stores are rejected at the cap "
+             "(default 0 = disabled)"
+         )
+ 
+@@ -150,13 +151,16 @@ def _create_fs_native_l2_adapter(
+         config.relative_tmp_dir,
+         config.use_odirect,
+         config.read_ahead_size or 0,
++        int(config.max_capacity_gb * (1024**3)),
+     )
+     logger.info(
+-        "Created FS native L2 adapter: %s (workers=%d, odirect=%s, read_ahead=%s)",
++        "Created FS native L2 adapter: %s (workers=%d, odirect=%s, "
++        "read_ahead=%s, max_capacity_gb=%s)",
+         config.base_path,
+         config.num_workers,
+         config.use_odirect,
+         config.read_ahead_size,
++        config.max_capacity_gb,
+     )
+     return NativeConnectorL2Adapter(
+         native_client,
+diff --git a/lmcache/v1/distributed/l2_adapters/native_connector_l2_adapter.py b/lmcache/v1/distributed/l2_adapters/native_connector_l2_adapter.py
+index c10d3802..eeb77c5c 100644
+--- a/lmcache/v1/distributed/l2_adapters/native_connector_l2_adapter.py
++++ b/lmcache/v1/distributed/l2_adapters/native_connector_l2_adapter.py
+@@ -452,6 +452,12 @@ class NativeConnectorL2Adapter(L2AdapterInterface):
+                     if op_type == self._OP_STORE:
+                         store_info = self._pending_store_sizes.pop(fid, None)
+                         task_bytes = 0
++                        if not ok:
++                            logger.error(
++                                "Native L2 store task %d failed: %s",
++                                task_id,
++                                error or "unknown native connector error",
++                            )
+                         if ok and store_info is not None:
+                             store_keys, sizes = store_info
+                             for key, size in zip(store_keys, sizes, strict=True):
+diff --git a/tests/v1/distributed/test_l2_adapter_factory.py b/tests/v1/distributed/test_l2_adapter_factory.py
+index acd8e0de..0849feb0 100644
+--- a/tests/v1/distributed/test_l2_adapter_factory.py
++++ b/tests/v1/distributed/test_l2_adapter_factory.py
+@@ -882,12 +882,14 @@ class _FakeLMCacheFSClient:
+         relative_tmp_dir="",
+         use_odirect=False,
+         read_ahead_size=0,
++        max_capacity_bytes=0,
+     ):
+         self.base_path = base_path
+         self.num_workers = num_workers
+         self.relative_tmp_dir = relative_tmp_dir
+         self.use_odirect = use_odirect
+         self.read_ahead_size = read_ahead_size
++        self.max_capacity_bytes = max_capacity_bytes
+         self._efd = create_event_notifier()
+         self._closed = False
+ 
+@@ -973,6 +975,7 @@ class TestFSNativeAdapterFactory:
+                 config.relative_tmp_dir,
+                 config.use_odirect,
+                 config.read_ahead_size or 0,
++                int(config.max_capacity_gb * (1024**3)),
+             )
+             # First Party
+             from lmcache.v1.distributed.l2_adapters.native_connector_l2_adapter import (
+@@ -991,6 +994,7 @@ class TestFSNativeAdapterFactory:
+                 relative_tmp_dir=".tmp",
+                 use_odirect=True,
+                 read_ahead_size=4096,
++                max_capacity_gb=2.5,
+             )
+             adapter = create_l2_adapter_from_registry(cfg)
+             assert captured["args"] == (
+@@ -999,6 +1003,7 @@ class TestFSNativeAdapterFactory:
+                 ".tmp",
+                 True,
+                 4096,
++                int(2.5 * (1024**3)),
+             )
+             adapter.close()
+         finally:
+@@ -1093,6 +1098,7 @@ class TestFSNativeAdapterFactory:
+                 config.relative_tmp_dir,
+                 config.use_odirect,
+                 config.read_ahead_size or 0,
++                int(config.max_capacity_gb * (1024**3)),
+             )
+             # First Party
+             from lmcache.v1.distributed.l2_adapters.native_connector_l2_adapter import (
+@@ -1134,5 +1140,6 @@ def _patched_fs_factory(config, l1_memory_desc=None):
+         config.relative_tmp_dir,
+         config.use_odirect,
+         config.read_ahead_size or 0,
++        int(config.max_capacity_gb * (1024**3)),
+     )
+     return NativeConnectorL2Adapter(client)
+diff --git a/tests/v1/distributed/test_fs_native_capacity.py b/tests/v1/distributed/test_fs_native_capacity.py
+new file mode 100644
+index 00000000..2feb3cb9
+--- /dev/null
++++ b/tests/v1/distributed/test_fs_native_capacity.py
+@@ -0,0 +1,103 @@
++# SPDX-License-Identifier: Apache-2.0
++"""CPU-only hard-cap tests for the native filesystem connector."""
++
++# Standard
++from pathlib import Path
++from typing import Protocol
++import select
++import time
++
++# Third Party
++import pytest
++
++lmcache_fs = pytest.importorskip("lmcache.lmcache_fs")
++
++Completion = tuple[int, bool, str, list[bool] | None]
++
++
++class _FSClient(Protocol):
++    """Structural type exposed by the native filesystem pybind module."""
++
++    def event_fd(self) -> int: ...
++
++    def submit_batch_set(
++        self, keys: list[str], memoryviews: list[memoryview]
++    ) -> int: ...
++
++    def submit_batch_delete(self, keys: list[str]) -> int: ...
++
++    def drain_completions(self) -> list[Completion]: ...
++
++    def close(self) -> None: ...
++
++
++def _wait_for_completion(client: _FSClient, future_id: int) -> Completion:
++    """Wait for and return one native connector completion."""
++    deadline = time.monotonic() + 5
++    while time.monotonic() < deadline:
++        readable, _, _ = select.select(
++            [client.event_fd()], [], [], max(0, deadline - time.monotonic())
++        )
++        if not readable:
++            break
++        for completion in client.drain_completions():
++            if completion[0] == future_id:
++                return completion
++    raise TimeoutError(f"native completion {future_id} did not arrive")
++
++
++def _store(client: _FSClient, key: str, payload: bytearray) -> Completion:
++    """Submit one SET and return its completion while retaining the buffer."""
++    future_id = client.submit_batch_set([key], [memoryview(payload)])
++    return _wait_for_completion(client, future_id)
++
++
++def _connector_files(path: Path) -> list[Path]:
++    """Return final data files created by the filesystem connector."""
++    return list(path.rglob("*.data"))
++
++
++def test_capacity_rejects_concurrent_overshoot(tmp_path: Path) -> None:
++    """Concurrent worker reservations must never put more than the cap on disk."""
++    client = lmcache_fs.LMCacheFSClient(str(tmp_path), 3, "", False, 0, 10)
++    payloads = [bytearray(b"abcdef") for _ in range(3)]
++    try:
++        future_id = client.submit_batch_set(
++            ["model@00000000@01", "model@00000000@02", "model@00000000@03"],
++            [memoryview(payload) for payload in payloads],
++        )
++        completion = _wait_for_completion(client, future_id)
++        assert completion[1] is False
++        assert "capacity exceeded" in completion[2]
++        assert sum(path.stat().st_size for path in _connector_files(tmp_path)) <= 10
++    finally:
++        client.close()
++
++
++def test_capacity_counts_restart_files_and_reuses_deleted_space(
++    tmp_path: Path,
++) -> None:
++    """Persisted files consume capacity; a successful delete releases it."""
++    first_key = "model@00000000@01"
++    second_key = "model@00000000@02"
++    client = lmcache_fs.LMCacheFSClient(str(tmp_path), 1, "", False, 0, 10)
++    try:
++        assert _store(client, first_key, bytearray(b"12345678"))[1] is True
++    finally:
++        client.close()
++
++    restarted = lmcache_fs.LMCacheFSClient(str(tmp_path), 1, "", False, 0, 10)
++    try:
++        rejected = _store(restarted, second_key, bytearray(b"1234"))
++        assert rejected[1] is False
++        assert "current=8, requested=4, max=10" in rejected[2]
++
++        delete_id = restarted.submit_batch_delete([first_key])
++        deleted = _wait_for_completion(restarted, delete_id)
++        assert deleted[1] is True
++        assert deleted[3] == [True]
++
++        assert _store(restarted, second_key, bytearray(b"1234"))[1] is True
++        assert sum(path.stat().st_size for path in _connector_files(tmp_path)) == 4
++    finally:
++        restarted.close()
+

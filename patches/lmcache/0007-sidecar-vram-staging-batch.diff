@@ -1,0 +1,94 @@
+diff --git a/lmcache/v1/platform/cuda/cache_context.py b/lmcache/v1/platform/cuda/cache_context.py
+index b552bec9..40ff612a 100644
+--- a/lmcache/v1/platform/cuda/cache_context.py
++++ b/lmcache/v1/platform/cuda/cache_context.py
+@@ -37,6 +37,7 @@ from lmcache.v1.multiprocess.group_view import (
+     engine_group_layer_indices,
+ )
+ from lmcache.v1.platform.base_cache_context import BaseCacheContext
++from lmcache.v1.platform.cuda.staging_config import get_gpu_staging_batch_size
+ 
+ logger = init_logger(__name__)
+ 
+@@ -407,7 +408,7 @@ class GPUCacheContext(BaseCacheContext):
+             kv_layer_groups_manager=self.kv_layer_groups_manager_,
+             lmcache_tokens_per_chunk=lmcache_tokens_per_chunk,
+             device=self.device_,
+-            max_batch_size=4,
++            max_batch_size=get_gpu_staging_batch_size(),
+         )
+ 
+         # GPU streams
+diff --git a/lmcache/v1/platform/cuda/staging_config.py b/lmcache/v1/platform/cuda/staging_config.py
+new file mode 100644
+index 00000000..c91fc8f5
+--- /dev/null
++++ b/lmcache/v1/platform/cuda/staging_config.py
+@@ -0,0 +1,30 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Configuration for LMCache-driven CUDA staging buffers."""
++
++# Standard
++import os
++
++GPU_STAGING_BATCH_SIZE_ENV = "LMCACHE_MP_GPU_STAGING_BATCH_SIZE"
++DEFAULT_GPU_STAGING_BATCH_SIZE = 4
++MAX_GPU_STAGING_BATCH_SIZE = 4
++
++
++def get_gpu_staging_batch_size() -> int:
++    """Return the configured number of per-context GPU staging slots."""
++    raw_value = os.getenv(
++        GPU_STAGING_BATCH_SIZE_ENV, str(DEFAULT_GPU_STAGING_BATCH_SIZE)
++    )
++    try:
++        batch_size = int(raw_value)
++    except ValueError as exc:
++        raise ValueError(
++            f"{GPU_STAGING_BATCH_SIZE_ENV} must be an integer from 1 to "
++            f"{MAX_GPU_STAGING_BATCH_SIZE}, got {raw_value!r}"
++        ) from exc
++
++    if not 1 <= batch_size <= MAX_GPU_STAGING_BATCH_SIZE:
++        raise ValueError(
++            f"{GPU_STAGING_BATCH_SIZE_ENV} must be from 1 to "
++            f"{MAX_GPU_STAGING_BATCH_SIZE}, got {batch_size}"
++        )
++    return batch_size
+diff --git a/tests/v1/platform/test_gpu_staging_config.py b/tests/v1/platform/test_gpu_staging_config.py
+new file mode 100644
+index 00000000..2b387f23
+--- /dev/null
++++ b/tests/v1/platform/test_gpu_staging_config.py
+@@ -0,0 +1,31 @@
++# SPDX-License-Identifier: Apache-2.0
++
++"""CPU-only tests for LMCache-driven CUDA staging configuration."""
++
++# Third Party
++import pytest
++
++# First Party
++from lmcache.v1.platform.cuda.staging_config import get_gpu_staging_batch_size
++
++
++@pytest.mark.parametrize("value", ["1", "2", "3", "4"])
++def test_accepts_kernel_supported_range(
++    monkeypatch: pytest.MonkeyPatch, value: str
++) -> None:
++    monkeypatch.setenv("LMCACHE_MP_GPU_STAGING_BATCH_SIZE", value)
++    assert get_gpu_staging_batch_size() == int(value)
++
++
++def test_defaults_to_four(monkeypatch: pytest.MonkeyPatch) -> None:
++    monkeypatch.delenv("LMCACHE_MP_GPU_STAGING_BATCH_SIZE", raising=False)
++    assert get_gpu_staging_batch_size() == 4
++
++
++@pytest.mark.parametrize("value", ["0", "5", "not-an-integer"])
++def test_rejects_invalid_values(
++    monkeypatch: pytest.MonkeyPatch, value: str
++) -> None:
++    monkeypatch.setenv("LMCACHE_MP_GPU_STAGING_BATCH_SIZE", value)
++    with pytest.raises(ValueError, match="LMCACHE_MP_GPU_STAGING_BATCH_SIZE"):
++        get_gpu_staging_batch_size()

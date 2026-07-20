@@ -1,12 +1,39 @@
-# MTP + LMCache tiered KV caching — every flag, and why
+# MTP + LMCache tiered KV caching — the profile, and the four rounds of being wrong
 
-> **Status 2026-07-19 — the tiers WORK now (pre-production).** Four local patches got fp8-hybrid tiered caching to needle-correct, restart-surviving, quality-parity state (full 69×2: **88** with tiers+MTP vs 86–90 controls): (1)+(2) on LMCache `main` — a stride-aware view that regroups vLLM's fp8 fused **16-token kernel pages** into logical hybrid pages (the "compression" misclassification described below); (3) on **vLLM itself** — with a KV connector configured + MTP on a hybrid model, the scheduler's connector-path local-hit lookup applies the EAGLE last-block drop to attention but not Mamba, then takes `max()` instead of a fixed-point reduction, leaving one **allocated-but-never-filled attention block** at every local prefix hit (≈10 eval points, either connector role, reproducible at concurrency 1; the phenotype is truncated/empty turns and malformed tool calls, *not* incoherence). A fourth patch — connector-active MTP prefills stop at storable Mamba boundaries, so LMCache can never export vLLM's null Mamba block under a valid hash — closed the last correctness edge (a deterministic 3-turn record/replay repro caught it live). With all four patches, every gate passes on both model variants (69×2: 89 vs ~90 baseline). Upstream reports are drafted; wipe any L2 namespace written by unpatched builds — poisoned chunks are not repaired. The text below documents the earlier 0.24/0.5.1 profile and the investigation as it unfolded — historically accurate, superseded where it conflicts with this note.
+**This is the daily.** The launch command is [`../scripts/serve.sh`](../scripts/serve.sh); the patches are [`../patches/lmcache/`](../patches/lmcache/README.md); the capacity/latency trade against running without it is in the [README](../README.md#what-removing-lmcache-changes).
 
-The launch command lives in [`../scripts/serve-lmcache.sh`](../scripts/serve-lmcache.sh). This explains it. For the *why-at-all* and the benchmark numbers, see the [README section](../README.md#alternative-lmcache-tiered-kv-cache-for-multi-agent-coding).
+## Current profile (2026-07-20)
 
-**When to run this instead of the [TurboQuant daily](CONFIG.md):** multi-agent coding, where several agents share large near-identical prefixes and cache retention beats single-stream latency. The profile runs **no vision** (`image:0`) — that's the one capability it gives up vs the daily. It uses **fp8 KV**, not the daily's TurboQuant KV: LMCache's persistence tier only round-trips faithfully with fp8 ([why](#lmcache--k8v4-composes-but-the-persisted-tier-is-lossy--not-shipped); the daily's `turboquant_4bit_nc` packs even tighter than the k8v4 tested there, so it would be lossier still).
+| | |
+|---|---|
+| image | `vllm-qwen36:tiers` — base daily image + LMCache `main` @`e38ee415` + patches 0001/0002/0003/0005/0007/0008 |
+| engine | natfii NVFP4 W4A4 + fp8 KV + FlashInfer + MTP `ns=4` + **vision on** (`image:4`) |
+| pool | util **0.95**, `--max-model-len 200000` → **214,084 tokens** |
+| chunk / batched | **1616** (= unified block size at `ns=4`) / **3231** (= 2·chunk−1) |
+| L1 | 24 GiB pinned host RAM ≈ 245K tokens, ~2 s revisit |
+| L2 | 60 GiB `fs_native` NVMe ≈ 640K tokens, 4.4–7.5 s revisit, **survives restarts** |
+| sidecar VRAM | 796 MiB (`LMCACHE_MP_GPU_STAGING_BATCH_SIZE=1` + `CUDA_MODULE_LOADING=LAZY`) |
+| quality | full 69×2 tool-eval **89** — parity with the ~89.8 no-connector baseline |
+| soak | **858 cycles** (needle + `pp8192×c8` killer + vision per cycle): all green, free VRAM flat at 701 MiB, L2 oscillating 39–47 GB under its 60 GB cap |
 
-Every ingredient below was earned by a failure. Removing any one of them reintroduces a specific, documented break.
+Vision is **on** in this profile — the `image:0` restriction in the historical text below belonged to the old 0.24/0.5.1 build and no longer applies.
+
+Every ingredient was earned by a failure. Removing any one reintroduces a specific, documented break — and most of those breaks are *silent*.
+
+## Why this took four rounds
+
+Worth reading before you trust your own tier setup, because each round ended in a confident, wrong "validated":
+
+1. **"LMCache works!"** — it stored **nothing**. Every store failed `Unsupported EngineKVFormat: 10`, logged by the sidecar while serving continued. Every "tier revisit" measured was vLLM's own in-GPU prefix cache.
+2. **"Fixed with a format-10 kernel!"** — stores ran, tier filled, output stayed fluent, and a 60K needle **vanished** after reload; tool-eval fell 88 → 47. We had patched the kernel under wrong *metadata*.
+3. **"Fixed with the stride-aware regroup!"** — transfers now correct, but quality sat 9–12 points below control. Root cause was not in LMCache at all: a **vLLM scheduler** bug that only exists with connector + MTP + hybrid, leaving one unfilled attention block at every local hit.
+4. **"Parity reached!"** — 88, and a deterministic 3-turn repro still produced an empty turn. LMCache was exporting vLLM's **null Mamba block** under a valid hash at the EAGLE-adjusted prefill boundary, poisoning later retrieves.
+
+The pattern: **coherent output and rising hit counters are compatible with a completely broken cache.** The only test that discriminated was a needle planted in a long context and retrieved after a restart. Everything else we tried — hit rates, throughput, spot-checking answers, even token-exact single-turn comparisons — passed while the cache was wrong.
+
+---
+
+*The rest of this document is the investigation as it unfolded, against the earlier vLLM 0.24 / LMCache 0.5.1 profile. Historically accurate; superseded by the table above wherever the two conflict (notably: vision, util, chunk size, `ns`, and the image).*
 
 ## Architecture
 
