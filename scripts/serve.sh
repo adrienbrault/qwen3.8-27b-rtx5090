@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # THE DAILY. Qwen3.6-27B: natfii NVFP4 W4A4 + fp8_e4m3 KV + FlashInfer + MTP ns=4 + vision,
-# with LMCache tiered KV offload: 214K on-GPU + ~245K pinned DRAM + ~640K NVMe
-# = ~1.10M reusable tokens, and the NVMe tier survives restarts.
+# with LMCache tiered KV offload: 214K on-GPU + ~245K pinned DRAM + ~2.13M NVMe
+# = ~2.59M reusable tokens, and the NVMe tier survives restarts.
 #
 # Requires the TIER image (../patches/lmcache/) — six local patches on top of the base image.
 # Running this profile on stock LMCache is WORSE THAN NOT CACHING: stores are silently
@@ -20,10 +20,10 @@ NAME=vllm-27b
 BLK=1616                             # unified block size with MTP ns=4 (1568 without). NOT 16.
 BATCHED=$((2 * BLK - 1))             # LMCache MP requires batched tokens in [chunk, 2*chunk)
 
-# L2 NVMe tier. 60 GB ~= 640K tokens, survives container restarts.
+# L2 NVMe tier. 200 GB ~= 2.13M tokens, survives container restarts.
 # The cap is only real because of patch 0008 + the eviction block below — verify both.
 L2DIR=${L2DIR:-/srv/qwen5090/lmcache-l2-natfii}
-L2CAP=${L2CAP:-60}
+L2CAP=${L2CAP:-200}
 sudo mkdir -p "$L2DIR"
 
 # --- tokenizer truncation guard (gotcha #9) -----------------------------------
@@ -148,6 +148,6 @@ sudo docker restart owui-proxy >/dev/null 2>&1 || true   # so Open WebUI re-disc
 #   --structured-outputs-config: carried over from the plain daily (the #44993 graft is in the
 #                                base image). This is the ONE flag not covered by the tier
 #                                battery — probe response_format+thinking after first boot.
-# TIERS: GPU 214,084 tok (~1-2s revisit) / DRAM ~245K (~2s) / NVMe ~640K (~4.4-7.5s, survives
+# TIERS: GPU 214,084 tok (~1-2s revisit) / DRAM ~245K (~2s) / NVMe ~2.13M (~4.4-7.5s, survives
 #   restarts) vs ~11-13s cold re-prefill. Quality 69x2 = 89 (baseline ~89.8).
 # ------------------------------------------------------------------------------

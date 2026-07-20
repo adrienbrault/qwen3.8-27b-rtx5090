@@ -11,10 +11,12 @@
 | pool | util **0.95**, `--max-model-len 200000` → **214,084 tokens** |
 | chunk / batched | **1616** (= unified block size at `ns=4`) / **3231** (= 2·chunk−1) |
 | L1 | 24 GiB pinned host RAM ≈ 245K tokens, ~2 s revisit |
-| L2 | 60 GiB `fs_native` NVMe ≈ 640K tokens, 4.4–7.5 s revisit, **survives restarts** |
+| L2 | 200 GiB `fs_native` NVMe ≈ 2.13M tokens, 4.4–7.5 s revisit, **survives restarts** |
 | sidecar VRAM | 796 MiB (`LMCACHE_MP_GPU_STAGING_BATCH_SIZE=1` + `CUDA_MODULE_LOADING=LAZY`) |
 | quality | full 69×2 tool-eval **89** — parity with the ~89.8 no-connector baseline |
-| soak | **858 cycles** (needle + `pp8192×c8` killer + vision per cycle): all green, free VRAM flat at 701 MiB, L2 oscillating 39–47 GB under its 60 GB cap |
+| soak | **858 cycles** (needle + `pp8192×c8` killer + vision per cycle): all green, free VRAM flat at 701 MiB, L2 oscillating 39–47 GB under its cap |
+
+> **Caveat on the 200 GiB L2.** Cap enforcement was soaked at **60 GiB** — 858 cycles holding steady. 200 GiB is the same admission-control path with a bigger number, and the host has 834 GB free, but it has *not* been soaked at that size. Watch `du -sh` on the L2 directory for the first day. The failure mode this guards against filled a root filesystem once already.
 
 Vision is **on** in this profile — the `image:0` restriction in the historical text below belonged to the old 0.24/0.5.1 build and no longer applies.
 

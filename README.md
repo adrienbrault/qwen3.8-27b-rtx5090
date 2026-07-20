@@ -1,6 +1,6 @@
-# Qwen3.6-27B on a single RTX 5090 — W4A4 NVFP4, 13.5K t/s prefill, ~1.1M tokens of tiered KV, MTP K=4
+# Qwen3.6-27B on a single RTX 5090 — W4A4 NVFP4, 13.5K t/s prefill, ~2.6M tokens of tiered KV, MTP K=4
 
-Serving **Qwen3.6-27B at 200K context with ~13.5K t/s prefill, MTP speculative decoding at `ns=4`, vision, and a three-tier KV cache — 214K tokens on-GPU, ~245K in pinned DRAM, ~640K on NVMe** — on one 32 GB consumer GPU (RTX 5090, Blackwell `sm_120`). The NVMe tier survives restarts, so yesterday's agent session is still warm this morning.
+Serving **Qwen3.6-27B at 200K context with ~13.5K t/s prefill, MTP speculative decoding at `ns=4`, vision, and a three-tier KV cache — 214K tokens on-GPU, ~245K in pinned DRAM, ~2.13M on NVMe** — on one 32 GB consumer GPU (RTX 5090, Blackwell `sm_120`). The NVMe tier survives restarts, so yesterday's agent session is still warm this morning.
 
 The daily is the **[natfii NVFP4 W4A4](https://huggingface.co/natfii/Qwen3.6-27B-VLM-NVFP4-MTP)** checkpoint + **`fp8_e4m3` KV cache** + **FlashInfer** attention + **MTP `ns=4`** + **[LMCache](https://github.com/LMCache/LMCache) DRAM/NVMe offload**, on a patched vLLM image. Two things carry it:
 
@@ -14,7 +14,7 @@ If you want the engine without the tiers — bigger hot pool, no sidecar, no loc
 This is a **daily driver for agentic coding** — a handful of coding agents with deep (8K–100K+) contexts, plus interactive chat and the occasional image, on one always-on box. That workload ranks the goals, and the ranking explains every choice below:
 
 1. **Reliability over everything.** An engine that crashes mid-run or — worse — answers *fluently but wrongly* from corrupted cache is worth less than a slower one. Every config here survived a promotion gauntlet: concurrent burst battery, a fresh-deep-batch OOM trigger, needle-in-haystack recall across cache boundaries, and a 69-scenario × 2 tool-eval. Several faster configs died on that hill (a +6% pool setting, two 4-bit KV kernels, a tiered-cache patch) — the [history](docs/HISTORY.md) is mostly their graves.
-2. **Trustworthy context capacity.** Agents live or die by how many deep sessions stay *warm*: a hit costs ~1–2 s on-GPU or ~2–7 s from the DRAM/NVMe tiers, where a cold 60K re-prefill costs ~11–13 s. So: the biggest KV pool that passes rule 1, then **~885K more tokens of it below the GPU** — and fp8 KV instead of denser-but-corrupting 4-bit kernels. Note the ordering: capacity that lies is worse than no capacity, which is why the tiers only shipped once they passed a cross-restart needle test and full-suite quality parity, not when their hit counters looked good.
+2. **Trustworthy context capacity.** Agents live or die by how many deep sessions stay *warm*: a hit costs ~1–2 s on-GPU or ~2–7 s from the DRAM/NVMe tiers, where a cold 60K re-prefill costs ~11–13 s. So: the biggest KV pool that passes rule 1, then **~2.4M more tokens of it below the GPU** — and fp8 KV instead of denser-but-corrupting 4-bit kernels. Note the ordering: capacity that lies is worse than no capacity, which is why the tiers only shipped once they passed a cross-restart needle test and full-suite quality parity, not when their hit counters looked good.
 3. **Latency in the agent regime, not benchmark aggregate.** For agents, latency *is* mostly prefill: every fresh deep context pays it up front, and under concurrency everyone queues behind it. W4A4 tripling the prefill lane is the single biggest felt improvement in this config's history. MTP `ns=4` then roughly doubles deep single-stream decode (the "agent reading its own long context" case) even though it does nothing for shallow batch throughput.
 4. **Everything on at once.** Vision, 200K context, speculative decoding, reasoning + structured outputs, tool calling — the daily runs the full stack simultaneously. No per-benchmark specialization; the numbers below are the config you'd actually run.
 
@@ -47,7 +47,7 @@ The quality side: W4A4's extra activation-quant error measured **≈ 1 point** o
 - **Qwen3.6-27B** ([natfii NVFP4 W4A4](https://huggingface.co/natfii/Qwen3.6-27B-VLM-NVFP4-MTP), auto-detected ModelOpt quant — no `--quantization` flag) over an OpenAI-compatible endpoint.
 - **~13.5K t/s prefill @8K** — native Blackwell FP4 GEMM; a cold 60K-token context loads in ~11–13 s on the tier profile.
 - **200K usable context** on `fp8_e4m3` KV — the fp8 attention path is flat with depth (no decode crater) where custom 4-bit-KV kernels crater.
-- **~1.10M reusable tokens across three KV tiers** — 214K on-GPU, ~245K in 24 GB of pinned DRAM, ~640K on 60 GB of NVMe. **The NVMe tier survives restarts**: a revisit after a container restart costs 4–7 s instead of a full re-prefill.
+- **~2.59M reusable tokens across three KV tiers** — 214K on-GPU, ~245K in 24 GB of pinned DRAM, ~2.13M on 200 GB of NVMe. **The NVMe tier survives restarts**: a revisit after a container restart costs 4–7 s instead of a full re-prefill.
 - **MTP speculative decoding at `ns=4`** — draft head inside the weights — crash-free under concurrency thanks to [PR #42603](https://github.com/vllm-project/vllm/pull/42603), and quality-neutral alongside the connector thanks to [two more local vLLM patches](patches/lmcache/README.md).
 - **Vision** — the model's image tower, on.
 - All of it on **one 32 GB RTX 5090** (`sm_120`), memory-OC'd, 600 W.
@@ -130,7 +130,7 @@ All numbers below are measured — the boot log (`gpu_worker` prints the breakdo
 | **CUDA graphs + non-torch** | 0.40 | |
 | **util 0.95 budget** | **29.78** | of 31.35 usable; killer-shape floor **531 MiB** free — healthier than the plain profile's 130–190 MiB at 0.98 |
 
-Honest trade vs the previous daily: natfii's weights are **1.8 GiB heavier** in VRAM (fatter MTP head + FP4 scale tensors), which is why the hot pool is 214K where the old W4A16 daily reached 270K. We took it: prefill 3.4×, deep-concurrent throughput 2.2×, equal quality — and the tiers put ~885K tokens back underneath. Capacity you reload in 2–7 s is worth more than capacity you wait on.
+Honest trade vs the previous daily: natfii's weights are **1.8 GiB heavier** in VRAM (fatter MTP head + FP4 scale tensors), which is why the hot pool is 214K where the old W4A16 daily reached 270K. We took it: prefill 3.4×, deep-concurrent throughput 2.2×, equal quality — and the tiers put ~2.4M tokens back underneath. Capacity you reload in 2–7 s is worth more than capacity you wait on.
 
 What each token costs and what a cache hit is worth (60K-token context, measured):
 
@@ -138,10 +138,10 @@ What each token costs and what a cache hit is worth (60K-token context, measured
 |---|---|---|---|
 | GPU pool (vLLM prefix cache) | 214,084 tok | **~1–2 s** (≈ decode time only) | no |
 | host DRAM (LMCache L1, 24 GiB pinned) | ~245K tok @ ~98 KiB/tok serialized | **~2 s** | no |
-| NVMe (LMCache L2, 60 GiB) | ~640K tok | **~4.4–7.5 s** | **yes** |
+| NVMe (LMCache L2, 200 GiB) | ~2.13M tok | **~4.4–7.5 s** | **yes** |
 | miss → full re-prefill | — | **~11–13 s** (was ~23 s on the W4A16 daily — the FP4-GEMM dividend) | — |
 
-**≈1.10M reusable tokens** total, of which ~640K persist across restarts.
+**≈2.59M reusable tokens** total, of which ~2.13M persist across restarts.
 
 Notes that save you from wrong conclusions:
 
@@ -158,20 +158,20 @@ Notes that save you from wrong conclusions:
 |---|---|---|
 | GPU KV pool | 214,084 tok | **239,436 tok** (+25,352, +12%) |
 | DRAM tier | ~245K tok (~2 s revisit) | — |
-| NVMe tier | ~640K tok (~4.4–7.5 s, restart-proof) | — |
-| **total reusable** | **~1.10M tok** | 239K tok |
-| after a restart | ~640K tokens still warm | **everything cold** |
+| NVMe tier | ~2.13M tok (~4.4–7.5 s, restart-proof) | — |
+| **total reusable** | **~2.59M tok** | 239K tok |
+| after a restart | ~2.13M tokens still warm | **everything cold** |
 | `--gpu-memory-utilization` | 0.95 (sidecar takes 796 MiB it can't see) | **0.98** |
 | `--max-num-batched-tokens` | 3231 (forced: LMCache needs 2·chunk−1) | **4096** (the deep-prefill optimum) |
 | patches required | base 3 + **6 local LMCache/vLLM** | **base 3** |
-| host resources | 24 GB pinned RAM + 60 GB SSD + a sidecar process | none |
+| host resources | 24 GB pinned RAM + 200 GB SSD + a sidecar process | none |
 | quality (69×2) | 89 | ~89.8 pooled (band 86–90) |
 
-So the trade is: **give up 25K hot tokens and the `mnbt` 4096 prefill optimum; get ~885K tokens of second-chance capacity and a warm start after every restart.** Drop LMCache when:
+So the trade is: **give up 25K hot tokens and the `mnbt` 4096 prefill optimum; get ~2.4M tokens of second-chance capacity and a warm start after every restart.** Drop LMCache when:
 
 - **your prompts are mostly fresh.** Tiers only pay off on *revisits*. One-shot chat, batch generation, or anything without long shared prefixes gets nothing back for the 25K tokens it gave up.
 - **you can't run local patches.** Stock LMCache on this model is not a degraded version of this profile — it is silently wrong. `serve-plain.sh` is strictly better than an unpatched tier stack.
-- **you don't have the host headroom.** 24 GB of *pinned* RAM is unswappable, and the L2 tier will use its full 60 GB cap.
+- **you don't have the host headroom.** 24 GB of *pinned* RAM is unswappable, and the L2 tier will use its full 200 GB cap — on the same filesystem your models and images live on.
 - **you're chasing benchmark numbers.** The plain profile's larger pool and wider `mnbt` are worth a few percent on synthetic deep-prefill runs.
 
 Keep LMCache when several agents share large prefixes, sessions are revisited across hours or restarts, or your working set exceeds the hot pool — the regime this box is actually for.
@@ -290,7 +290,7 @@ Newest first. Every switch is documented with numbers in [docs/HISTORY.md](docs/
 
 | daily | weights · KV | pool | why it took over |
 |---|---|---|---|
-| **+ LMCache DRAM/NVMe tiers (current, 2026-07-20)** | *(same engine)* | **214K** @0.95 **+ ~885K tiered** | Six local patches made tiered KV *faithful* on this fp8 hybrid (cross-restart needle + 69×2 = **89** vs a ~89.8 baseline). Trades 25K hot tokens and `mnbt` 4096 for ~885K tokens of second-chance capacity and a **warm start after restarts** — a 60K revisit costs 2 s (DRAM) or 4–7 s (NVMe) instead of an 11–13 s re-prefill. Validated by an 858-cycle soak (flat VRAM, L2 stable under its cap). [`serve-plain.sh`](scripts/serve-plain.sh) keeps the row below available. |
+| **+ LMCache DRAM/NVMe tiers (current, 2026-07-20)** | *(same engine)* | **214K** @0.95 **+ ~2.4M tiered** | Six local patches made tiered KV *faithful* on this fp8 hybrid (cross-restart needle + 69×2 = **89** vs a ~89.8 baseline). Trades 25K hot tokens and `mnbt` 4096 for ~2.4M tokens of second-chance capacity and a **warm start after restarts** — a 60K revisit costs 2 s (DRAM) or 4–7 s (NVMe) instead of an 11–13 s re-prefill. Validated by an 858-cycle soak (flat VRAM, L2 stable under its cap). [`serve-plain.sh`](scripts/serve-plain.sh) keeps the row below available. |
 | natfii NVFP4 W4A4 · fp8_e4m3 + FlashInfer + MTP `ns=4` (2026-07-19) | NVFP4 W4A4 · fp8 | ~239K @0.98 | **Prefill 3.4×** (13.5K vs 4.0K t/s @8K — native Blackwell FP4 GEMM vs Marlin dequant), deep-concurrent sustained **2.2×** (148 vs 67 t/s at pp30K×c8 tg512), cold 60K context 10 s vs 23 s — at **equal 69×2 quality** (~90, 4 trials each side; the W4A4 activation cost was bounded at ≈1 pt via a chimera A/B and natfii's calibration covers it). Survived the full promotion gauntlet incl. a 106-cycle soak and a 0.98 combined-wave battery. Pool is 11% smaller than AR's 270K (heavier MTP head + FP4 scales) — traded for re-prefilling 3× faster. |
 | Lorbus INT4-AutoRound · fp8_e4m3 + FlashInfer + MTP `ns=4` (2026-07-18) | INT4-AutoRound · fp8 | ~270K @0.96 | Flat deep decode (fp8+FlashInfer has **no** decode crater at depth, where the custom TurboQuant kernel drops); biggest pool ever; **MTP `ns=4`** restored by [PR #42603](https://github.com/vllm-project/vllm/pull/42603); tool-eval 90; dropped the experimental TurboQuant KV kernel for the **battle-tested fp8** path. (A one-day 0.98/287K promotion was reverted the same night: serve-time autotune OOM — gotcha #8.) |
 | turboquant_4bit_nc (NVFP4) + MTP `ns=3` (2026-07-15) | NVFP4 · TQ 4-bit K/V | ~235K | +42% pool over k8v4, once the "4bit_nc destroys retrieval" **0/8** was traced to the async×spec KV confound and fixed with `--no-async-scheduling`. Decode still craters at deep single-stream (the custom-kernel cost). |
