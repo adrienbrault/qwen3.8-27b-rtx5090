@@ -189,6 +189,18 @@ Keep LMCache when several agents share large prefixes, sessions are revisited ac
 
 An agent step resends its whole growing transcript, so nearly every request is a long prefix revisit — exactly the workload tiers are for. Without them, 91% of those prefixes miss and get re-prefilled; with them, nine in ten come back from DRAM or NVMe. **3.4× the throughput on identical work.** The one-task difference in solve rate (12 vs 13) is within noise at n=16 and runs the *opposite* direction to the throughput result — worth re-checking on a larger set before reading anything into it, but it's the honest number.
 
+**How many agents? Four.** Concurrency sweep on the same harness (24 tasks per arm, tier profile at `--max-num-seqs 16` / pool 211,267 so c8 wasn't scheduler-throttled):
+
+| agents | wall-clock | solved | avg queue depth | external prefix hit |
+|---|---|---|---|---|
+| **c4** | **1,388 s** | 19/24 | 0.4 | **89.5%** |
+| c6 | 1,982 s (+43%) | 19/24 | 2.0 | 75.4% |
+| c8 | 3,091 s (+123%) | 18/24 | 2.7 | 48.4% |
+
+c4 already saturates the engine (the `mnbt 3231` prefill ceiling); past it, extra streams only queue and evict each other's prefixes out of the 24 GB L1 — the hit rate halves by c8 and wall-clock more than doubles for zero solve gain. This is the L1 sizing rule ("L1 must exceed hot-working-set ÷ 0.8") showing up as a throughput knee: more concurrent agents = bigger hot working set. If you need more than ~4 heavy agents, grow `--l1-size-gb` before growing concurrency.
+
+*(Solve rates here are R2E-Gym's own reward signal on small samples — indicative for A/B purposes, not comparable to official SWE-Bench-Verified leaderboard numbers.)*
+
 **Operationally**, the tier profile also asks more of you: verify the pool is ~214K at boot (239K means the connector silently didn't attach), watch `du -sh` on the L2 directory for the first day, and wipe any L2 namespace written by a pre-patch build — poisoned chunks are not repaired.
 
 ## Why it needs a patch: MTP × fp8-KV × Blackwell crashes on stock vLLM
