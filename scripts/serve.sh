@@ -92,8 +92,9 @@ for i in $(seq 1 150); do
   sleep 10
 done
 echo "daily up. KV pool: $(sudo docker logs $NAME 2>&1 | grep -a 'GPU KV cache size' | tail -1)"
-echo "  ^ VERIFY this is ~214K (util 0.95 + sidecar). 239K means the connector did NOT attach"
-echo "    (you booted the plain profile by accident); 165K/185K/205K mean a stale util."
+echo "  ^ VERIFY this is ~214K (util 0.95 + sidecar, at --max-num-seqs 8). 239K means the"
+echo "    connector did NOT attach (you booted the plain profile); 165K/185K/205K = stale util."
+echo "    Raising --max-num-seqs shifts it slightly: seqs 16 measures 211,267 (-1.3%)."
 
 # --- autotune shape pre-warm (gotcha #8) --------------------------------------
 if command -v llama-benchy >/dev/null 2>&1; then
