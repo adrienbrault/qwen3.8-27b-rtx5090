@@ -51,6 +51,7 @@ The quality side: W4A4's extra activation-quant error measured **≈ 1 point** o
 - **MTP speculative decoding at `ns=4`** — draft head inside the weights — crash-free under concurrency thanks to [PR #42603](https://github.com/vllm-project/vllm/pull/42603), and quality-neutral alongside the connector thanks to [two more local vLLM patches](patches/lmcache/README.md).
 - **Vision** — the model's image tower, on.
 - All of it on **one 32 GB RTX 5090** (`sm_120`), memory-OC'd, 600 W.
+- Proven end-to-end on official agentic benchmarks: **SWE-Bench-Verified 69.4%** (full 500, official harness) and **Terminal-Bench 2.1 48.3%** (terminus-2, default timeouts) — [details](#agentic-benchmark-results).
 
 ## Benchmarks
 
@@ -111,6 +112,17 @@ Consequence: N simultaneous cold contexts still serialize through the lane, but 
 Deep context holds under concurrency too: **pp90000 × c4** runs to completion at 135 t/s per-stream decode peak — vs ~102 on the previous daily (full breakdown in the sustained matrix above).
 
 **Quality — [tool-eval-bench](https://github.com/SeraphimSerapis/tool-eval-bench): ~90** / 100 (full 69-scenario suite × 2 trials, ×4 independent runs, pooled mean 89.8) — statistically indistinguishable from the best W4A16 daily (87.8 pooled, same protocol; the quick-15 subset's noise band is ±7, which is why we score promotions on the full suite only). The runs double as the heaviest concurrent-load stability stress on the fix.
+
+### Agentic benchmark results
+
+Two official end-to-end benchmarks, run on this exact daily profile (tiers on), agents talking to the box like any other OpenAI endpoint:
+
+| benchmark | score | harness / agent | shape |
+|---|---|---|---|
+| **SWE-Bench-Verified** | **69.4%** (347/500) | official `swebench` harness, R2E-Gym scaffold | full 500, single attempt, zero retries |
+| **Terminal-Bench 2.1** | **48.3%** (43/89) | Harbor + terminus-2 (leaderboard reference agent) | k=1, default per-task timeouts |
+
+Calibration: the same model scores 67.8% on SWE-Bench-Verified via the published mini-swe-agent reference, 79.2% at public SOTA, 88–90% only with heavily engineered claude-cli stacks — so a stock scaffold on one consumer GPU lands above the reference band, and the remaining headroom is scaffold engineering, not engine configuration. On Terminal-Bench, the number is wall-clock-bound before it is capability-bound: **71.7% (43/60) on tasks that finished within their time budget**; 27 of the 46 misses are agent timeouts, driven by 96–234K-token reasoning traces against a ~130–140 t/s per-stream decode ceiling (leaderboard rows, k=5, terminus-2: Fable 5 80.4%, GPT-5.5 78.0%, Opus 4.7 66.1%; best open-weight row GLM-5.1 58.7%). Methodology notes for both — including the patch-sanitization step SWE scoring needs on R2E images, and the timeout A/B that ruled out concurrency as the cause — are in [What removing LMCache changes](#what-removing-lmcache-changes).
 
 ## Where the 31.35 GiB goes — memory budget
 
