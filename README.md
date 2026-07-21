@@ -205,6 +205,8 @@ One methodology note, disclosed because it moved the number: R2E's task images s
 
 Calibration against other Qwen3.6-27B numbers: 67.8% is the published same-model mini-swe-agent reference, 79.2% the public SOTA, 88–90% only with heavily engineered claude-cli agent stacks. A stock R2E scaffold on one RTX 5090 with tiered KV lands slightly above the reference band — the remaining headroom is agent-scaffold engineering, not engine configuration. Per-repo: django 167/231, sympy 52/75, sphinx 28/44, scikit-learn 28/32, matplotlib 20/34, astropy 11/22.
 
+**Terminal-Bench 2.1: 48.3% (43/89)** — Harbor + terminus-2 (the leaderboard reference agent), official dataset, single attempt, no timeout inflation, this same tier profile. The anatomy is the honest part: only 16 of the 46 misses are genuine task failures — **28 are agent *timeouts***, because ~80–125 tok/s per-stream decode exhausts TB's per-task time budgets on the long tasks. On tasks that finished within budget the pass rate is **72.9% (43/59)**. In other words, on this benchmark a single consumer GPU is wall-clock-bound before it is capability-bound — buying decode speed would buy score directly, whereas relaxing Harbor's timeout multipliers would just make the number incomparable. (Run at `--n-concurrent 2`: a 4-concurrent pilot lost extra tasks to CPU contention between task containers on the 12-core host.)
+
 **Operationally**, the tier profile also asks more of you: verify the pool is ~214K at boot (239K means the connector silently didn't attach), watch `du -sh` on the L2 directory for the first day, and wipe any L2 namespace written by a pre-patch build — poisoned chunks are not repaired.
 
 ## Why it needs a patch: MTP × fp8-KV × Blackwell crashes on stock vLLM
