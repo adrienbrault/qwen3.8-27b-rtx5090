@@ -1,5 +1,9 @@
 # How this config was arrived at — the dead ends and the one real bug
 
+## Status: the daily added LMCache DRAM/NVMe KV tiers (2026-07-20)
+
+**Same natfii engine as the section below, plus the tiered KV offload** — util 0.95, pool 214,084, +24 GB pinned DRAM (~245K tok) +200 GB NVMe (~2.13M tok, restart-proof), at quality parity (69×2 = 89 vs ~89.8) after six local patches. That campaign — four rounds of "validated" tier profiles that were silently wrong — is its own story: [LMCACHE.md](LMCACHE.md) and [../patches/lmcache/README.md](../patches/lmcache/README.md). The section below documents the natfii engine promotion this profile is built on; its util-0.98/239,436 numbers are now the *plain* (no-tiers) profile.
+
 ## Status: the daily is natfii NVFP4 W4A4 — prefill's turn (2026-07-19)
 
 **The daily moved to the [natfii W4A4 NVFP4 export](https://huggingface.co/natfii/Qwen3.6-27B-VLM-NVFP4-MTP) at util 0.98, pool 239,436.** The whole case in one line: equal quality (69×2 pooled 89.8 vs 87.8, 4 trials each), **prefill 3.4×** (13.3K vs 4.0K t/s @8K — W4A4 dispatches Blackwell's native FP4 GEMM where W4A16 runs bf16 GEMM plus Marlin dequant), deep-concurrent sustained 2.2× (148 vs 67 t/s at pp30K×c8 tg512), cold-60K TTFT 10 s vs 23 s. Cost: pool −11% (natfii's MTP head is 0.79 GiB vs AR's 0.28, plus FP4 scale tensors).

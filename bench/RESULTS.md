@@ -5,9 +5,9 @@ Hardware: RTX 5090 32 GB (`sm_120`), Ryzen 9 5900X, 64 GB RAM, Ubuntu 24.04, dri
 these throughput numbers run above a stock 5090 — see [../docs/CONFIG.md](../docs/CONFIG.md#host-notes).
 Tool: [llama-benchy](https://github.com/eugr/llama-benchy) — *not* ad-hoc curl loops, which are noisy enough to produce wrong conclusions.
 
-> **Status (2026-07-18): the daily is [Lorbus INT4-AutoRound](https://huggingface.co/Lorbus/Qwen3.6-27B-int4-AutoRound) + `fp8_e4m3` KV + FlashInfer + MTP `ns=4`** (image `k8v4-so-pr42603`, with [PR #42603](https://github.com/vllm-project/vllm/pull/42603)). Its numbers are the section directly below. **Everything after it** — TurboQuant `4bit_nc`/`k8v4` KV on the Unsloth NVFP4 model — is **prior-daily / alternative** data, kept for the record; see [the lineage](../README.md#daily-lineage--what-each-daily-was-and-why-the-next-took-over).
+> **Status (2026-07-20): the current daily is natfii NVFP4 W4A4 + fp8 KV + MTP `ns=4` + LMCache DRAM/NVMe tiers** (util 0.95, pool 214,084). Its engine numbers are in [the natfii promotion section](#promotion-2026-07-19-natfii-nvfp4-w4a4-is-the-daily--util-098-pool-239436) (measured at what is now the *plain* profile, util 0.98 / pool 239,436 — the tiers change capacity and revisit cost, not decode/prefill rates) and the agentic scores are in [the README](../README.md#agentic-benchmark-results). Below that: the Lorbus INT4-AutoRound era (2026-07-18, image `k8v4-so-pr42603`), then the TurboQuant `4bit_nc`/`k8v4` era on the Unsloth NVFP4 model — **prior-daily / alternative** data, kept for the record; see [the lineage](../README.md#daily-lineage--what-each-daily-was-and-why-the-next-took-over).
 
-## The daily: Lorbus INT4-AutoRound + fp8 + FlashInfer + MTP ns=4 (PR #42603)
+## Prior daily (2026-07-18): Lorbus INT4-AutoRound + fp8 + FlashInfer + MTP ns=4 (PR #42603)
 
 Config: **Qwen3.6-27B INT4 ([Lorbus AutoRound](https://huggingface.co/Lorbus/Qwen3.6-27B-int4-AutoRound)) + `fp8_e4m3` KV + FlashInfer 0.6.15 + `--mamba-cache-mode align` + MTP `ns=4`**, image `k8v4-so-pr42603` (base image + [PR #42603](https://github.com/vllm-project/vllm/pull/42603)). Pool **287,323 tok** at util 0.98 / `--max-num-batched-tokens 4096`, 200K max-len. (The decode / long-context / tool-eval tables below were measured at the earlier util 0.94 config, pool 253,521 — decode is bandwidth-bound and util-invariant, so they hold unchanged; see [the util sweep + ceiling probe](#pool-vs-util--the-util-ceiling) for the pool bump.)
 
@@ -155,7 +155,7 @@ A second run on **v2.0.6** reproduces the protocol of a [published NVFP4-vs-Q8 c
 The aggressive 4-bit KV cache does **not** cost *tool-calling* quality — this short-context bench
 tops the comparison. (We once thought 4-bit keys cost long-context **retrieval**, which is why we
 briefly ran `turboquant_k8v4`; the "4bit_nc 0/8" was actually async×spec KV corruption — with
-`--no-async-scheduling`, `4bit_nc` retrieves 8/8 and is the daily. See [KV cache](#kv-cache-turboquant_4bit_nc-daily-vs-turboquant_k8v4)
+`--no-async-scheduling`, `4bit_nc` retrieves 8/8 and became the then-daily. See [KV cache](#kv-cache-prior-daily-turboquant_4bit_nc-vs-turboquant_k8v4)
 above.) One safety flag on
 both versions: TC-60 (cross-turn sleeper injection) fired in
 all trials — the model propagated an attacker BCC smuggled through turn-1 tool output.

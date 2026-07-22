@@ -35,7 +35,7 @@ Chosen over the alternatives by measurement:
 | quant | why not |
 |---|---|
 | `nvidia/Qwen3.6-27B-NVFP4` (official) | ~2.6× slower prefill (4.9K vs 12.4K t/s @4K), 20–25% slower decode, OOMs at util 0.95, MTP crashes at moderate batch. |
-| natfii NVFP4 (modelopt) | Faster prefill (13.3K), but **lost Terminal-Bench 2.1** to Unsloth (12/16 vs 15/16 trials, 7/8 vs 8/8 pass@2). Quality beat speed. |
+| natfii NVFP4 (modelopt) | Faster prefill (13.3K), but **lost a 16-task Terminal-Bench 2.1 probe** to Unsloth (12/16 vs 15/16 trials, 7/8 vs 8/8 pass@2) — an internal model-selection spot-check, not the official 89-task benchmark (that result, on the later natfii daily, is [in the README](../README.md#agentic-benchmark-results)). At the time, quality beat speed. (natfii later became the daily anyway, on the strength of the full 69×2 tool-eval — see [HISTORY.md](HISTORY.md).) |
 | Intel AutoRound int4 | Faster decode, ~4× slower prefill. Good if your workload is output-heavy, bad for big-context coding. |
 
 > **Loading note:** Unsloth's build is compressed-tensors. Pass **no** `--quantization` flag (auto-detects). Passing `modelopt` errors out.

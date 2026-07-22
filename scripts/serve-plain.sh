@@ -50,6 +50,7 @@ sudo docker run -d --name "$NAME" --runtime nvidia --gpus all --ipc=host \
   -p ${PORT}:8000 --restart unless-stopped --shm-size 16g \
   -e VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE=134217728 \
   -e VLLM_ATTENTION_BACKEND=FLASHINFER \
+  -e TORCHINDUCTOR_COMPILE_THREADS=8 -e MAX_JOBS=4 -e FLASHINFER_NUM_COMPILE_JOBS=4 \
   -v "$MODEL_DIR":/model $CACHE \
   "$IMAGE" \
   --model /model --served-model-name qwen3.6-27b --trust-remote-code \
