@@ -4,8 +4,8 @@
 #
 # The DAILY is ./serve.sh (same engine + LMCache DRAM/NVMe tiers). Run THIS one when you
 # want the biggest hot pool with no sidecar and no local LMCache patches — you trade
-# ~2.4M tokens of tier capacity for +25K on-GPU and mnbt 4096. Full trade in the README's
-# "What removing LMCache changes".
+# ~2.4M tokens of tier capacity for +25K on-GPU and mnbt 4096. Full trade in
+# "What removing LMCache changes" in ../docs/LMCACHE.md.
 #
 # Requires the base patched image (see ../patches/). CRITICAL: MTP ns>=2 + fp8 KV
 # IMA-crashes under concurrency on stock vLLM — the image's PR #42603 graft is what fixes

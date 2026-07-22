@@ -8,7 +8,7 @@
 # wrong-addressed and retrieves restore garbage state. Read ../patches/lmcache/README.md.
 #
 # For the no-LMCache variant (bigger hot pool, no tiers, no patches), see ./serve-plain.sh
-# and the README's "What removing LMCache changes".
+# and "What removing LMCache changes" in ../docs/LMCACHE.md.
 #
 #   MODEL_DIR=/path/to/Qwen3.6-27B-VLM-NVFP4-MTP ./serve.sh
 set -euo pipefail

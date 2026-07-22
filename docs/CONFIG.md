@@ -1,6 +1,6 @@
 # Every flag, and why
 
-> ⚠️ **STALE — this documents the 2026-07-15 TurboQuant daily, which is retired.** TurboQuant KV was closed permanently for this hybrid (needle-wrong at 60K, dead under the concurrency killer — see [HISTORY.md](HISTORY.md)). The current daily is natfii NVFP4 W4A4 + fp8 KV + MTP `ns=4` + **LMCache DRAM/NVMe tiers**: flags in [`../scripts/serve.sh`](../scripts/serve.sh) and the README's [Config essentials](../README.md#config-essentials), tier specifics in [LMCACHE.md](LMCACHE.md), no-tiers variant in [`../scripts/serve-plain.sh`](../scripts/serve-plain.sh). Kept for the flag rationale that's still shared (parsers, sampling, cache mounts, host notes) and as the record of the TurboQuant era.
+> ⚠️ **STALE — this documents the 2026-07-15 TurboQuant daily, which is retired.** TurboQuant KV was closed permanently for this hybrid (needle-wrong at 60K, dead under the concurrency killer — see [HISTORY.md](HISTORY.md)). The current daily is natfii NVFP4 W4A4 + fp8 KV + MTP `ns=4` + **LMCache DRAM/NVMe tiers**: flags in [`../scripts/serve.sh`](../scripts/serve.sh) and [GOTCHAS.md](GOTCHAS.md#config-essentials), tier specifics in [LMCACHE.md](LMCACHE.md), no-tiers variant in [`../scripts/serve-plain.sh`](../scripts/serve-plain.sh). Kept for the flag rationale that's still shared (parsers, sampling, cache mounts, host notes) and as the record of the TurboQuant era.
 
 ## Recommended daily: turboquant_4bit_nc on the clean TQ image
 

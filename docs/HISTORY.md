@@ -1,5 +1,20 @@
 # How this config was arrived at — the dead ends and the one real bug
 
+## Daily lineage — what each daily was, and why the next took over
+
+Newest first. Every switch is documented with numbers in the Status sections below and [../bench/RESULTS.md](../bench/RESULTS.md).
+
+| daily | weights · KV | pool | why it took over |
+|---|---|---|---|
+| **+ LMCache DRAM/NVMe tiers (current, 2026-07-20)** | *(same engine)* | **214K** @0.95 **+ ~2.4M tiered** | Six local patches made tiered KV *faithful* on this fp8 hybrid (cross-restart needle + 69×2 = **89** vs a ~89.8 baseline). Trades 25K hot tokens and `mnbt` 4096 for ~2.4M tokens of second-chance capacity and a **warm start after restarts** — a 60K revisit costs 2 s (DRAM) or 4–7 s (NVMe) instead of an 11–13 s re-prefill. Validated by an 858-cycle soak (flat VRAM, L2 stable under its cap). [`../scripts/serve-plain.sh`](../scripts/serve-plain.sh) keeps the row below available. |
+| natfii NVFP4 W4A4 · fp8_e4m3 + FlashInfer + MTP `ns=4` (2026-07-19) | NVFP4 W4A4 · fp8 | ~239K @0.98 | **Prefill 3.4×** (13.5K vs 4.0K t/s @8K — native Blackwell FP4 GEMM vs Marlin dequant), deep-concurrent sustained **2.2×** (148 vs 67 t/s at pp30K×c8 tg512), cold 60K context 10 s vs 23 s — at **equal 69×2 quality** (~90, 4 trials each side; the W4A4 activation cost was bounded at ≈1 pt via a chimera A/B and natfii's calibration covers it). Survived the full promotion gauntlet incl. a 106-cycle soak and a 0.98 combined-wave battery. Pool is 11% smaller than AR's 270K (heavier MTP head + FP4 scales) — traded for re-prefilling 3× faster. |
+| Lorbus INT4-AutoRound · fp8_e4m3 + FlashInfer + MTP `ns=4` (2026-07-18) | INT4-AutoRound · fp8 | ~270K @0.96 | Flat deep decode (fp8+FlashInfer has **no** decode crater at depth, where the custom TurboQuant kernel drops); biggest pool ever; **MTP `ns=4`** restored by [PR #42603](https://github.com/vllm-project/vllm/pull/42603); tool-eval 90; dropped the experimental TurboQuant KV kernel for the **battle-tested fp8** path. (A one-day 0.98/287K promotion was reverted the same night: serve-time autotune OOM — [GOTCHAS.md](GOTCHAS.md) #8.) |
+| turboquant_4bit_nc (NVFP4) + MTP `ns=3` (2026-07-15) | NVFP4 · TQ 4-bit K/V | ~235K | +42% pool over k8v4, once the "4bit_nc destroys retrieval" **0/8** was traced to the async×spec KV confound and fixed with `--no-async-scheduling`. Decode still craters at deep single-stream (the custom-kernel cost). |
+| turboquant_k8v4 (NVFP4) | NVFP4 · TQ 8-bit K/4-bit V | ~165K | +21% pool over fp8 at fp8-equal retrieval quality (8-bit keys). |
+| fp8_e4m3 (stock nightly) | NVFP4 · fp8 | ~136K | The original battle-tested baseline — flat deep decode, no patches, smallest pool. |
+
+The arc, compressed: the fp8 baseline's **flat-decode virtue** survived every generation; PR #42603 added working `ns=4`; AutoRound added quality and pool; NVFP4 W4A4 cashed in the GPU's native FP4 compute — the first daily where *prefill* got a generational jump instead of decode or capacity; and the KV tiers finally broke capacity out of the 32 GB box entirely, which is the one axis a bigger GPU would otherwise have been the only answer to.
+
 ## Status: the daily added LMCache DRAM/NVMe KV tiers (2026-07-20)
 
 **Same natfii engine as the section below, plus the tiered KV offload** — util 0.95, pool 214,084, +24 GB pinned DRAM (~245K tok) +200 GB NVMe (~2.13M tok, restart-proof), at quality parity (69×2 = 89 vs ~89.8) after six local patches. That campaign — four rounds of "validated" tier profiles that were silently wrong — is its own story: [LMCACHE.md](LMCACHE.md) and [../patches/lmcache/README.md](../patches/lmcache/README.md). The section below documents the natfii engine promotion this profile is built on; its util-0.98/239,436 numbers are now the *plain* (no-tiers) profile.

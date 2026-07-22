@@ -1,6 +1,6 @@
 # MTP + LMCache tiered KV caching — the profile, and the four rounds of being wrong
 
-**This is the daily.** The launch command is [`../scripts/serve.sh`](../scripts/serve.sh); the patches are [`../patches/lmcache/`](../patches/lmcache/README.md); the capacity/latency trade against running without it is in the [README](../README.md#what-removing-lmcache-changes).
+**This is the daily.** The launch command is [`../scripts/serve.sh`](../scripts/serve.sh); the patches are [`../patches/lmcache/`](../patches/lmcache/README.md); the capacity/latency trade against running without it is [below](#what-removing-lmcache-changes).
 
 ## Current profile (2026-07-20)
 
@@ -21,6 +21,59 @@
 Vision is **on** in this profile — the `image:0` restriction in the historical text below belonged to the old 0.24/0.5.1 build and no longer applies.
 
 Every ingredient was earned by a failure. Removing any one reintroduces a specific, documented break — and most of those breaks are *silent*.
+
+## What removing LMCache changes
+
+[`../scripts/serve-plain.sh`](../scripts/serve-plain.sh) is the same engine with the connector and sidecar removed. It is a legitimate config — it's what every engine benchmark matrix was measured on — and it is what you should run if you can't or won't carry six local patches.
+
+| | **daily** (`serve.sh`, tiers on) | **plain** (`serve-plain.sh`) |
+|---|---|---|
+| GPU KV pool | 214,084 tok | **239,436 tok** (+25,352, +12%) |
+| DRAM tier | ~245K tok (~2 s revisit) | — |
+| NVMe tier | ~2.13M tok (~4.4–7.5 s, restart-proof) | — |
+| **total reusable** | **~2.59M tok** | 239K tok |
+| after a restart | ~2.13M tokens still warm | **everything cold** |
+| `--gpu-memory-utilization` | 0.95 (sidecar takes 796 MiB it can't see) | **0.98** |
+| `--max-num-batched-tokens` | 3231 (forced: LMCache needs 2·chunk−1) | **4096** (the deep-prefill optimum) |
+| patches required | base 3 + **6 local LMCache/vLLM** | **base 3** |
+| host resources | 24 GB pinned RAM + 200 GB SSD + a sidecar process | none |
+| quality (69×2) | 89 | ~89.8 pooled (band 86–90) |
+
+So the trade is: **give up 25K hot tokens and the `mnbt` 4096 prefill optimum; get ~2.4M tokens of second-chance capacity and a warm start after every restart.** Drop LMCache when:
+
+- **your prompts are mostly fresh.** Tiers only pay off on *revisits*. One-shot chat, batch generation, or anything without long shared prefixes gets nothing back for the 25K tokens it gave up.
+- **you can't run local patches.** Stock LMCache on this model is not a degraded version of this profile — it is silently wrong. `serve-plain.sh` is strictly better than an unpatched tier stack.
+- **you don't have the host headroom.** 24 GB of *pinned* RAM is unswappable, and the L2 tier will use its full 200 GB cap — on the same filesystem your models and images live on.
+- **you're chasing benchmark numbers.** The plain profile's larger pool and wider `mnbt` are worth a few percent on synthetic deep-prefill runs.
+
+Keep LMCache when several agents share large prefixes, sessions are revisited across hours or restarts, or your working set exceeds the hot pool — the regime this box is actually for.
+
+**The agentic A/B that settles it.** Same 16 SWE-Bench-Verified tasks ([R2E-Gym](https://github.com/R2E-Gym/R2E-Gym) / DeepSWE harness), 4 concurrent agents, 100-step cap, native tool calling, identical engine — the only difference is the connector:
+
+| | tiers on | plain |
+|---|---|---|
+| wall-clock | **786 s** | 2,707 s (**3.4× slower**) |
+| solved | 12 / 16 | 13 / 16 |
+| avg steps | 46.2 | 47.7 |
+| productive turns | 723 | 748 |
+| prefix hit (in-GPU) | 46.2% | 8.7% |
+| prefix hit (external) | **88.8%** | — |
+
+An agent step resends its whole growing transcript, so nearly every request is a long prefix revisit — exactly the workload tiers are for. Without them, 91% of those prefixes miss and get re-prefilled; with them, nine in ten come back from DRAM or NVMe. **3.4× the throughput on identical work.** The one-task difference in solve rate (12 vs 13) is within noise at n=16 and runs the *opposite* direction to the throughput result — worth re-checking on a larger set before reading anything into it, but it's the honest number.
+
+**How many agents? Four.** Concurrency sweep on the same harness (24 tasks per arm, tier profile at `--max-num-seqs 16` / pool 211,267 so c8 wasn't scheduler-throttled):
+
+| agents | wall-clock | solved | avg queue depth | external prefix hit |
+|---|---|---|---|---|
+| **c4** | **1,388 s** | 19/24 | 0.4 | **89.5%** |
+| c6 | 1,982 s (+43%) | 19/24 | 2.0 | 75.4% |
+| c8 | 3,091 s (+123%) | 18/24 | 2.7 | 48.4% |
+
+c4 already saturates the engine (the `mnbt 3231` prefill ceiling); past it, extra streams only queue and evict each other's prefixes out of the 24 GB L1 — the hit rate halves by c8 and wall-clock more than doubles for zero solve gain. This is the L1 sizing rule ("L1 must exceed hot-working-set ÷ 0.8") showing up as a throughput knee: more concurrent agents = bigger hot working set. If you need more than ~4 heavy agents, grow `--l1-size-gb` before growing concurrency.
+
+The full end-to-end scores this workload produces — official SWE-Bench-Verified and Terminal-Bench 2.1, run on this exact profile — are in the [README](../README.md#agentic-benchmark-results).
+
+**Operationally**, the tier profile also asks more of you: verify the pool is ~214K at boot (239K means the connector silently didn't attach), watch `du -sh` on the L2 directory for the first day, and wipe any L2 namespace written by a pre-patch build — poisoned chunks are not repaired.
 
 ## Why this took four rounds
 
