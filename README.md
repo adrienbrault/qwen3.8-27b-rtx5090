@@ -20,7 +20,7 @@ If you want the engine without the tiers — bigger hot pool, no sidecar, no loc
 | context / hot pool | 200K / **214,084 tokens** on-GPU (util 0.95; plain profile: 239,436 @0.98) |
 | tiered KV | + ~245K tok pinned DRAM (~2 s revisit) + ~2.13M tok NVMe (~4.4–7.5 s, **survives restarts**) ≈ **2.59M reusable** |
 | prefill | **~13.5K t/s @8K** (native Blackwell FP4 GEMM); cold 60K context ~11–13 s |
-| decode | **flat ~136–140 t/s** single-stream from 30K → 180K; aggregate peaks 700–930 t/s (c8, warm) |
+| decode | **~80–160 t/s single-stream, content-dependent** (MTP acceptance: creative prose ~82, code ~158; benchy ~116–140); flat with depth to 180K; aggregate peaks 700–930 t/s (c8, warm) |
 | quality | tool-eval-bench **~90**/100 (full 69×2, ×4 runs) — parity with the best W4A16 daily |
 | **SWE-Bench-Verified** | **69.4%** (347/500, official harness, single attempt) |
 | **Terminal-Bench 2.1** | **48.3%** (43/89, terminus-2, default timeouts; **71.7%** on tasks that finished within budget) |
@@ -54,6 +54,8 @@ Tool: [llama-benchy](https://github.com/eugr/llama-benchy) 0.3.8. Full detail an
 |---|---|---|---|---|---|
 | pp512 | 116 | 213 | 358 | **706** (peak 933) | 593 (peak 898) |
 | pp4096 | 126 | 204 | 280 | 352 (peak 854) | — |
+
+> **Decode speed is content-dependent — honesty note.** With MTP speculative decoding, single-stream rate tracks how *predictable* the output is: the draft head lands more tokens per verify step on structured text. Measured on the daily, same 600-token budget: **"write a short story" → 82 t/s; "create a todo app" → 158 t/s.** The benchy rows above (~116–140) sit in the middle of that spread. Nothing in the tables is wrong — but if your workload is creative prose, read the low end; if it's code (this box's actual job), read the high end.
 
 **Sustained at depth** (`tg 512`, aggregate t/s, peak during warm overlap in parens) — batched decode is fast on this hybrid; what drags deep cold-context numbers is the shared prefill lane, now 3.4× wider:
 

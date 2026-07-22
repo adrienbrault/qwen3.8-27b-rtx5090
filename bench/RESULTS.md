@@ -7,6 +7,17 @@ Tool: [llama-benchy](https://github.com/eugr/llama-benchy) — *not* ad-hoc curl
 
 > **Status (2026-07-20): the current daily is natfii NVFP4 W4A4 + fp8 KV + MTP `ns=4` + LMCache DRAM/NVMe tiers** (util 0.95, pool 214,084). Its engine numbers are in [the natfii promotion section](#promotion-2026-07-19-natfii-nvfp4-w4a4-is-the-daily--util-098-pool-239436) (measured at what is now the *plain* profile, util 0.98 / pool 239,436 — the tiers change capacity and revisit cost, not decode/prefill rates) and the agentic scores are in [the README](../README.md#agentic-benchmark-results). Below that: the Lorbus INT4-AutoRound era (2026-07-18, image `k8v4-so-pr42603`), then the TurboQuant `4bit_nc`/`k8v4` era on the Unsloth NVFP4 model — **prior-daily / alternative** data, kept for the record; see [the lineage](../docs/HISTORY.md#daily-lineage--what-each-daily-was-and-why-the-next-took-over).
 
+## Decode rate vs content type — MTP acceptance spread (2026-07-22, tier daily)
+
+Single request on the daily (:8020, tiers on), 600 completion tokens, thinking off, default sampling (temp 0.6). The only variable is what the model is asked to write:
+
+| prompt | tok/s |
+|---|---|
+| "Write a short story…" (creative prose) | **82.0** |
+| "Create a todo app…" (HTML/JS code) | **158.2** |
+
+~2× spread from MTP draft acceptance alone: the `ns=4` draft head lands more tokens per verify step on low-entropy, structured output. The llama-benchy matrices elsewhere in this file (~116 @pp512, ~136–140 deep-context) sample the middle of this range. Implication for reading any single-stream decode number on a spec-decode config: it is a *distribution over content*, not a constant — quote the workload with the number. (Agent traces from the Terminal-Bench campaign show effective 80–125 t/s including prefill share, consistent with mixed reasoning + code output.)
+
 ## Agentic benchmarks — full anatomy (2026-07-20 → 22, tier daily)
 
 The headline table is in [the README](../README.md#agentic-benchmark-results); this is the complete disclosure.
