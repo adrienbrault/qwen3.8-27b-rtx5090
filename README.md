@@ -90,7 +90,7 @@ cd patches/lmcache && docker build -t vllm-qwen36:tiers . && cd ../..
 ./scripts/serve.sh
 ```
 
-Or skip both builds and pull the **exact validated daily image** (immutable tag, same bits every benchmark in this README ran on):
+Or skip both builds and pull the **exact validated daily image** (immutable tag — the same bits the agentic benchmarks and the tier soak ran on):
 
 ```bash
 docker pull ghcr.io/adrienbrault/qwen36-27b-vllm:tiers-lmcfix6-20260722
