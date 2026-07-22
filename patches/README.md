@@ -8,8 +8,11 @@ docker build -t vllm-qwen36:patched .
 
 > **The daily needs a second image on top of this one.** [`lmcache/`](lmcache/README.md) holds the six patches that make DRAM/NVMe KV offload *faithful* on this fp8 hybrid — four on LMCache, two on vLLM. Build it after this one. If you're running [`../scripts/serve-plain.sh`](../scripts/serve-plain.sh) (no tiers), this image is all you need.
 
+**What the current fp8 daily actually uses from this image:** [`install_pr42603_sync.py`](install_pr42603_sync.py), the FlashInfer 0.6.15 pip step, and the [PR #44993](https://github.com/vllm-project/vllm/pull/44993) graft (last row). The four `tq_*`/`#40914` rows are the retired TurboQuant-era stack — inert on the fp8 path, kept so the image still serves those historical configs ([REJECTED.md](../docs/REJECTED.md)).
+
 | file | purpose |
 |---|---|
+| [`install_pr42603_sync.py`](install_pr42603_sync.py) — from [PR #42603](https://github.com/vllm-project/vllm/pull/42603) (closed unmerged) | **The daily-critical one.** One stream-sync in the MTP draft loop — the locally validated workaround for the MTP × fp8-KV × Blackwell illegal-memory-access crash. [Why, in the README](../README.md#why-it-needs-a-patch-mtp--fp8-kv--blackwell-crashes-on-stock-vllm). |
 | `vllm-only.diff` | Upstream [PR #40914](https://github.com/vllm-project/vllm/pull/40914) (open) — TurboQuant K+1 spec-verify routing. |
 | `fix_spec_output.py` | **Makes #40914 actually work on Blackwell.** It returned the kernel tensor instead of writing the out-param buffer; under full CUDA-graph capture the return value is discarded → constant-token garbage. |
 | `tq_auto_fallback.py` | MTP draft runner never inherits `cache_config.cache_dtype` (arrives `"auto"`, crashes). Falls back to `$VLLM_TQ_PRESET`. |

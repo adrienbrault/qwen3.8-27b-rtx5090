@@ -11,7 +11,7 @@ LABEL org.opencontainers.image.source="https://github.com/adrienbrault/qwen3.6-2
       org.opencontainers.image.base.digest="sha256:f2ac337893360e23462249c3897e1c92dc8ba8a1ebbc3dd15c4ac931e957438e" \
       ai.model.checkpoint="natfii/Qwen3.6-27B-VLM-NVFP4-MTP@2e46c0ed7606f35e357bc5674d20c710fc51b178"
 
-# Image for the Qwen3.6-27B RTX 5090 daily. The CURRENT daily (Lorbus INT4-AutoRound
+# Image for the Qwen3.6-27B RTX 5090 daily. The CURRENT daily (natfii NVFP4 W4A4
 # + fp8 KV + FlashInfer + MTP ns=4) uses patches #5 (PR #42603), FlashInfer 0.6.15,
 # and #4 (PR #44993). Patches #1-3 + tq_splits are the TurboQuant 4-bit-KV stack the
 # repo shipped as an earlier daily (see docs/HISTORY.md) — inert on the fp8 path, kept

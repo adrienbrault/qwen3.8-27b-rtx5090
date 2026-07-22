@@ -8,8 +8,8 @@
 # "What removing LMCache changes" in ../docs/LMCACHE.md.
 #
 # Requires the base patched image (see ../patches/). CRITICAL: MTP ns>=2 + fp8 KV
-# IMA-crashes under concurrency on stock vLLM — the image's PR #42603 graft is what fixes
-# it. And --no-async-scheduling (vllm#42655). See NOTES. Idempotent.
+# IMA-crashes under concurrency on stock vLLM — the image's PR #42603 graft is the validated
+# workaround that prevents it. And --no-async-scheduling (vllm#42655). See NOTES. Idempotent.
 #
 #   MODEL_DIR=/path/to/Qwen3.6-27B-VLM-NVFP4-MTP ./serve-plain.sh
 set -euo pipefail
@@ -133,7 +133,7 @@ sudo docker restart owui-proxy >/dev/null 2>&1 || true   # so Open WebUI re-disc
 #                              : keep historical <think> across turns. CLIENT must resend prior
 #                                reasoning in the `reasoning` field (NOT reasoning_content).
 #   --speculative-config ns=4  : MTP. --mamba-cache-mode all is same speed / same pool and does NOT
-#                                avoid the crash — don't bother; PR #42603 is the fix.
+#                                avoid the crash — don't bother; PR #42603's sync is the validated workaround.
 #   util 0.98 + mnbt 4096      : util is the ONLY pool lever (+~8.4K tok/0.01 -> 239,436 at 0.98,
 #                                222,535 at 0.96). The ceiling is MODEL-SPECIFIC: 0.98 serve-time-
 #                                OOM'd the previous heavier W4A16 daily (lazy autotune workspace,

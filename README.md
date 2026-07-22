@@ -20,8 +20,8 @@ If you want the engine without the tiers — bigger hot pool, no sidecar, no loc
 | context / hot pool | 200K / **214,084 tokens** on-GPU (util 0.95; plain profile: 239,436 @0.98) |
 | tiered KV | + ~245K tok pinned DRAM (~2 s revisit) + ~2.13M tok NVMe (~4.4–7.5 s, **survives restarts**) ≈ **2.59M reusable** — aggregate *reusable prefixes* across sessions, **not** the per-request window (that caps at 200K) |
 | prefill | **~13.5K t/s @8K** (native Blackwell FP4 GEMM); cold 60K context ~11–13 s |
-| decode | **~80–160 t/s single-stream, content-dependent** (MTP acceptance: creative prose ~82, code ~158; benchy ~116–140); flat with depth to 180K; aggregate peaks 700–930 t/s (c8, warm) |
-| quality | tool-eval-bench **~90**/100 (full 69×2, ×4 runs) — parity with the best W4A16 daily |
+| decode | **~80–160 t/s single-stream, content-dependent** (MTP acceptance: creative prose ~82, code ~158; benchy ~116–140); flat with depth to 180K; aggregate peaks 700–960 t/s (c8, warm) |
+| quality | tool-eval-bench **89.0 ± 1.4**/100 (full 69 scenarios × 4 trials on this exact profile) — parity with the best W4A16 daily |
 | **SWE-Bench-Verified** | **69.4%**\* (347/500, official harness, single attempt; [the \*](#agentic-benchmark-results)) |
 | **Terminal-Bench 2.1** | **48.3%** (43/89, terminus-2, default timeouts; **71.7%** on tasks that finished within budget) |
 | hardware | 1× RTX 5090 32 GB (+4500 MHz mem OC, 600 W) + Ryzen 9 5900X + 64 GB RAM |
@@ -36,7 +36,7 @@ This is a **daily driver for agentic coding**: a handful of coding agents with d
 3. **Latency in the agent regime, not benchmark aggregate.** Agent latency is mostly prefill, which W4A4 roughly triples; MTP `ns=4` then roughly doubles deep single-stream decode ([mechanics in DESIGN.md](docs/DESIGN.md#why-these-weights--and-what-actually-governs-prefill-speed)).
 4. **Everything on at once.** Vision, 200K context, speculative decoding, reasoning + structured outputs, tool calling, simultaneously. No per-benchmark specialization; the numbers below are the config you'd actually run.
 
-Non-goals: maximum batched throughput for many shallow users (this box peaks at ~500–800 t/s aggregate anyway when streams are warm), multi-GPU, and minimum VRAM.
+Non-goals: maximum batched throughput for many shallow users (this box peaks at ~700–960 t/s aggregate when streams are warm), multi-GPU, and minimum VRAM.
 
 ## The graveyard
 
@@ -62,7 +62,7 @@ Numbers are from a memory-overclocked card: +4500 MHz VRAM offset, roughly 15% m
 | e2e TTFT, cold context | **2.7 s** @30K · 14.1 s @90K · 47 s @180K (was 7.4/27.9/72.4 pre-W4A4) |
 | decode, single stream | **~80–160 t/s, content-dependent** (MTP acceptance: creative prose 82, code 158, benchy ~116–140) — flat with depth to 180K, no deep-context crater |
 | decode, aggregate | peaks **700–960 t/s** (c8, warm streams); sustained deep-cold c8 is prefill-lane-bound (466 @pp8192, 149 @pp30000) |
-| quality | tool-eval-bench **~90**/100 (full 69×2, ×4 runs, pooled 89.8) — parity with the best W4A16 daily (87.8) |
+| quality | tool-eval-bench pooled **89.8** on this plain profile (69×2, ×4 runs); tier daily **89.0 ± 1.4** (69×4, [cross-trial stats](bench/RESULTS.md#tool-eval-cross-trial-statistics--694-on-the-tier-daily-2026-07-22)) — parity with the best W4A16 daily (87.8) |
 
 > **Why decode is a range, not a number:** with MTP speculative decoding, the draft head lands more tokens per verify step on predictable output. Same engine, same 600-token budget: *"write a short story"* → 82 t/s, *"create a todo app"* → 158 t/s. If your workload is prose, read the low end; if it's code (this box's job), read the high end.
 
@@ -118,7 +118,7 @@ Then `http://localhost:8020/v1` speaks OpenAI. Every flag is explained inline in
 2. **`--no-async-scheduling` is mandatory with MTP** — vLLM's async scheduler corrupts KV under spec decode ([#42655](https://github.com/vllm-project/vllm/issues/42655)).
 3. **Verify the KV pool in the launch log**: ~214K on the tier daily, ~239K plain. On the tier daily, 239K means the connector silently didn't attach — the server looks perfectly healthy while every "tier hit" you measure is vLLM's own prefix cache. (The serve scripts now fail closed on this.)
 
-Six more shared ones, plus three tier-specific (the 876 GB disk-fill, the invisible sidecar VRAM, the needle-test discipline) — nine in all: **[docs/GOTCHAS.md](docs/GOTCHAS.md)**.
+Six more shared ones, plus three tier-specific (the 876 GB disk-fill, the invisible sidecar VRAM, the needle-test discipline) — twelve total, in **[docs/GOTCHAS.md](docs/GOTCHAS.md)**.
 
 ## Why it needs a patch: MTP × fp8-KV × Blackwell crashes on stock vLLM
 

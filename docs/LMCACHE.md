@@ -6,7 +6,7 @@
 
 | | |
 |---|---|
-| image | `vllm-qwen36:tiers` — base daily image + LMCache `main` @`e38ee415` + patches 0001/0002/0003/0005/0007/0008 |
+| image | `vllm-qwen36:tiers` (published as `ghcr.io/adrienbrault/qwen36-27b-vllm:tiers-lmcfix6-20260722`) — base daily image + LMCache `main` @`e38ee415` + patches 0001/0002/0003/0005/0007/0008 |
 | engine | natfii NVFP4 W4A4 + fp8 KV + FlashInfer + MTP `ns=4` + **vision on** (`image:4`) |
 | pool | util **0.95**, `--max-model-len 200000` → **214,084 tokens** |
 | chunk / batched | **1616** (= unified block size at `ns=4`) / **3231** (= 2·chunk−1) |
@@ -187,7 +187,7 @@ Identical to the daily — see [CONFIG.md](CONFIG.md) for each. `--mamba-cache-m
 
 ## LMCache + k8v4: composes, but the persisted tier is lossy — not shipped
 
-`turboquant_k8v4` KV (the prior daily; the current daily's `turboquant_4bit_nc` packs tighter still) composes with LMCache in the lab, but its **persisted (L2 SSD) tier is not bit-faithful** — so this profile stays **fp8-only**.
+`turboquant_k8v4` KV (a prior daily; the later TurboQuant daily's `turboquant_4bit_nc` packed tighter still — both since retired, see [REJECTED.md](REJECTED.md)) composes with LMCache in the lab, but its **persisted (L2 SSD) tier is not bit-faithful** — so this profile stays **fp8-only**.
 
 - **It builds and runs.** The clean TQ image already ships lmcache 0.5.1; graft the format-10 `c_ops.so` from the [fmt10 build](../patches/lmcache-0.5.1-format10-NL_X_NB_NH_BS_TWO_HS.patch) (identical ABI, single file, no recompile). It launches, composes with MTP, stores land (0 format-10 errors), and the L2 SSD tier fills.
 - **But the L2 reload corrupts long-context retrieval.** After a container restart LMCache reloads 16–21K tokens in ~26 ms and the output stays fully coherent — yet planted long-context needles **vanish** (measured **7/7 miss** across two needles; a fresh prefill retrieves every time; the sidecar log confirms LMCache served the reload). Root cause: the format-10 transfer kernel copies bytes for the standard `[NB, NH, BS, 2·HS=512]` fp8/bf16 layout, but k8v4 packs `[…, 262]` (8-bit K + 4-bit V + scales) — the stride mismatch corrupts the L2 serialization round-trip. Coherent-but-lossy is exactly the failure that kills long-context coding.
