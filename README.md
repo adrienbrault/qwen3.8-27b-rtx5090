@@ -75,6 +75,8 @@ Two official end-to-end benchmarks, run on this exact daily profile (tiers on), 
 
 Full anatomy — the timeout A/B, the patch-sanitization mechanics, per-repo splits, leaderboard rules: [bench/RESULTS.md](bench/RESULTS.md#agentic-benchmarks--full-anatomy-2026-07-20--22-tier-daily).
 
+> **Safety note before you wire this to real tools.** Like most small open models, the default model **reliably follows instructions injected through tool results** — tool-eval's sleeper-injection scenario (an attacker directive hidden in an API response, activated on a later innocent request) succeeds 8/8 against the bare model. A 3-sentence system-prompt guard blocked it 4/4 in our probe, but treat that as mitigation, not proof: put the guard in every agent's system prompt, gate irreversible tools (send/pay/unlock) behind confirmation, and don't hand untrusted-content agents consequential tools. [Measurements + guard text](bench/RESULTS.md#prompt-injection-probe--tool-eval-tc-60-and-the-guard-that-stops-it-2026-07-22-tier-daily).
+
 ## Quick start
 
 ```bash
