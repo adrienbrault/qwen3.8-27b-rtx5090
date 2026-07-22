@@ -1,13 +1,13 @@
-# Qwen3.6-27B on a single RTX 5090 — SWE-Bench Verified 69.4%, W4A4 NVFP4, 13.5K t/s prefill, ~2.6M tokens of tiered KV
+# Qwen3.6-27B on a single RTX 5090: SWE-Bench Verified 69.4%\*
 
-Serving **Qwen3.6-27B at 200K context with ~13.5K t/s prefill, MTP speculative decoding at `ns=4`, vision, and a three-tier KV cache — 214K tokens on-GPU, ~245K in pinned DRAM, ~2.13M on NVMe** — on one 32 GB consumer GPU (RTX 5090, Blackwell `sm_120`). The NVMe tier survives restarts, so yesterday's agent session is still warm this morning.
+The most comprehensively validated single-5090 setup we know of for **concurrent long-context coding agents**: Qwen3.6-27B at 200K context with MTP speculative decoding, vision, and a three-tier KV cache whose NVMe tier survives restarts, so yesterday's agent session is still warm this morning. All of it on one 32 GB consumer GPU (Blackwell `sm_120`); every throughput and capacity number is in [the table below](#the-config-at-a-glance).
 
-> **Validated end to end, not just on throughput**: this exact profile scores **69.4% on SWE-Bench-Verified** (full 500, single attempt, official `swebench` harness) and **48.3% on Terminal-Bench 2.1** (Harbor + terminus-2, default timeouts) — agents hammering the box for ~12 h stretches, zero engine crashes. [The numbers and their anatomy →](#agentic-benchmark-results)
+> **Validated end to end, not just on throughput**: this exact profile scores **69.4%\* on SWE-Bench-Verified** (full 500, single attempt, official `swebench` harness) and **48.3% on Terminal-Bench 2.1** (Harbor + terminus-2, default timeouts), with agents hammering the box for ~12 h stretches and zero engine crashes. [The numbers, their anatomy, and the \* →](#agentic-benchmark-results)
 
 The daily is the **[natfii NVFP4 W4A4](https://huggingface.co/natfii/Qwen3.6-27B-VLM-NVFP4-MTP)** checkpoint + **`fp8_e4m3` KV cache** + **FlashInfer** attention + **MTP `ns=4`** + **[LMCache](https://github.com/LMCache/LMCache) DRAM/NVMe offload**, on a patched vLLM image. Two things carry it:
 
-- **W4A4 turns on Blackwell's native FP4 tensor cores** — **3.4× the prefill** of the weight-only-quant daily it replaced, at equal measured quality ([why, in DESIGN.md](docs/DESIGN.md#why-these-weights--and-what-actually-governs-prefill-speed)). MTP `ns=4` needs a one-line synchronization workaround (from [vLLM PR #42603](https://github.com/vllm-project/vllm/pull/42603), closed unmerged upstream) — without it, MTP + fp8 KV illegal-memory-access-crashes under any real concurrency.
-- **The KV tiers turn eviction into a 2–7 s reload instead of an 11–13 s re-prefill**, and turn a restart from a total cache loss into a warm start. On a 16-task SWE-Bench-Verified run at 4 concurrent agents that's **3.4× the wall-clock throughput** ([A/B](docs/LMCACHE.md#what-removing-lmcache-changes)) — agents resend their whole transcript every step, so almost every request is a long prefix revisit. Getting them *faithful* on an fp8 hybrid took **[six local patches](patches/lmcache/README.md)** — four on LMCache, two on vLLM. Unpatched, this profile is worse than no cache at all: it stores wrong-addressed pages and restores garbage recurrent state, with fluent output and zero errors logged.
+- **W4A4 turns on Blackwell's native FP4 tensor cores**: **3.4× the prefill** of the weight-only-quant daily it replaced, at equal measured quality ([why, in DESIGN.md](docs/DESIGN.md#why-these-weights--and-what-actually-governs-prefill-speed)). MTP `ns=4` needs a one-line synchronization workaround from [vLLM PR #42603](https://github.com/vllm-project/vllm/pull/42603), closed unmerged upstream; without it, MTP + fp8 KV crashes with an illegal memory access under any real concurrency.
+- **The KV tiers turn eviction into a 2–7 s reload instead of an 11–13 s re-prefill**, and turn a restart from a total cache loss into a warm start. Agents resend their whole transcript every step, so almost every request is a long prefix revisit; on a 16-task SWE-Bench-Verified run at 4 concurrent agents that is **3.4× the wall-clock throughput** ([A/B](docs/LMCACHE.md#what-removing-lmcache-changes)). Getting the tiers *faithful* on an fp8 hybrid took **[six local patches](patches/lmcache/README.md)**, four on LMCache and two on vLLM. Unpatched, this profile is worse than no cache at all: it stores wrong-addressed pages and restores garbage recurrent state, with fluent output and zero errors logged.
 
 If you want the engine without the tiers — bigger hot pool, no sidecar, no local LMCache patches — that's [`scripts/serve-plain.sh`](scripts/serve-plain.sh), and the exact trade is spelled out in [What removing LMCache changes](docs/LMCACHE.md#what-removing-lmcache-changes).
 
@@ -22,27 +22,33 @@ If you want the engine without the tiers — bigger hot pool, no sidecar, no loc
 | prefill | **~13.5K t/s @8K** (native Blackwell FP4 GEMM); cold 60K context ~11–13 s |
 | decode | **~80–160 t/s single-stream, content-dependent** (MTP acceptance: creative prose ~82, code ~158; benchy ~116–140); flat with depth to 180K; aggregate peaks 700–930 t/s (c8, warm) |
 | quality | tool-eval-bench **~90**/100 (full 69×2, ×4 runs) — parity with the best W4A16 daily |
-| **SWE-Bench-Verified** | **69.4%** (347/500, official harness, single attempt) |
+| **SWE-Bench-Verified** | **69.4%**\* (347/500, official harness, single attempt; [the \*](#agentic-benchmark-results)) |
 | **Terminal-Bench 2.1** | **48.3%** (43/89, terminus-2, default timeouts; **71.7%** on tasks that finished within budget) |
 | hardware | 1× RTX 5090 32 GB (+4500 MHz mem OC, 600 W) + Ryzen 9 5900X + 64 GB RAM |
 | endpoint | OpenAI-compatible, `http://127.0.0.1:8020/v1` — **loopback-bound by default, no auth**; opt into LAN with `BIND_ADDR=0.0.0.0` behind a firewall/VPN or authenticated proxy |
 
 ## What this config optimizes for
 
-This is a **daily driver for agentic coding** — a handful of coding agents with deep (8K–100K+) contexts, plus interactive chat and the occasional image, on one always-on box. That workload ranks the goals, and the ranking explains every choice below:
+This is a **daily driver for agentic coding**: a handful of coding agents with deep (8K–100K+) contexts, plus interactive chat and the occasional image, on one always-on box. That workload ranks the goals, and the ranking explains every choice below:
 
-1. **Reliability over everything.** An engine that crashes mid-run or — worse — answers *fluently but wrongly* from corrupted cache is worth less than a slower one. Every config here survived a promotion gauntlet: concurrent burst battery, a fresh-deep-batch OOM trigger, needle-in-haystack recall across cache boundaries, and a 69-scenario × 2 tool-eval. Several faster configs died on that hill (a +6% pool setting, two 4-bit KV kernels, a tiered-cache patch) — the [history](docs/HISTORY.md) is mostly their graves.
-2. **Trustworthy context capacity.** Agents live or die by how many deep sessions stay *warm*: a hit costs ~1–2 s on-GPU or ~2–7 s from the DRAM/NVMe tiers, where a cold 60K re-prefill costs ~11–13 s. So: the biggest KV pool that passes rule 1, then **~2.4M more tokens of it below the GPU** — and fp8 KV instead of denser-but-corrupting 4-bit kernels. Note the ordering: capacity that lies is worse than no capacity, which is why the tiers only shipped once they passed a cross-restart needle test and full-suite quality parity, not when their hit counters looked good.
-3. **Latency in the agent regime, not benchmark aggregate.** For agents, latency *is* mostly prefill: every fresh deep context pays it up front, and under concurrency everyone queues behind it. W4A4 tripling the prefill lane is the single biggest felt improvement in this config's history. MTP `ns=4` then roughly doubles deep single-stream decode (the "agent reading its own long context" case) even though it does nothing for shallow batch throughput.
-4. **Everything on at once.** Vision, 200K context, speculative decoding, reasoning + structured outputs, tool calling — the daily runs the full stack simultaneously. No per-benchmark specialization; the numbers below are the config you'd actually run.
+1. **Reliability over everything.** An engine that answers *fluently but wrongly* from a corrupted cache is worth less than a slower one; nothing becomes the daily without surviving the promotion gauntlet described in [Benchmarks](#benchmarks).
+2. **Trustworthy context capacity.** The biggest KV pool that passes rule 1, then ~2.4M more tokens of it below the GPU, on fp8 KV rather than denser-but-corrupting 4-bit kernels; capacity that lies is worse than no capacity ([what the tiers had to prove](docs/LMCACHE.md)).
+3. **Latency in the agent regime, not benchmark aggregate.** Agent latency is mostly prefill, which W4A4 roughly triples; MTP `ns=4` then roughly doubles deep single-stream decode ([mechanics in DESIGN.md](docs/DESIGN.md#why-these-weights--and-what-actually-governs-prefill-speed)).
+4. **Everything on at once.** Vision, 200K context, speculative decoding, reasoning + structured outputs, tool calling, simultaneously. No per-benchmark specialization; the numbers below are the config you'd actually run.
 
-Non-goals: maximum batched throughput for many shallow users (a serving-farm concern — this box peaks at ~500–800 t/s aggregate anyway when streams are warm), multi-GPU, and minimum VRAM.
+Non-goals: maximum batched throughput for many shallow users (this box peaks at ~500–800 t/s aggregate anyway when streams are warm), multi-GPU, and minimum VRAM.
+
+## The graveyard
+
+Several faster configs died on the way here: a +6% KV-pool setting, two 4-bit KV kernels, and a tiered-cache stack that passed every hit-counter check while restoring garbage. Every rejection is documented with the number that killed it in [docs/REJECTED.md](docs/REJECTED.md), and [docs/HISTORY.md](docs/HISTORY.md) keeps the full daily lineage, reversals included. Read them before "improving" the config; odds are it has been tried.
 
 ## Benchmarks
 
 Hardware: RTX 5090 32 GB (`sm_120`, +4500 MHz mem OC, 600 W) + Ryzen 9 5900X + 64 GB RAM, Ubuntu 24.04.
 Model: Qwen3.6-27B natfii NVFP4 W4A4 + `fp8_e4m3` KV + FlashInfer 0.6.15 + MTP `ns=4` + vision, `--no-async-scheduling`.
 Tool: [llama-benchy](https://github.com/eugr/llama-benchy) 0.3.8. Full detail and protocols in [bench/RESULTS.md](bench/RESULTS.md).
+
+Numbers are from a memory-overclocked card: +4500 MHz VRAM offset, roughly 15% more bandwidth than stock. Decode is bandwidth-bound on this model, so expect up to ~15% lower decode at stock clocks (derived from the bandwidth delta, not separately measured); prefill is compute-bound and barely affected ([host notes](docs/DESIGN.md#host-notes)).
 
 > **Which profile these numbers are from.** Measured on the **no-LMCache** profile (util 0.98, pool 239,436, `mnbt` 4096) — they isolate the *engine*, and they're the numbers to compare against other setups. The same weights and kernels mean the tier profile decodes identically; its narrower `mnbt` (3231) costs a few percent on synthetic deep prefill — quantified in [What removing LMCache changes](docs/LMCACHE.md#what-removing-lmcache-changes).
 
@@ -66,10 +72,12 @@ Two official end-to-end benchmarks, run on this exact daily profile (tiers on), 
 
 | benchmark | score | harness / agent | shape |
 |---|---|---|---|
-| **SWE-Bench-Verified** | **69.4%** (347/500) | official `swebench` harness, R2E-Gym scaffold | full 500, single attempt, zero retries |
+| **SWE-Bench-Verified** | **69.4%**\* (347/500) | official `swebench` harness, R2E-Gym scaffold | full 500, single attempt, zero retries |
 | **Terminal-Bench 2.1** | **48.3%** (43/89) | Harbor + terminus-2 (leaderboard reference agent) | k=1, default per-task timeouts |
 
-**SWE-Bench-Verified 69.4%** lands above the published same-model mini-swe-agent reference (67.8%), under the 79.2% public SOTA — the remaining headroom is agent-scaffold engineering, not engine configuration. One methodology disclosure: exported patches need R2E image build-file hunks stripped before official replay, applied uniformly across all 500 tasks.
+\* **The one methodology caveat on 69.4%:** exported patches had R2E-Gym image build-file hunks stripped before official-harness replay, applied uniformly across all 500 tasks. The artifacts, the fingerprint analysis showing what was stripped, and pinned rerun commands: [verify it yourself](bench/reproduce/README.md#is-the-sanitization-legitimate-verify-it-yourself).
+
+**SWE-Bench-Verified 69.4%**\* lands above the published same-model mini-swe-agent reference (67.8%), under the 79.2% public SOTA; the remaining headroom is agent-scaffold engineering, not engine configuration.
 
 **Terminal-Bench 2.1 48.3%** is wall-clock-bound before it is capability-bound: 27 of the 46 misses are agent *timeouts* (only 17 genuine fails), and the pass rate on tasks that finished within budget is **71.7% (43/60)**. The clock goes to 96–234K-token reasoning traces against a ~130–140 t/s per-stream ceiling — concurrency tuning doesn't move it (measured), and raising timeouts would disqualify the number. For scale: terminus-2 leaderboard rows (k=5) run Fable 5 80.4%, Opus 4.7 66.1%; best open-weight row GLM-5.1 58.7%.
 
