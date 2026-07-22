@@ -50,6 +50,16 @@ bash deepswe-sanitize-rescore.sh
 
 Sanity anchors: R2E's own `reward` signal agrees with the official harness within ±2.8% *after* sanitization (8 R2E-only vs 6 official-only); same-model mini-swe-agent reference is 67.8%.
 
+### Is the sanitization legitimate? Verify it yourself
+
+The stripped hunks are provably **image artifacts, not agent work** — three independent fingerprints, all checkable from `preds.jsonl.gz` in this directory:
+
+1. **Incidence**: 43 of 44 sphinx patches contain a `tox.ini` diff block. No agent behavior edits the test-runner config in 98% of unrelated bug-fix tasks.
+2. **Byte-identity across different bugs**: the `tox.ini` blocks cluster into ~14 distinct contents that are *byte-identical within sphinx version families* — one block shared verbatim by 8 different tasks (sphinx-9281/9230/9591/9461/9258/9367/9320/9229), another by 7 sphinx-7.x tasks, another by 6 sphinx-8.x tasks. Independent agents solving different bugs cannot produce identical edits; per-version image templates must.
+3. **Content**: the modification is `pytest --durations 25` → `pytest -rA --durations 25` — a *test-output reporting flag* (R2E's reward parser needs per-test result lines). It cannot fix a bug and cannot change a test outcome; it is the R2E image authors' own harness plumbing, exported into every patch by end-of-session `git diff` against a worktree the image shipped dirty.
+
+Directionality: the sanitizer strips *only* root-level build/config hunks and *only* when source-file edits remain, uniformly across all 500 instances — it cannot create a solution, only stop the official harness from rejecting a real one over foreign hunks. The independent cross-check is the strongest anchor: R2E's in-container reward (actual test executions, no patch export involved) counted 349 solved; the official harness after sanitization counts 347, with symmetric 8-vs-6 disagreement. The unsanitized 62.2% would contradict test runs that watched those fixes pass — it measures export plumbing, not the model.
+
 ## Terminal-Bench 2.1 (48.3%)
 
 Versions: `harbor==0.18.0` (`uv tool install harbor`), dataset `terminal-bench/terminal-bench-2-1` (89 tasks), agent `terminus-2`, k=1, default per-task timeouts (leaderboard validation requires `timeout_multiplier = 1.0`; official rows use k=5).
