@@ -1,5 +1,15 @@
-FROM vllm/vllm-openai:nightly
+# Pinned to the exact nightly digest the validated profile was built and benchmarked on
+# (2026-07 pull). Bumping this digest invalidates every patch below until re-verified —
+# they apply with --fuzz=0 (exact context match) precisely so that a moved anchor fails
+# the build loudly instead of applying approximately.
+FROM vllm/vllm-openai:nightly@sha256:f2ac337893360e23462249c3897e1c92dc8ba8a1ebbc3dd15c4ac931e957438e
 USER root
+
+LABEL org.opencontainers.image.source="https://github.com/adrienbrault/qwen3.6-27b-rtx5090" \
+      org.opencontainers.image.licenses="MIT AND Apache-2.0" \
+      org.opencontainers.image.base.name="vllm/vllm-openai:nightly" \
+      org.opencontainers.image.base.digest="sha256:f2ac337893360e23462249c3897e1c92dc8ba8a1ebbc3dd15c4ac931e957438e" \
+      ai.model.checkpoint="natfii/Qwen3.6-27B-VLM-NVFP4-MTP@2e46c0ed7606f35e357bc5674d20c710fc51b178"
 
 # Image for the Qwen3.6-27B RTX 5090 daily. The CURRENT daily (Lorbus INT4-AutoRound
 # + fp8 KV + FlashInfer + MTP ns=4) uses patches #5 (PR #42603), FlashInfer 0.6.15,
@@ -26,22 +36,23 @@ COPY tq_auto_fallback.py /tmp/tq_auto_fallback.py
 COPY fix_spec_output.py /tmp/fix_spec_output.py
 COPY fix_spec_guard.py /tmp/fix_spec_guard.py
 COPY so_reasoning_44993.diff /tmp/so_reasoning_44993.diff
-#   5) install_pr42603_sync.py — vllm PR #42603: fix the MTP draft-loop buffer
-#      race that IMA-crashes under concurrency x K>=2 with fp8 KV on Blackwell
-#      (upstream #40756 / #35288). The draft loop writes shared cudagraph buffers
-#      (self.input_ids / self.hidden_states) then launches the draft forward that
-#      reads them — CUDA-async, so under concurrency the draft FlashInfer kernels
-#      observe stale/partial buffers -> illegal memory access ("disappears with
-#      CUDA_LAUNCH_BLOCKING=1"). Adds one current-stream sync after the writes,
-#      before the forward. Restores MTP K=4 on AR-INT4+fp8+FI; validated crash-
-#      free across concurrent c4/c8 + deep pp90000 x c4 + 69x2 tool-eval.
-#      (Superseded the R41 #46574 draft-token sanitizer, which never fired — the
-#      fault was never an out-of-vocab draft token, it was this buffer race.)
+#   5) install_pr42603_sync.py — from vllm PR #42603 (CLOSED UNMERGED upstream:
+#      maintainers rejected a forced sync pending a deeper root cause — treat this
+#      as a locally validated WORKAROUND, not a proven fix). The observed race:
+#      the MTP draft loop writes shared cudagraph buffers (self.input_ids /
+#      self.hidden_states) then launches the draft forward that reads them —
+#      under concurrency x K>=2 with fp8 KV on Blackwell this IMA-crashes
+#      (upstream #40756 / #35288; "disappears with CUDA_LAUNCH_BLOCKING=1").
+#      Adds one current-stream sync after the writes, before the forward.
+#      Empirically eliminates the crash on THIS profile: validated across
+#      concurrent c4/c8 + deep pp90000 x c4 + 69x2 tool-eval, perf-neutral.
+#      (Superseded the R41 #46574 draft-token sanitizer, which never fired.)
 COPY install_pr42603_sync.py /tmp/install_pr42603_sync.py
 
 RUN cd /usr/local/lib/python3.12/dist-packages \
- && patch -p1 --forward --fuzz=3 < /tmp/vllm-only.diff \
- && patch -p1 --forward --fuzz=3 < /tmp/so_reasoning_44993.diff \
+ && python3 -c "import vllm; print('BASE VLLM', vllm.__version__)" \
+ && patch -p1 --forward --fuzz=0 < /tmp/vllm-only.diff \
+ && patch -p1 --forward --fuzz=0 < /tmp/so_reasoning_44993.diff \
  && python3 /tmp/tq_auto_fallback.py \
  && python3 /tmp/fix_spec_output.py && python3 /tmp/fix_spec_guard.py \
  && python3 /tmp/install_pr42603_sync.py \

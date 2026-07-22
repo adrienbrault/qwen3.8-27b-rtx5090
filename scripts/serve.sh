@@ -12,10 +12,13 @@
 #
 #   MODEL_DIR=/path/to/Qwen3.6-27B-VLM-NVFP4-MTP ./serve.sh
 set -euo pipefail
+export PATH="$HOME/.local/bin:$PATH"   # llama-benchy (pre-warm) commonly lives here
 
 MODEL_DIR=${MODEL_DIR:-/srv/qwen5090/models/natfii-27b-nvfp4}   # natfii/Qwen3.6-27B-VLM-NVFP4-MTP
 IMAGE=${IMAGE:-vllm-qwen36:tiers}    # build from ../patches/lmcache/Dockerfile
 PORT=${PORT:-8020}
+BIND_ADDR=${BIND_ADDR:-127.0.0.1}    # loopback by default — the API has NO auth. Set 0.0.0.0
+                                     # only behind a firewall/VPN or an authenticated proxy.
 NAME=vllm-27b
 BLK=1616                             # unified block size with MTP ns=4 (1568 without). NOT 16.
 BATCHED=$((2 * BLK - 1))             # LMCache MP requires batched tokens in [chunk, 2*chunk)
@@ -25,6 +28,9 @@ BATCHED=$((2 * BLK - 1))             # LMCache MP requires batched tokens in [ch
 L2DIR=${L2DIR:-/srv/qwen5090/lmcache-l2-natfii}
 L2CAP=${L2CAP:-200}
 sudo mkdir -p "$L2DIR"
+# Orphaned temp files from a crashed sidecar count against the L2 cap (patch 0008's
+# restart accounting) but are never indexed or evictable — sweep them before boot.
+sudo find "$L2DIR" -type f -path "*tmp*" -mmin +10 -delete 2>/dev/null || true
 
 # --- tokenizer truncation guard (gotcha #9) -----------------------------------
 # The published checkpoint ships tokenizer.json with truncation baked at 8192
@@ -56,7 +62,7 @@ sync && echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null   # the 24 GB L1 i
 
 sudo docker run -d --name "$NAME" --restart unless-stopped \
   --entrypoint bash --runtime nvidia --gpus all --ipc=host \
-  -p ${PORT}:8000 --shm-size 8g --memory 52g --memory-swap 52g \
+  -p ${BIND_ADDR}:${PORT}:8000 --shm-size 8g --memory 52g --memory-swap 52g \
   -e LMCACHE_DISABLE_BANNER=1 \
   -e VLLM_ATTENTION_BACKEND=FLASHINFER \
   -e VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE=134217728 \
@@ -85,23 +91,42 @@ sudo docker run -d --name "$NAME" --restart unless-stopped \
       --override-generation-config '{\"temperature\":0.6,\"top_p\":0.95,\"top_k\":20}'
   "
 
-echo "launching $NAME (natfii W4A4 + fp8 KV + MTP ns=4 + LMCache 24G DRAM / ${L2CAP}G NVMe) on :$PORT ..."
+echo "launching $NAME (natfii W4A4 + fp8 KV + MTP ns=4 + LMCache 24G DRAM / ${L2CAP}G NVMe) on ${BIND_ADDR}:$PORT ..."
+HEALTHY=0
 for i in $(seq 1 150); do
-  curl -sf http://localhost:${PORT}/health >/dev/null 2>&1 && { echo "HEALTHY"; break; }
-  sudo docker ps --filter name="$NAME" --format x | grep -q x || { echo "DIED — see: sudo docker logs $NAME"; sudo docker logs "$NAME" 2>&1 | tail -20; exit 1; }
+  curl -sf http://${BIND_ADDR}:${PORT}/health >/dev/null 2>&1 && { echo "HEALTHY"; HEALTHY=1; break; }
+  sudo docker ps --filter name="$NAME" --format x | grep -q x || { echo "FAILED: container died — see: sudo docker logs $NAME"; sudo docker logs "$NAME" 2>&1 | tail -20; exit 1; }
   sleep 10
 done
-echo "daily up. KV pool: $(sudo docker logs $NAME 2>&1 | grep -a 'GPU KV cache size' | tail -1)"
-echo "  ^ VERIFY this is ~214K (util 0.95 + sidecar, at --max-num-seqs 8). 239K means the"
-echo "    connector did NOT attach (you booted the plain profile); 165K/185K/205K = stale util."
-echo "    Raising --max-num-seqs shifts it slightly: seqs 16 measures 211,267 (-1.3%)."
+if [ "$HEALTHY" != 1 ]; then
+  echo "FAILED: /health never came up within 25 min"; sudo docker logs "$NAME" 2>&1 | tail -20; exit 1
+fi
 
-# --- autotune shape pre-warm (gotcha #8) --------------------------------------
+# --- pool assertion: 239K here means the connector did NOT attach (plain engine booted
+# by accident) and every "tier hit" you measure afterwards would be vLLM's own prefix
+# cache. 165K/185K/205K = stale util. Fail closed instead of printing a warning nobody reads.
+POOL=$(sudo docker logs "$NAME" 2>&1 | grep -a 'GPU KV cache size' | tail -1 | grep -oE '[0-9,]+ tokens' | tr -d ', tokens')
+echo "daily up. KV pool: ${POOL} tokens"
+if [ -z "$POOL" ] || [ "$POOL" -lt 208000 ] || [ "$POOL" -gt 220000 ]; then
+  echo "FAILED: pool ${POOL:-<missing>} outside expected 208K-220K (util 0.95, seqs 8, connector attached)."
+  echo "  239,436 = connector didn't attach; 185K/205K = stale util. Override range only with POOL_MIN/POOL_MAX."
+  [ -n "${POOL_MIN:-}" ] && [ -n "${POOL_MAX:-}" ] && [ "$POOL" -ge "$POOL_MIN" ] && [ "$POOL" -le "$POOL_MAX" ] || exit 1
+fi
+
+# --- autotune shape pre-warm (gotcha #8): load-bearing for the OOM margin. Fail closed
+# if it can't run — set ALLOW_NO_PREWARM=1 to accept the un-warmed margin knowingly.
 if command -v llama-benchy >/dev/null 2>&1; then
   echo "pre-warming autotune shapes (pp8192 c8, ~60s)..."
-  llama-benchy --base-url http://localhost:${PORT}/v1 --model qwen3.6-27b \
-    --pp 8192 --tg 16 --concurrency 8 --runs 1 >/dev/null 2>&1 || true
-  echo "pre-warm done. free VRAM: $(nvidia-smi --query-gpu=memory.free --format=csv,noheader)"
+  if llama-benchy --base-url http://${BIND_ADDR}:${PORT}/v1 --model qwen3.6-27b \
+      --pp 8192 --tg 16 --concurrency 8 --runs 1 >/dev/null 2>&1; then
+    echo "pre-warm done. free VRAM: $(nvidia-smi --query-gpu=memory.free --format=csv,noheader)"
+  else
+    echo "FAILED: autotune pre-warm errored — the first real deep burst will pay the workspace allocation."
+    [ "${ALLOW_NO_PREWARM:-0}" = 1 ] || exit 1
+  fi
+else
+  echo "WARNING: llama-benchy not found — autotune shapes NOT pre-warmed (gotcha #8)."
+  [ "${ALLOW_NO_PREWARM:-0}" = 1 ] || { echo "Install llama-benchy or set ALLOW_NO_PREWARM=1."; exit 1; }
 fi
 
 sudo docker restart owui-proxy >/dev/null 2>&1 || true   # so Open WebUI re-discovers

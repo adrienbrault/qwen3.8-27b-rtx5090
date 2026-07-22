@@ -13,10 +13,13 @@
 #
 #   MODEL_DIR=/path/to/Qwen3.6-27B-VLM-NVFP4-MTP ./serve-plain.sh
 set -euo pipefail
+export PATH="$HOME/.local/bin:$PATH"   # llama-benchy (pre-warm) commonly lives here
 
 MODEL_DIR=${MODEL_DIR:-/srv/qwen5090/models/natfii-27b-nvfp4}   # natfii/Qwen3.6-27B-VLM-NVFP4-MTP
 IMAGE=${IMAGE:-vllm-qwen36:patched}   # build from ../patches/Dockerfile
 PORT=${PORT:-8020}
+BIND_ADDR=${BIND_ADDR:-127.0.0.1}    # loopback by default — the API has NO auth. Set 0.0.0.0
+                                     # only behind a firewall/VPN or an authenticated proxy.
 NAME=vllm-27b
 
 # --- tokenizer truncation guard (gotcha #9) -----------------------------------
@@ -47,7 +50,7 @@ CACHE="-v ${CACHE_DIR}/torch_compile_natfii:/root/.cache/vllm/torch_compile_cach
 sudo docker rm -f "$NAME" >/dev/null 2>&1 || true
 
 sudo docker run -d --name "$NAME" --runtime nvidia --gpus all --ipc=host \
-  -p ${PORT}:8000 --restart unless-stopped --shm-size 16g \
+  -p ${BIND_ADDR}:${PORT}:8000 --restart unless-stopped --shm-size 16g \
   -e VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE=134217728 \
   -e VLLM_ATTENTION_BACKEND=FLASHINFER \
   -e TORCHINDUCTOR_COMPILE_THREADS=8 -e MAX_JOBS=4 -e FLASHINFER_NUM_COMPILE_JOBS=4 \
@@ -66,24 +69,41 @@ sudo docker run -d --name "$NAME" --runtime nvidia --gpus all --ipc=host \
   --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_xml \
   --override-generation-config '{"temperature":0.6,"top_p":0.95,"top_k":20}'
 
-echo "launching $NAME (natfii NVFP4 W4A4 + fp8 KV + FlashInfer + MTP ns=4) on :$PORT ..."
+echo "launching $NAME (natfii NVFP4 W4A4 + fp8 KV + FlashInfer + MTP ns=4) on ${BIND_ADDR}:$PORT ..."
+HEALTHY=0
 for i in $(seq 1 90); do
-  curl -sf http://localhost:${PORT}/health >/dev/null 2>&1 && { echo "HEALTHY"; break; }
-  sudo docker ps --filter name="$NAME" --format x | grep -q x || { echo "DIED — see: sudo docker logs $NAME"; exit 1; }
+  curl -sf http://${BIND_ADDR}:${PORT}/health >/dev/null 2>&1 && { echo "HEALTHY"; HEALTHY=1; break; }
+  sudo docker ps --filter name="$NAME" --format x | grep -q x || { echo "FAILED: container died — see: sudo docker logs $NAME"; exit 1; }
   sleep 5
 done
-echo "daily up. KV pool: $(sudo docker logs $NAME 2>&1 | grep 'GPU KV cache size' | tail -1)"
-echo "  ^ VERIFY this is ~239K (util 0.98). A wrong pool size means a dtype/align/preset mismatch (wrong config)."
+if [ "$HEALTHY" != 1 ]; then
+  echo "FAILED: /health never came up within 7.5 min"; sudo docker logs "$NAME" 2>&1 | tail -20; exit 1
+fi
 
-# --- autotune shape pre-warm (gotcha #8) --------------------------------------
-# The fp4-GEMM/FlashInfer autotuner allocates its workspace lazily, the first time
-# it meets a big fresh batch shape. Trigger that at boot — not when 8 agents wake
-# up at once against a ~150 MiB margin. Best-effort; needs llama-benchy on PATH.
+# --- pool assertion: a wrong pool means a dtype/align/preset mismatch — the server
+# looks healthy at the wrong config. Fail closed. Expected ~239,436 @0.98, seqs 8.
+POOL=$(sudo docker logs "$NAME" 2>&1 | grep -a 'GPU KV cache size' | tail -1 | grep -oE '[0-9,]+ tokens' | tr -d ', tokens')
+echo "daily up. KV pool: ${POOL} tokens"
+if [ -z "$POOL" ] || [ "$POOL" -lt 233000 ] || [ "$POOL" -gt 245000 ]; then
+  echo "FAILED: pool ${POOL:-<missing>} outside expected 233K-245K (util 0.98, seqs 8)."
+  [ -n "${POOL_MIN:-}" ] && [ -n "${POOL_MAX:-}" ] && [ "$POOL" -ge "$POOL_MIN" ] && [ "$POOL" -le "$POOL_MAX" ] || exit 1
+fi
+
+# --- autotune shape pre-warm (gotcha #8): LOAD-BEARING at util 0.98 — the 0.98 margin
+# was validated WITH this warm-up; an un-warmed engine meets the ~266 MiB workspace
+# allocation on its first real deep burst. Fail closed; ALLOW_NO_PREWARM=1 to override.
 if command -v llama-benchy >/dev/null 2>&1; then
   echo "pre-warming autotune shapes (pp8192 c8, ~60s)..."
-  llama-benchy --base-url http://localhost:${PORT}/v1 --model qwen3.6-27b \
-    --pp 8192 --tg 16 --concurrency 8 --runs 1 >/dev/null 2>&1 || true
-  echo "pre-warm done. free VRAM: $(nvidia-smi --query-gpu=memory.free --format=csv,noheader)"
+  if llama-benchy --base-url http://${BIND_ADDR}:${PORT}/v1 --model qwen3.6-27b \
+      --pp 8192 --tg 16 --concurrency 8 --runs 1 >/dev/null 2>&1; then
+    echo "pre-warm done. free VRAM: $(nvidia-smi --query-gpu=memory.free --format=csv,noheader)"
+  else
+    echo "FAILED: autotune pre-warm errored — 0.98 margin NOT validated on this boot."
+    [ "${ALLOW_NO_PREWARM:-0}" = 1 ] || exit 1
+  fi
+else
+  echo "WARNING: llama-benchy not found — autotune shapes NOT pre-warmed (gotcha #8)."
+  [ "${ALLOW_NO_PREWARM:-0}" = 1 ] || { echo "Install llama-benchy or set ALLOW_NO_PREWARM=1."; exit 1; }
 fi
 
 sudo docker restart owui-proxy >/dev/null 2>&1 || true   # so Open WebUI re-discovers

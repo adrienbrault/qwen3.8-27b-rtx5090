@@ -23,6 +23,15 @@ configured `kv_cache_dtype` into vLLM's CUDA-graph memory profiler, which only m
 TurboQuant KV (it unblocked TQ's boot; TQ then failed on merit and is closed — see
 [../../docs/HISTORY.md](../../docs/HISTORY.md)). It lives in the debug workspace, not here.
 
+## Known limitations of 0008 (honest edges)
+
+External review surfaced two accounting gaps in 0008's admission control, both real, neither yet fixed:
+
+1. **Partial-batch admission can desynchronize disk contents from eviction accounting.** Admission is per-file across concurrent workers, but the Python adapter only records stored keys when the *whole* batch completes successfully. A batch that writes some files and then hits the cap leaves those files consuming capacity while absent from `_key_sizes` and the LRU index — undiscoverable, unevictable, and (in the worst case) capable of pinning the cache at "full, nothing to evict". The proper fix is atomic whole-batch reservation or per-key SET results with per-key accounting; not yet implemented.
+2. **Abandoned temp files are counted against capacity at restart but never indexed or cleaned** — a crash mid-write permanently shrinks usable capacity until someone deletes them.
+
+Mitigations until fixed: `serve.sh` sweeps stale temp files from the L2 dir before every boot, and the first-day `du -sh` watch below applies doubly. In ~900 soak cycles plus the 500-task SWE campaign the desync case was not observed to wedge the cache — but the window is real, and this note exists so you don't discover it in production.
+
 ## Also required at launch (not patchable)
 
 - `"eviction": {"eviction_policy": "LRU", "trigger_watermark": 0.8, "eviction_ratio": 0.2}` in the

@@ -34,7 +34,7 @@ And the ones shared with the plain profile:
 
 ## Gotchas that bite during setup
 
-1. **MTP `ns≥2` needs [PR #42603](https://github.com/vllm-project/vllm/pull/42603) or it IMA-crashes under concurrency.** Single-stream and `ns=1` pass every test and hide it; `CUDA_LAUNCH_BLOCKING=1` masks it. **Load-test with 3+ parallel streams on day one** — that's the only thing that reproduces it.
+1. **MTP `ns≥2` needs the [PR #42603](https://github.com/vllm-project/vllm/pull/42603) sync workaround (PR closed unmerged upstream) or it IMA-crashes under concurrency.** Single-stream and `ns=1` pass every test and hide it; `CUDA_LAUNCH_BLOCKING=1` masks it. **Load-test with 3+ parallel streams on day one** — that's the only thing that reproduces it.
 2. **`--no-async-scheduling` is mandatory with MTP.** Async scheduling desyncs the request-ID→batch-row mapping under spec decode ([#42655](https://github.com/vllm-project/vllm/issues/42655)) and corrupts KV.
 3. **Verify the KV pool in the launch log** (~214K tiers / ~239K plain). A silent config fallback (wrong preset, `align` off, wrong image, connector not attached) looks like a healthy server at the wrong pool.
 4. **flashinfer JIT eats all host RAM (non-nightly images).** Any non-nightly vLLM image on `sm_120` JIT-compiles CUTLASS kernels on the first forward with unbounded `nvcc` parallelism — multi-GB per job, reads as a mystery "hang" or whole-host livelock. Cap it (`MAX_JOBS=4` + `FLASHINFER_NUM_COMPILE_JOBS=4`) and **mount a persistent `/root/.cache/flashinfer`** (one build, warm forever).
