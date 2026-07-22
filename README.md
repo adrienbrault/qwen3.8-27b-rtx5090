@@ -90,6 +90,14 @@ cd patches/lmcache && docker build -t vllm-qwen36:tiers . && cd ../..
 ./scripts/serve.sh
 ```
 
+Or skip both builds and pull the **exact validated daily image** (immutable tag, same bits every benchmark in this README ran on):
+
+```bash
+docker pull ghcr.io/adrienbrault/qwen36-27b-vllm:tiers-lmcfix6-20260722
+# digest sha256:51f654b566c54451080164e27a34e5a180c67fa85e3414dabdb340e91b8dccb1
+IMAGE=ghcr.io/adrienbrault/qwen36-27b-vllm:tiers-lmcfix6-20260722 ./scripts/serve.sh
+```
+
 Then `http://localhost:8020/v1` speaks OpenAI. Every flag is explained inline in [`scripts/serve.sh`](scripts/serve.sh) and in [docs/GOTCHAS.md](docs/GOTCHAS.md).
 
 **Want it without the tiers?** Skip step 2 and run [`./scripts/serve-plain.sh`](scripts/serve-plain.sh) instead — bigger hot pool, no sidecar, base image only. [What you trade](docs/LMCACHE.md#what-removing-lmcache-changes).
