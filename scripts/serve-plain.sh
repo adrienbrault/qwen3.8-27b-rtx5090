@@ -11,11 +11,13 @@
 # IMA-crashes under concurrency on stock vLLM — the image's PR #42603 graft is the validated
 # workaround that prevents it. And --no-async-scheduling (vllm#42655). See NOTES. Idempotent.
 #
-#   MODEL_DIR=/path/to/Qwen3.6-27B-VLM-NVFP4-MTP ./serve-plain.sh
+#   MODEL_DIR=/path/to/Qwen3.8-27B-MTP-NVFP4 ./serve-plain.sh
 set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"   # llama-benchy (pre-warm) commonly lives here
 
-MODEL_DIR=${MODEL_DIR:-/srv/qwen5090/models/natfii-27b-nvfp4}   # natfii/Qwen3.6-27B-VLM-NVFP4-MTP
+MODEL_DIR=${MODEL_DIR:-/srv/qwen5090/models/saka-qwen3.8-27b-mtp-nvfp4}  # sakamakismile/Qwen3.8-27B-MTP-NVFP4
+MODEL_NAME=${MODEL_NAME:-qwen3.8-27b}
+MODEL_ALIAS=${MODEL_ALIAS:-qwen3.6-27b}   # legacy client alias
 IMAGE=${IMAGE:-vllm-qwen36:patched}   # build from ../patches/Dockerfile
 PORT=${PORT:-8020}
 BIND_ADDR=${BIND_ADDR:-127.0.0.1}    # loopback by default — the API has NO auth. Set 0.0.0.0
@@ -42,7 +44,7 @@ PYEOF
 # Persistent compile/triton/flashinfer cache => warm restarts. ALWAYS mount these —
 # FlashInfer 0.6.15 JIT-compiles its kernels on first run (one ~min build, warm forever).
 CACHE_DIR=${CACHE_DIR:-/srv/qwen5090/cache}
-CACHE="-v ${CACHE_DIR}/torch_compile_natfii:/root/.cache/vllm/torch_compile_cache \
+CACHE="-v ${CACHE_DIR}/torch_compile_qwen38:/root/.cache/vllm/torch_compile_cache \
        -v ${CACHE_DIR}/triton:/root/.triton/cache \
        -v ${CACHE_DIR}/inductor:/root/.cache/inductor \
        -v ${CACHE_DIR}/flashinfer:/root/.cache/flashinfer"
@@ -56,7 +58,7 @@ sudo docker run -d --name "$NAME" --runtime nvidia --gpus all --ipc=host \
   -e TORCHINDUCTOR_COMPILE_THREADS=8 -e MAX_JOBS=4 -e FLASHINFER_NUM_COMPILE_JOBS=4 \
   -v "$MODEL_DIR":/model $CACHE \
   "$IMAGE" \
-  --model /model --served-model-name qwen3.6-27b --trust-remote-code \
+  --model /model --served-model-name $MODEL_NAME $MODEL_ALIAS --trust-remote-code \
   --kv-cache-dtype fp8_e4m3 \
   --no-async-scheduling \
   --gpu-memory-utilization 0.98 --max-model-len 200000 \
@@ -64,12 +66,12 @@ sudo docker run -d --name "$NAME" --runtime nvidia --gpus all --ipc=host \
   --limit-mm-per-prompt '{"image":4,"video":0}' \
   --mamba-cache-mode align --enable-prefix-caching --enable-chunked-prefill \
   --speculative-config '{"method":"qwen3_5_mtp","num_speculative_tokens":4}' \
-  --structured-outputs-config '{"backend":"xgrammar","reasoning_parser":"qwen3","enable_in_reasoning":false}' \
+  --structured-outputs-config '{"backend":"xgrammar","reasoning_parser":"deepseek_r1","enable_in_reasoning":false}' \
   --default-chat-template-kwargs '{"preserve_thinking":true}' \
-  --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_xml \
-  --override-generation-config '{"temperature":0.6,"top_p":0.95,"top_k":20}'
+  --reasoning-parser deepseek_r1 --enable-auto-tool-choice --tool-call-parser qwen3_xml
+  # no --override-generation-config: 3.8's generation_config is the contract (T=1.0/p0.95/k20)
 
-echo "launching $NAME (natfii NVFP4 W4A4 + fp8 KV + FlashInfer + MTP ns=4) on ${BIND_ADDR}:$PORT ..."
+echo "launching $NAME (saka 3.8 NVFP4 W4A4 + fp8 KV + FlashInfer + MTP ns=4) on ${BIND_ADDR}:$PORT ..."
 HEALTHY=0
 for i in $(seq 1 90); do
   curl -sf http://${BIND_ADDR}:${PORT}/health >/dev/null 2>&1 && { echo "HEALTHY"; HEALTHY=1; break; }

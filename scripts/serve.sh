@@ -10,11 +10,13 @@
 # For the no-LMCache variant (bigger hot pool, no tiers, no patches), see ./serve-plain.sh
 # and "What removing LMCache changes" in ../docs/LMCACHE.md.
 #
-#   MODEL_DIR=/path/to/Qwen3.6-27B-VLM-NVFP4-MTP ./serve.sh
+#   MODEL_DIR=/path/to/Qwen3.8-27B-MTP-NVFP4 ./serve.sh
 set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"   # llama-benchy (pre-warm) commonly lives here
 
-MODEL_DIR=${MODEL_DIR:-/srv/qwen5090/models/natfii-27b-nvfp4}   # natfii/Qwen3.6-27B-VLM-NVFP4-MTP
+MODEL_DIR=${MODEL_DIR:-/srv/qwen5090/models/saka-qwen3.8-27b-mtp-nvfp4}  # sakamakismile/Qwen3.8-27B-MTP-NVFP4
+MODEL_NAME=${MODEL_NAME:-qwen3.8-27b}
+MODEL_ALIAS=${MODEL_ALIAS:-qwen3.6-27b}   # legacy client alias
 IMAGE=${IMAGE:-vllm-qwen36:tiers}    # build from ../patches/lmcache/Dockerfile
 PORT=${PORT:-8020}
 BIND_ADDR=${BIND_ADDR:-127.0.0.1}    # loopback by default — the API has NO auth. Set 0.0.0.0
@@ -25,7 +27,7 @@ BATCHED=$((2 * BLK - 1))             # LMCache MP requires batched tokens in [ch
 
 # L2 NVMe tier. 200 GB ~= 2.13M tokens, survives container restarts.
 # The cap is only real because of patch 0008 + the eviction block below — verify both.
-L2DIR=${L2DIR:-/srv/qwen5090/lmcache-l2-natfii}
+L2DIR=${L2DIR:-/srv/qwen5090/lmcache-l2-saka38}
 L2CAP=${L2CAP:-200}
 sudo mkdir -p "$L2DIR"
 # Orphaned temp files from a crashed sidecar count against the L2 cap (patch 0008's
@@ -52,7 +54,7 @@ PYEOF
 # Persistent compile/triton/flashinfer cache => warm restarts. ALWAYS mount these —
 # FlashInfer 0.6.15 JIT-compiles its kernels on first run (one ~min build, warm forever).
 CACHE_DIR=${CACHE_DIR:-/srv/qwen5090/cache}
-CACHE="-v ${CACHE_DIR}/torch_compile_natfii:/root/.cache/vllm/torch_compile_cache \
+CACHE="-v ${CACHE_DIR}/torch_compile_qwen38:/root/.cache/vllm/torch_compile_cache \
        -v ${CACHE_DIR}/triton:/root/.triton/cache \
        -v ${CACHE_DIR}/inductor:/root/.cache/inductor \
        -v ${CACHE_DIR}/flashinfer:/root/.cache/flashinfer"
@@ -77,7 +79,7 @@ sudo docker run -d --name "$NAME" --restart unless-stopped \
       > /tmp/lmcache-server.log 2>&1 &
     sleep 8
     exec python3 -m vllm.entrypoints.openai.api_server \
-      --model /model --served-model-name qwen3.6-27b --trust-remote-code \
+      --model /model --served-model-name $MODEL_NAME $MODEL_ALIAS --trust-remote-code \
       --kv-cache-dtype fp8_e4m3 --no-async-scheduling \
       --gpu-memory-utilization 0.95 --max-model-len 200000 \
       --max-num-seqs 8 --max-num-batched-tokens $BATCHED \
@@ -85,13 +87,13 @@ sudo docker run -d --name "$NAME" --restart unless-stopped \
       --mamba-cache-mode align --enable-prefix-caching --enable-chunked-prefill \
       --kv-transfer-config '{\"kv_connector\":\"LMCacheMPConnector\",\"kv_role\":\"kv_both\"}' \
       --speculative-config '{\"method\":\"qwen3_5_mtp\",\"num_speculative_tokens\":4}' \
-      --structured-outputs-config '{\"backend\":\"xgrammar\",\"reasoning_parser\":\"qwen3\",\"enable_in_reasoning\":false}' \
+      --structured-outputs-config '{\"backend\":\"xgrammar\",\"reasoning_parser\":\"deepseek_r1\",\"enable_in_reasoning\":false}' \
       --default-chat-template-kwargs '{\"preserve_thinking\":true}' \
-      --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_xml \
-      --override-generation-config '{\"temperature\":0.6,\"top_p\":0.95,\"top_k\":20}'
+      --reasoning-parser deepseek_r1 --enable-auto-tool-choice --tool-call-parser qwen3_xml
+      # no --override-generation-config: 3.8's generation_config is the contract (T=1.0/p0.95/k20)
   "
 
-echo "launching $NAME (natfii W4A4 + fp8 KV + MTP ns=4 + LMCache 24G DRAM / ${L2CAP}G NVMe) on ${BIND_ADDR}:$PORT ..."
+echo "launching $NAME (saka 3.8 W4A4 + fp8 KV + MTP ns=4 + LMCache 24G DRAM / ${L2CAP}G NVMe) on ${BIND_ADDR}:$PORT ..."
 HEALTHY=0
 for i in $(seq 1 150); do
   curl -sf http://${BIND_ADDR}:${PORT}/health >/dev/null 2>&1 && { echo "HEALTHY"; HEALTHY=1; break; }
