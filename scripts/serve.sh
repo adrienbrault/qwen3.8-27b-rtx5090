@@ -159,7 +159,12 @@ sudo docker restart owui-proxy >/dev/null 2>&1 || true   # so Open WebUI re-disc
 #                                hit rate to 0% — partial caching does NOT degrade gracefully.
 #   --worker-reap-timeout-seconds 0 : reaper OFF. Lazy-heartbeat reap turns the cache into an
 #                                unrecoverable zombie (found_count=0, stores silently dropped).
-#   L2 eviction block          : patch 0008 enforces max_capacity_gb; this JSON block is what
+#   L2 eviction block          : patch 0008 enforces max_capacity_gb ONLY. The eviction JSON
+#                                is DEAD CONFIG in lmcache 0.5.2.dev66 — fs_native implements
+#                                no watermark eviction. At cap, stores fail loudly in the
+#                                sidecar log and the L2 freezes read-only (serving unaffected,
+#                                disk safe). Wipe or raise the cap when that happens; a real
+#                                eviction implementation is the tracked follow-up. Old text:
 #                                actually evicts. You need BOTH. Unpatched + unset, L2 grew to
 #                                876 GB against a 60 GB cap and filled the root filesystem.
 #                                Monitor `du -sh $L2DIR` for the first day of any rollout.
