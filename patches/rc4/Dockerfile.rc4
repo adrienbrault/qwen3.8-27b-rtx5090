@@ -1,0 +1,32 @@
+# Qwen3.8 TIER image on LATEST bases (2026-08-15): vLLM nightly 0.27 (digest-pinned)
+# + LMCache v0.5.4rc4 + rebased patch stack 0001/0002/0007/0008/0009 (LMCache) and
+# 0005/0010 (vLLM). 0003 retired (fixed upstream). The lmcache tree in rc4-work/ is
+# PRE-PATCHED and stack-verified locally; vLLM patches apply in-image.
+FROM vllm/vllm-openai@sha256:c96082d33456ceeae7ec0d4faf2b5e47fb806a103decf94f9fbc9b35fd7d6b25
+
+COPY rc4-work /opt/lmc-src
+RUN set -eux; \
+    cd /opt/lmc-src; \
+    export CPATH="$(python3 -c "import glob; print(':'.join(sorted(glob.glob('/usr/local/lib/python3.12/dist-packages/nvidia/*/include'))))")"; \
+    export LIBRARY_PATH="$(python3 -c "import glob; print(':'.join(sorted(glob.glob('/usr/local/lib/python3.12/dist-packages/nvidia/*/lib'))))")"; \
+    SETUPTOOLS_SCM_PRETEND_VERSION_FOR_LMCACHE=0.5.4rc4 SETUPTOOLS_SCM_PRETEND_VERSION=0.5.4rc4 TORCH_CUDA_ARCH_LIST="12.0+PTX" MAX_JOBS=4 \
+        pip install --no-cache-dir --no-deps --no-build-isolation .;
+
+RUN set -eux; \
+    mv /opt/lmc-src/lmcache /opt/lmc-src/lmcache.src; \
+    pip install --no-cache-dir -q pytest; \
+    cd /tmp; \
+    for t in tests/v1/test_vllm_kv_cache_groups.py tests/v1/storage_backend/test_fs_native_connector.py tests/v1/platform/test_gpu_staging_config.py tests/v1/distributed/test_l2_adapter_factory.py; do \
+        if [ -f "/opt/lmc-src/$t" ]; then python3 -m pytest -x -q --import-mode=importlib "/opt/lmc-src/$t"; fi; \
+    done; \
+    python3 -c "import lmcache; print('lmcache', lmcache.__version__, 'patched stack OK')"
+
+COPY rebased/0005-vllm-residual-mamba-connector-prefill-boundary.diff /tmp/0005.diff
+COPY rebased/0010-scheduler-xfer-abort.diff /tmp/0010.diff
+RUN set -eux; \
+    apt-get update -qq && apt-get install -y -qq git >/dev/null && rm -rf /var/lib/apt/lists/*; \
+    VROOT="$(python3 -c 'import os, vllm; print(os.path.dirname(vllm.__file__))')"; \
+    cd "$VROOT"; \
+    for p in 0005 0010; do patch -p1 -d "$VROOT" -f < /tmp/${p}.diff; done; \
+    python3 -m py_compile v1/core/sched/scheduler.py; \
+    echo "TIER-RC4 IMAGE OK"

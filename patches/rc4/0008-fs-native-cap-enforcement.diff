@@ -1,0 +1,532 @@
+diff --git a/csrc/storage_backends/fs/connector.cpp b/csrc/storage_backends/fs/connector.cpp
+index e54d98f..79561c0 100644
+--- a/csrc/storage_backends/fs/connector.cpp
++++ b/csrc/storage_backends/fs/connector.cpp
+@@ -26,23 +26,11 @@ std::string FSConnector::replace_all(const std::string& str,
+ }
+ 
+ std::string FSConnector::key_to_filename(const std::string& key) {
+-  // Input key format (from _object_key_to_string):
+-  //   Unsalted: <model_name>@<kv_rank_hex>@<chunk_hash_hex>
+-  //   Salted  : <model_name>@<kv_rank_hex>@<chunk_hash_hex>@<cache_salt>
+-  //
+-  // Output filename (matching fs_l2_adapter.py._object_key_to_filename):
+-  //   Unsalted: <model_name_safe>@0x<kv_rank_hex>@<chunk_hash_hex>.data
+-  //   Salted  :
+-  //   <model_name_safe>@0x<kv_rank_hex>@<chunk_hash_hex>@<cache_salt>.data
+-  //
+-  // The unsalted 3-field shape is bit-identical to the pre-cache_salt
+-  // format, so existing cache directories remain valid.
+-  //
+-  // NOTE: both model_name and cache_salt are forbidden from containing
+-  // '@' (invariant enforced on the Python side), so splitting on '@'
+-  // is unambiguous — no marker, no rsplit.
+-
+-  // Split on '@' — must yield 3 (unsalted) or 4 (salted) fields.
++  // LMCache 0.5.3 wire format:
++  //   Unsalted: <model>@<rank_hex>@<object_group_hex>@<chunk_hash_hex>
++  //   Salted: the unsalted form plus @<cache_salt>.
++  // Output matches fs_l2_adapter.py, with escaped model slashes, a 0x rank
++  // prefix, and the .data suffix.
+   std::vector<std::string> parts;
+   size_t start = 0;
+   for (size_t pos = 0; pos <= key.size(); ++pos) {
+@@ -51,16 +39,17 @@ std::string FSConnector::key_to_filename(const std::string& key) {
+       start = pos + 1;
+     }
+   }
+-  if (parts.size() != 3 && parts.size() != 4) {
++  if (parts.size() != 4 && parts.size() != 5) {
+     throw std::runtime_error(
+-        "FSConnector: malformed key (expected 3 or 4 '@'-separated fields): " +
++        "FSConnector: malformed key (expected 4 or 5 '@'-separated fields): " +
+         key);
+   }
+ 
+   const std::string& model_name = parts[0];
+   const std::string& kv_rank_hex = parts[1];
+-  const std::string& chunk_hash = parts[2];
+-  const std::string cache_salt = parts.size() == 4 ? parts[3] : std::string();
++  const std::string& object_group_hex = parts[2];
++  const std::string& chunk_hash = parts[3];
++  const std::string cache_salt = parts.size() == 5 ? parts[4] : std::string();
+ 
+   // Replace '/' with '-SEP-' for filesystem safety
+   std::string safe_model = replace_all(model_name, "/", PATH_SLASH_REPLACEMENT);
+@@ -68,13 +57,16 @@ std::string FSConnector::key_to_filename(const std::string& key) {
+   // Emit filename. Salt is appended at the tail so the unsalted shape
+   // matches what older builds wrote to disk.
+   std::string result;
+-  result.reserve(safe_model.size() + kv_rank_hex.size() + chunk_hash.size() +
++  result.reserve(safe_model.size() + kv_rank_hex.size() +
++                 object_group_hex.size() + chunk_hash.size() +
+                  cache_salt.size() + 32);
+   result += safe_model;
+   result += KEY_SEP;
+   result += "0x";
+   result += kv_rank_hex;
+   result += KEY_SEP;
++  result += object_group_hex;
++  result += KEY_SEP;
+   result += chunk_hash;
+   if (!cache_salt.empty()) {
+     result += KEY_SEP;
+@@ -125,13 +117,15 @@ static size_t read_all(int fd, void* buf, size_t len) {
+ 
+ FSConnector::FSConnector(std::string base_path, int num_workers,
+                          std::string relative_tmp_dir, bool use_odirect,
+-                         size_t read_ahead_size)
++                         size_t read_ahead_size, size_t max_capacity_bytes)
+     : ConnectorBase(num_workers),
+       base_path_(std::move(base_path)),
+       relative_tmp_dir_(std::move(relative_tmp_dir)),
+       use_odirect_(use_odirect),
+       disk_block_size_(0),
+-      read_ahead_size_(read_ahead_size) {
++      read_ahead_size_(read_ahead_size),
++      max_capacity_bytes_(max_capacity_bytes),
++      current_size_bytes_(0) {
+   // Create base directory
+   std::filesystem::create_directories(base_path_);
+ 
+@@ -141,6 +135,20 @@ FSConnector::FSConnector(std::string base_path, int num_workers,
+     std::filesystem::create_directories(tmp_path);
+   }
+ 
++  // A configured capacity is a hard limit on connector-owned bytes, not just
++  // a denominator for the Python eviction controller. Include persisted data
++  // and abandoned temporary files so a restart cannot reset admission to zero.
++  if (max_capacity_bytes_ > 0) {
++    for (const auto& entry :
++         std::filesystem::recursive_directory_iterator(base_path_)) {
++      if (!entry.is_regular_file()) continue;
++      const auto extension = entry.path().extension();
++      if (extension == FILE_EXT || extension == TMP_EXT) {
++        current_size_bytes_ += entry.file_size();
++      }
++    }
++  }
++
+   // Query disk block size for O_DIRECT
+   if (use_odirect_) {
+     struct statvfs st;
+@@ -226,8 +234,28 @@ void FSConnector::do_single_set(WorkerFSConn& conn, const std::string& key,
+   std::string filename = key_to_filename(key);
+   auto file_path = conn.base_path / filename;
+ 
+-  // Skip if already stored on disk
+-  if (std::filesystem::exists(file_path)) {
++  bool capacity_reserved = false;
++  if (max_capacity_bytes_ > 0) {
++    std::lock_guard<std::mutex> lock(capacity_mu_);
++    // Serialize capacity admission with the existence check. pending_files_
++    // prevents concurrent stores of one key from reserving the same bytes
++    // more than once while its final path does not exist yet.
++    if (std::filesystem::exists(file_path) ||
++        pending_files_.find(file_path.string()) != pending_files_.end()) {
++      return;
++    }
++    if (current_size_bytes_ > max_capacity_bytes_ ||
++        len > max_capacity_bytes_ - current_size_bytes_) {
++      throw std::runtime_error(
++          "FSConnector capacity exceeded: current=" +
++          std::to_string(current_size_bytes_) + ", requested=" +
++          std::to_string(len) + ", max=" +
++          std::to_string(max_capacity_bytes_));
++    }
++    current_size_bytes_ += len;
++    pending_files_.insert(file_path.string());
++    capacity_reserved = true;
++  } else if (std::filesystem::exists(file_path)) {
+     return;
+   }
+ 
+@@ -255,6 +283,11 @@ void FSConnector::do_single_set(WorkerFSConn& conn, const std::string& key,
+ 
+   int fd = ::open(tmp_path.c_str(), flags, 0644);
+   if (fd < 0) {
++    if (capacity_reserved) {
++      std::lock_guard<std::mutex> lock(capacity_mu_);
++      current_size_bytes_ -= len;
++      pending_files_.erase(file_path.string());
++    }
+     throw std::runtime_error("open for write failed: " + tmp_path.string() +
+                              ": " + strerror(errno));
+   }
+@@ -264,7 +297,13 @@ void FSConnector::do_single_set(WorkerFSConn& conn, const std::string& key,
+   } catch (...) {
+     ::close(fd);
+     // Clean up temp file on failure
+-    std::filesystem::remove(tmp_path);
++    std::error_code remove_ec;
++    std::filesystem::remove(tmp_path, remove_ec);
++    if (capacity_reserved) {
++      std::lock_guard<std::mutex> lock(capacity_mu_);
++      current_size_bytes_ -= len;
++      pending_files_.erase(file_path.string());
++    }
+     throw;
+   }
+   ::close(fd);
+@@ -276,9 +315,18 @@ void FSConnector::do_single_set(WorkerFSConn& conn, const std::string& key,
+     // Try to clean up, but prioritize reporting the original error.
+     std::error_code remove_ec;
+     std::filesystem::remove(tmp_path, remove_ec);
++    if (capacity_reserved) {
++      std::lock_guard<std::mutex> lock(capacity_mu_);
++      current_size_bytes_ -= len;
++      pending_files_.erase(file_path.string());
++    }
+     throw std::runtime_error("rename failed: " + tmp_path.string() + " -> " +
+                              file_path.string() + ": " + ec.message());
+   }
++  if (capacity_reserved) {
++    std::lock_guard<std::mutex> lock(capacity_mu_);
++    pending_files_.erase(file_path.string());
++  }
+ }
+ 
+ bool FSConnector::do_single_exists(WorkerFSConn& conn, const std::string& key) {
+@@ -290,8 +338,23 @@ bool FSConnector::do_single_exists(WorkerFSConn& conn, const std::string& key) {
+ bool FSConnector::do_single_delete(WorkerFSConn& conn, const std::string& key) {
+   std::string filename = key_to_filename(key);
+   auto file_path = conn.base_path / filename;
++  std::lock_guard<std::mutex> lock(capacity_mu_);
++  if (pending_files_.find(file_path.string()) != pending_files_.end()) {
++    return false;
++  }
++  std::error_code size_ec;
++  const size_t file_size = std::filesystem::file_size(file_path, size_ec);
+   std::error_code ec;
+-  return std::filesystem::remove(file_path, ec);
++  const bool removed = std::filesystem::remove(file_path, ec);
++  if (ec) {
++    throw std::runtime_error("remove failed: " + file_path.string() + ": " +
++                             ec.message());
++  }
++  if (removed && max_capacity_bytes_ > 0 && !size_ec) {
++    current_size_bytes_ =
++        file_size > current_size_bytes_ ? 0 : current_size_bytes_ - file_size;
++  }
++  return removed;
+ }
+ 
+ }  // namespace connector
+diff --git a/csrc/storage_backends/fs/connector.h b/csrc/storage_backends/fs/connector.h
+index 03b7b9c..496238f 100644
+--- a/csrc/storage_backends/fs/connector.h
++++ b/csrc/storage_backends/fs/connector.h
+@@ -8,7 +8,9 @@
+ #include <unistd.h>
+ #include <cstring>
+ #include <filesystem>
++#include <mutex>
+ #include <string>
++#include <unordered_set>
+ #include <vector>
+ 
+ namespace lmcache {
+@@ -36,7 +38,7 @@ class FSConnector : public ConnectorBase<WorkerFSConn> {
+  public:
+   FSConnector(std::string base_path, int num_workers,
+               std::string relative_tmp_dir = "", bool use_odirect = false,
+-              size_t read_ahead_size = 0);
++              size_t read_ahead_size = 0, size_t max_capacity_bytes = 0);
+   ~FSConnector() override;
+ 
+  protected:
+@@ -49,20 +51,11 @@ class FSConnector : public ConnectorBase<WorkerFSConn> {
+   bool do_single_delete(WorkerFSConn& conn, const std::string& key) override;
+ 
+  private:
+-  // Build the filesystem-safe filename from a serialized key string.
+-  //
+-  // Input key (from NativeConnectorL2Adapter._object_key_to_string):
+-  //   Unsalted: "{model}@{kv_rank:08x}@{hash.hex()}"
+-  //   Salted  : "{model}@{kv_rank:08x}@{hash.hex()}@{cache_salt}"
+-  //
+-  // Output filename (matching fs_l2_adapter.py._object_key_to_filename):
+-  //   Unsalted: "{safe_model}@{kv_rank:#010x}@{hash.hex()}.data"
+-  //   Salted  : "{safe_model}@{kv_rank:#010x}@{hash.hex()}@{cache_salt}.data"
+-  //
+-  // Differences from the input: '/' in model becomes '-SEP-', kv_rank
+-  // gains a '0x' prefix, and '.data' is appended. Both model_name and
+-  // cache_salt are forbidden from containing '@' (enforced on the
+-  // Python side), so the parse is unambiguous.
++  // Build the filesystem-safe filename from LMCache 0.5.3's serialized key:
++  //   Unsalted: "{model}@{rank:08x}@{object_group:x}@{hash.hex()}"
++  //   Salted: the unsalted form plus "@{cache_salt}".
++  // Output matches fs_l2_adapter.py: model slashes are escaped, rank gains a
++  // "0x" prefix, and ".data" is appended.
+   static std::string key_to_filename(const std::string& key);
+ 
+   static std::string replace_all(const std::string& str,
+@@ -74,6 +67,10 @@ class FSConnector : public ConnectorBase<WorkerFSConn> {
+   bool use_odirect_;
+   size_t disk_block_size_;
+   size_t read_ahead_size_;
++  size_t max_capacity_bytes_;
++  size_t current_size_bytes_;
++  std::mutex capacity_mu_;
++  std::unordered_set<std::string> pending_files_;
+ };
+ 
+ }  // namespace connector
+diff --git a/csrc/storage_backends/fs/pybind.cpp b/csrc/storage_backends/fs/pybind.cpp
+index 5fd53ce..ec3941e 100644
+--- a/csrc/storage_backends/fs/pybind.cpp
++++ b/csrc/storage_backends/fs/pybind.cpp
+@@ -7,9 +7,10 @@ namespace py = pybind11;
+ 
+ PYBIND11_MODULE(lmcache_fs, m) {
+   py::class_<lmcache::connector::FSConnector>(m, "LMCacheFSClient")
+-      .def(py::init<std::string, int, std::string, bool, size_t>(),
++      .def(py::init<std::string, int, std::string, bool, size_t, size_t>(),
+            py::arg("base_path"), py::arg("num_workers"),
+            py::arg("relative_tmp_dir") = "", py::arg("use_odirect") = false,
+-           py::arg("read_ahead_size") = 0)
++           py::arg("read_ahead_size") = 0,
++           py::arg("max_capacity_bytes") = 0)
+           LMCACHE_BIND_CONNECTOR_METHODS(lmcache::connector::FSConnector);
+ }
+diff --git a/docs/design/v1/distributed/l2_adapters/l2_eviction.md b/docs/design/v1/distributed/l2_adapters/l2_eviction.md
+index 1bc8518..02fb3ef 100644
+--- a/docs/design/v1/distributed/l2_adapters/l2_eviction.md
++++ b/docs/design/v1/distributed/l2_adapters/l2_eviction.md
+@@ -221,6 +221,13 @@ Two caveats:
+    degrades to a miss (the load path treats the missing file as not-found); a
+    racing store may re-create the key, which a later cycle re-picks.
+ 
++For the built-in `fs_native` connector, `max_capacity_gb` is also a hard write
++admission limit. The connector scans existing `.data` and `.tmp` files on
++startup, atomically reserves bytes across store workers, and rejects a store
++whose reservation would exceed the limit. This hard guard applies even when no
++`eviction` sub-object is configured. LRU remains opt-in and is useful for
++freeing older entries before stores reach the hard limit.
++
+ Example configuration with eviction enabled:
+ 
+ ```json
+diff --git a/lmcache/v1/distributed/l2_adapters/fs_native_l2_adapter.py b/lmcache/v1/distributed/l2_adapters/fs_native_l2_adapter.py
+index 2d70349..d35ffd3 100644
+--- a/lmcache/v1/distributed/l2_adapters/fs_native_l2_adapter.py
++++ b/lmcache/v1/distributed/l2_adapters/fs_native_l2_adapter.py
+@@ -45,6 +45,7 @@ class FSNativeL2AdapterConfig(L2AdapterConfigBase):
+     - use_odirect: bypass page cache via O_DIRECT.
+     - read_ahead_size: trigger filesystem readahead by
+       reading this many bytes first (optional).
++    - max_capacity_gb: hard maximum for connector-owned files; zero disables it.
+     """
+ 
+     def __init__(
+@@ -115,7 +116,7 @@ class FSNativeL2AdapterConfig(L2AdapterConfigBase):
+             "readahead by reading this many bytes "
+             "first (optional)\n"
+             "- max_capacity_gb (float): max L2 capacity "
+-            "in GB for usage tracking / eviction "
++            "in GiB; native stores are rejected at the cap "
+             "(default 0 = disabled)"
+         )
+ 
+@@ -150,13 +151,16 @@ def _create_fs_native_l2_adapter(
+         config.relative_tmp_dir,
+         config.use_odirect,
+         config.read_ahead_size or 0,
++        int(config.max_capacity_gb * (1024**3)),
+     )
+     logger.info(
+-        "Created FS native L2 adapter: %s (workers=%d, odirect=%s, read_ahead=%s)",
++        "Created FS native L2 adapter: %s (workers=%d, odirect=%s, "
++        "read_ahead=%s, max_capacity_gb=%s)",
+         config.base_path,
+         config.num_workers,
+         config.use_odirect,
+         config.read_ahead_size,
++        config.max_capacity_gb,
+     )
+     return NativeConnectorL2Adapter(
+         native_client,
+diff --git a/lmcache/v1/distributed/l2_adapters/native_connector_l2_adapter.py b/lmcache/v1/distributed/l2_adapters/native_connector_l2_adapter.py
+index 29b942f..5eb0051 100644
+--- a/lmcache/v1/distributed/l2_adapters/native_connector_l2_adapter.py
++++ b/lmcache/v1/distributed/l2_adapters/native_connector_l2_adapter.py
+@@ -452,6 +452,12 @@ class NativeConnectorL2Adapter(L2AdapterInterface):
+                     if op_type == self._OP_STORE:
+                         store_info = self._pending_store_sizes.pop(fid, None)
+                         task_bytes = 0
++                        if not ok:
++                            logger.error(
++                                "Native L2 store task %d failed: %s",
++                                task_id,
++                                error or "unknown native connector error",
++                            )
+                         if ok and store_info is not None:
+                             store_keys, sizes = store_info
+                             for key, size in zip(store_keys, sizes, strict=True):
+diff --git a/tests/v1/distributed/test_fs_native_capacity.py b/tests/v1/distributed/test_fs_native_capacity.py
+new file mode 100644
+index 0000000..8d9c4b2
+--- /dev/null
++++ b/tests/v1/distributed/test_fs_native_capacity.py
+@@ -0,0 +1,103 @@
++# SPDX-License-Identifier: Apache-2.0
++"""CPU-only hard-cap tests for the native filesystem connector."""
++
++# Standard
++from pathlib import Path
++from typing import Protocol
++import select
++import time
++
++# Third Party
++import pytest
++
++lmcache_fs = pytest.importorskip("lmcache.lmcache_fs")
++
++Completion = tuple[int, bool, str, list[bool] | None]
++
++
++class _FSClient(Protocol):
++    """Structural type exposed by the native filesystem pybind module."""
++
++    def event_fd(self) -> int: ...
++
++    def submit_batch_set(
++        self, keys: list[str], memoryviews: list[memoryview]
++    ) -> int: ...
++
++    def submit_batch_delete(self, keys: list[str]) -> int: ...
++
++    def drain_completions(self) -> list[Completion]: ...
++
++    def close(self) -> None: ...
++
++
++def _wait_for_completion(client: _FSClient, future_id: int) -> Completion:
++    """Wait for and return one native connector completion."""
++    deadline = time.monotonic() + 5
++    while time.monotonic() < deadline:
++        readable, _, _ = select.select(
++            [client.event_fd()], [], [], max(0, deadline - time.monotonic())
++        )
++        if not readable:
++            break
++        for completion in client.drain_completions():
++            if completion[0] == future_id:
++                return completion
++    raise TimeoutError(f"native completion {future_id} did not arrive")
++
++
++def _store(client: _FSClient, key: str, payload: bytearray) -> Completion:
++    """Submit one SET and return its completion while retaining the buffer."""
++    future_id = client.submit_batch_set([key], [memoryview(payload)])
++    return _wait_for_completion(client, future_id)
++
++
++def _connector_files(path: Path) -> list[Path]:
++    """Return final data files created by the filesystem connector."""
++    return list(path.rglob("*.data"))
++
++
++def test_capacity_rejects_concurrent_overshoot(tmp_path: Path) -> None:
++    """Concurrent worker reservations must never put more than the cap on disk."""
++    client = lmcache_fs.LMCacheFSClient(str(tmp_path), 3, "", False, 0, 10)
++    payloads = [bytearray(b"abcdef") for _ in range(3)]
++    try:
++        future_id = client.submit_batch_set(
++            ["model@00000000@0@01", "model@00000000@0@02", "model@00000000@0@03"],
++            [memoryview(payload) for payload in payloads],
++        )
++        completion = _wait_for_completion(client, future_id)
++        assert completion[1] is False
++        assert "capacity exceeded" in completion[2]
++        assert sum(path.stat().st_size for path in _connector_files(tmp_path)) <= 10
++    finally:
++        client.close()
++
++
++def test_capacity_counts_restart_files_and_reuses_deleted_space(
++    tmp_path: Path,
++) -> None:
++    """Persisted files consume capacity; a successful delete releases it."""
++    first_key = "model@00000000@0@01"
++    second_key = "model@00000000@0@02"
++    client = lmcache_fs.LMCacheFSClient(str(tmp_path), 1, "", False, 0, 10)
++    try:
++        assert _store(client, first_key, bytearray(b"12345678"))[1] is True
++    finally:
++        client.close()
++
++    restarted = lmcache_fs.LMCacheFSClient(str(tmp_path), 1, "", False, 0, 10)
++    try:
++        rejected = _store(restarted, second_key, bytearray(b"1234"))
++        assert rejected[1] is False
++        assert "current=8, requested=4, max=10" in rejected[2]
++
++        delete_id = restarted.submit_batch_delete([first_key])
++        deleted = _wait_for_completion(restarted, delete_id)
++        assert deleted[1] is True
++        assert deleted[3] == [True]
++
++        assert _store(restarted, second_key, bytearray(b"1234"))[1] is True
++        assert sum(path.stat().st_size for path in _connector_files(tmp_path)) == 4
++    finally:
++        restarted.close()
+diff --git a/tests/v1/distributed/test_l2_adapter_factory.py b/tests/v1/distributed/test_l2_adapter_factory.py
+index acd8e0d..0849feb 100644
+--- a/tests/v1/distributed/test_l2_adapter_factory.py
++++ b/tests/v1/distributed/test_l2_adapter_factory.py
+@@ -882,12 +882,14 @@ class _FakeLMCacheFSClient:
+         relative_tmp_dir="",
+         use_odirect=False,
+         read_ahead_size=0,
++        max_capacity_bytes=0,
+     ):
+         self.base_path = base_path
+         self.num_workers = num_workers
+         self.relative_tmp_dir = relative_tmp_dir
+         self.use_odirect = use_odirect
+         self.read_ahead_size = read_ahead_size
++        self.max_capacity_bytes = max_capacity_bytes
+         self._efd = create_event_notifier()
+         self._closed = False
+ 
+@@ -973,6 +975,7 @@ class TestFSNativeAdapterFactory:
+                 config.relative_tmp_dir,
+                 config.use_odirect,
+                 config.read_ahead_size or 0,
++                int(config.max_capacity_gb * (1024**3)),
+             )
+             # First Party
+             from lmcache.v1.distributed.l2_adapters.native_connector_l2_adapter import (
+@@ -991,6 +994,7 @@ class TestFSNativeAdapterFactory:
+                 relative_tmp_dir=".tmp",
+                 use_odirect=True,
+                 read_ahead_size=4096,
++                max_capacity_gb=2.5,
+             )
+             adapter = create_l2_adapter_from_registry(cfg)
+             assert captured["args"] == (
+@@ -999,6 +1003,7 @@ class TestFSNativeAdapterFactory:
+                 ".tmp",
+                 True,
+                 4096,
++                int(2.5 * (1024**3)),
+             )
+             adapter.close()
+         finally:
+@@ -1093,6 +1098,7 @@ class TestFSNativeAdapterFactory:
+                 config.relative_tmp_dir,
+                 config.use_odirect,
+                 config.read_ahead_size or 0,
++                int(config.max_capacity_gb * (1024**3)),
+             )
+             # First Party
+             from lmcache.v1.distributed.l2_adapters.native_connector_l2_adapter import (
+@@ -1134,5 +1140,6 @@ def _patched_fs_factory(config, l1_memory_desc=None):
+         config.relative_tmp_dir,
+         config.use_odirect,
+         config.read_ahead_size or 0,
++        int(config.max_capacity_gb * (1024**3)),
+     )
+     return NativeConnectorL2Adapter(client)

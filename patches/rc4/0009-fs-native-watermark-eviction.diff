@@ -1,0 +1,825 @@
+diff --git a/csrc/storage_backends/fs/connector.cpp b/csrc/storage_backends/fs/connector.cpp
+index 79561c0..3b207d6 100644
+--- a/csrc/storage_backends/fs/connector.cpp
++++ b/csrc/storage_backends/fs/connector.cpp
+@@ -1,6 +1,7 @@
+ // SPDX-License-Identifier: Apache-2.0
+ 
+ #include "connector.h"
++#include <algorithm>
+ #include <cerrno>
+ #include <cstdio>
+ #include <stdexcept>
+@@ -117,7 +118,8 @@ static size_t read_all(int fd, void* buf, size_t len) {
+ 
+ FSConnector::FSConnector(std::string base_path, int num_workers,
+                          std::string relative_tmp_dir, bool use_odirect,
+-                         size_t read_ahead_size, size_t max_capacity_bytes)
++                         size_t read_ahead_size, size_t max_capacity_bytes,
++                         double trigger_watermark, double eviction_ratio)
+     : ConnectorBase(num_workers),
+       base_path_(std::move(base_path)),
+       relative_tmp_dir_(std::move(relative_tmp_dir)),
+@@ -125,28 +127,47 @@ FSConnector::FSConnector(std::string base_path, int num_workers,
+       disk_block_size_(0),
+       read_ahead_size_(read_ahead_size),
+       max_capacity_bytes_(max_capacity_bytes),
+-      current_size_bytes_(0) {
+-  // Create base directory
+-  std::filesystem::create_directories(base_path_);
++      current_size_bytes_(0),
++      trigger_watermark_(trigger_watermark),
++      eviction_ratio_(eviction_ratio),
++      access_clock_(0) {
++  if (trigger_watermark_ < 0.0 || trigger_watermark_ > 1.0 ||
++      eviction_ratio_ < 0.0 || eviction_ratio_ > trigger_watermark_) {
++    throw std::runtime_error(
++        "FSConnector eviction requires 0 <= eviction_ratio <= "
++        "trigger_watermark <= 1");
++  }
++  if (trigger_watermark_ > 0.0 && max_capacity_bytes_ == 0) {
++    throw std::runtime_error(
++        "FSConnector eviction requires max_capacity_bytes > 0");
++  }
+ 
+-  // Create tmp directory if configured
++  std::filesystem::create_directories(base_path_);
+   if (!relative_tmp_dir_.empty()) {
+     auto tmp_path = std::filesystem::path(base_path_) / relative_tmp_dir_;
+     std::filesystem::create_directories(tmp_path);
+   }
+ 
+-  // A configured capacity is a hard limit on connector-owned bytes, not just
+-  // a denominator for the Python eviction controller. Include persisted data
+-  // and abandoned temporary files so a restart cannot reset admission to zero.
++  // Account for both final data and abandoned temporary files. Sorting by
++  // mtime seeds a deterministic oldest-first order after a restart.
+   if (max_capacity_bytes_ > 0) {
++    std::vector<std::filesystem::directory_entry> entries;
+     for (const auto& entry :
+          std::filesystem::recursive_directory_iterator(base_path_)) {
+       if (!entry.is_regular_file()) continue;
+       const auto extension = entry.path().extension();
+-      if (extension == FILE_EXT || extension == TMP_EXT) {
+-        current_size_bytes_ += entry.file_size();
+-      }
++      if (extension == FILE_EXT || extension == TMP_EXT) entries.push_back(entry);
++    }
++    std::sort(entries.begin(), entries.end(), [](const auto& lhs,
++                                                  const auto& rhs) {
++      return lhs.last_write_time() < rhs.last_write_time();
++    });
++    for (const auto& entry : entries) {
++      const size_t size = entry.file_size();
++      current_size_bytes_ += size;
++      file_records_[entry.path().string()] = {size, ++access_clock_};
+     }
++    if (trigger_watermark_ > 0.0) evict_for_reservation_locked(0);
+   }
+ 
+   // Query disk block size for O_DIRECT
+@@ -162,6 +183,112 @@ FSConnector::FSConnector(std::string base_path, int num_workers,
+ 
+ FSConnector::~FSConnector() { close(); }
+ 
++size_t FSConnector::get_current_size_bytes() {
++  std::lock_guard<std::mutex> lock(capacity_mu_);
++  return current_size_bytes_;
++}
++
++void FSConnector::release_keys(const std::vector<std::string>& keys) {
++  if (max_capacity_bytes_ == 0) return;
++  std::lock_guard<std::mutex> lock(capacity_mu_);
++  for (const auto& key : keys) {
++    const auto path = std::filesystem::path(base_path_) / key_to_filename(key);
++    auto it = pinned_files_.find(path.string());
++    if (it == pinned_files_.end()) continue;
++    if (it->second <= 1) {
++      pinned_files_.erase(it);
++    } else {
++      --it->second;
++    }
++  }
++}
++
++void FSConnector::track_existing_file_locked(
++    const std::filesystem::path& path) {
++  const std::string path_string = path.string();
++  if (file_records_.find(path_string) != file_records_.end()) return;
++  std::error_code ec;
++  const size_t size = std::filesystem::file_size(path, ec);
++  if (ec) return;
++  current_size_bytes_ += size;
++  file_records_[path_string] = {size, ++access_clock_};
++}
++
++void FSConnector::touch_file_locked(const std::filesystem::path& path) {
++  auto it = file_records_.find(path.string());
++  if (it != file_records_.end()) it->second.last_access = ++access_clock_;
++}
++
++bool FSConnector::remove_accounted_file_locked(
++    const std::filesystem::path& path) {
++  const std::string path_string = path.string();
++  if (pending_files_.find(path_string) != pending_files_.end() ||
++      pinned_files_.find(path_string) != pinned_files_.end()) {
++    return false;
++  }
++  auto record = file_records_.find(path_string);
++  std::error_code ec;
++  const bool removed = std::filesystem::remove(path, ec);
++  if (ec) {
++    throw std::runtime_error("remove failed: " + path_string + ": " +
++                             ec.message());
++  }
++  if (record != file_records_.end()) {
++    const size_t size = record->second.size_bytes;
++    current_size_bytes_ =
++        size > current_size_bytes_ ? 0 : current_size_bytes_ - size;
++    file_records_.erase(record);
++  }
++  return removed;
++}
++
++void FSConnector::evict_for_reservation_locked(size_t incoming_bytes) {
++  if (max_capacity_bytes_ == 0 || trigger_watermark_ <= 0.0) return;
++  const size_t trigger_bytes = static_cast<size_t>(
++      static_cast<double>(max_capacity_bytes_) * trigger_watermark_);
++  const size_t projected =
++      incoming_bytes > SIZE_MAX - current_size_bytes_
++          ? SIZE_MAX
++          : current_size_bytes_ + incoming_bytes;
++  if (projected < trigger_bytes) return;
++
++  const double target_fraction =
++      std::max(0.0, trigger_watermark_ - eviction_ratio_);
++  const size_t target_after_reservation = static_cast<size_t>(
++      static_cast<double>(max_capacity_bytes_) * target_fraction);
++  const size_t target_existing = target_after_reservation > incoming_bytes
++                                     ? target_after_reservation - incoming_bytes
++                                     : 0;
++  while (current_size_bytes_ > target_existing) {
++    auto victim = file_records_.end();
++    for (auto it = file_records_.begin(); it != file_records_.end(); ++it) {
++      if (pending_files_.find(it->first) != pending_files_.end() ||
++          pinned_files_.find(it->first) != pinned_files_.end()) {
++        continue;
++      }
++      if (victim == file_records_.end() ||
++          it->second.last_access < victim->second.last_access) {
++        victim = it;
++      }
++    }
++    if (victim == file_records_.end()) break;
++    const std::filesystem::path victim_path(victim->first);
++    remove_accounted_file_locked(victim_path);
++  }
++}
++
++void FSConnector::release_reader(const std::filesystem::path& path) {
++  if (max_capacity_bytes_ == 0) return;
++  std::lock_guard<std::mutex> lock(capacity_mu_);
++  auto it = pinned_files_.find(path.string());
++  if (it == pinned_files_.end()) return;
++  if (it->second <= 1) {
++    pinned_files_.erase(it);
++  } else {
++    --it->second;
++  }
++}
++
+ WorkerFSConn FSConnector::create_connection() {
+   WorkerFSConn conn;
+   conn.base_path = base_path_;
+@@ -176,8 +303,19 @@ WorkerFSConn FSConnector::create_connection() {
+ 
+ void FSConnector::do_single_get(WorkerFSConn& conn, const std::string& key,
+                                 void* buf, size_t len, size_t chunk_size) {
++  (void)chunk_size;
+   std::string filename = key_to_filename(key);
+   auto file_path = conn.base_path / filename;
++  bool reader_registered = false;
++  if (max_capacity_bytes_ > 0) {
++    std::lock_guard<std::mutex> lock(capacity_mu_);
++    track_existing_file_locked(file_path);
++    if (file_records_.find(file_path.string()) != file_records_.end()) {
++      ++pinned_files_[file_path.string()];
++      touch_file_locked(file_path);
++      reader_registered = true;
++    }
++  }
+ 
+   int flags = O_RDONLY;
+   bool do_odirect = conn.use_odirect;
+@@ -194,6 +332,7 @@ void FSConnector::do_single_get(WorkerFSConn& conn, const std::string& key,
+ 
+   int fd = ::open(file_path.c_str(), flags);
+   if (fd < 0) {
++    if (reader_registered) release_reader(file_path);
+     throw std::runtime_error("open for read failed: " + file_path.string() +
+                              ": " + strerror(errno));
+   }
+@@ -201,13 +340,9 @@ void FSConnector::do_single_get(WorkerFSConn& conn, const std::string& key,
+   try {
+     size_t n;
+     if (conn.read_ahead_size > 0 && len > conn.read_ahead_size) {
+-      // Trigger filesystem readahead with a small initial
+-      // read, then read the remainder.
+       size_t ra = conn.read_ahead_size;
+       size_t n_head = read_all(fd, buf, ra);
+       if (n_head < ra) {
+-        // Short read on the head portion — treat as
+-        // incomplete
+         n = n_head;
+       } else {
+         size_t n_tail = read_all(fd, static_cast<char*>(buf) + ra, len - ra);
+@@ -223,31 +358,45 @@ void FSConnector::do_single_get(WorkerFSConn& conn, const std::string& key,
+     }
+   } catch (...) {
+     ::close(fd);
++    if (reader_registered) release_reader(file_path);
+     throw;
+   }
+   ::close(fd);
++  if (reader_registered) release_reader(file_path);
+ }
+ 
+ void FSConnector::do_single_set(WorkerFSConn& conn, const std::string& key,
+                                 const void* buf, size_t len,
+                                 size_t chunk_size) {
++  (void)chunk_size;
+   std::string filename = key_to_filename(key);
+   auto file_path = conn.base_path / filename;
++  std::filesystem::path tmp_path;
++  if (!conn.tmp_dir.empty()) {
++    tmp_path = conn.tmp_dir / filename;
++  } else {
++    tmp_path = file_path;
++    tmp_path.replace_extension(TMP_EXT);
++  }
+ 
+   bool capacity_reserved = false;
+   if (max_capacity_bytes_ > 0) {
+     std::lock_guard<std::mutex> lock(capacity_mu_);
+-    // Serialize capacity admission with the existence check. pending_files_
+-    // prevents concurrent stores of one key from reserving the same bytes
+-    // more than once while its final path does not exist yet.
+-    if (std::filesystem::exists(file_path) ||
++    track_existing_file_locked(file_path);
++    if (file_records_.find(file_path.string()) != file_records_.end() ||
+         pending_files_.find(file_path.string()) != pending_files_.end()) {
++      touch_file_locked(file_path);
+       return;
+     }
++    // A restart can leave the exact temporary pathname this write will use.
++    // Remove its accounted bytes before reserving the replacement.
++    track_existing_file_locked(tmp_path);
++    remove_accounted_file_locked(tmp_path);
++    evict_for_reservation_locked(len);
+     if (current_size_bytes_ > max_capacity_bytes_ ||
+         len > max_capacity_bytes_ - current_size_bytes_) {
+       throw std::runtime_error(
+-          "FSConnector capacity exceeded: current=" +
++          "FSConnector capacity exceeded after eviction: current=" +
+           std::to_string(current_size_bytes_) + ", requested=" +
+           std::to_string(len) + ", max=" +
+           std::to_string(max_capacity_bytes_));
+@@ -259,15 +408,6 @@ void FSConnector::do_single_set(WorkerFSConn& conn, const std::string& key,
+     return;
+   }
+ 
+-  // Determine temp file path
+-  std::filesystem::path tmp_path;
+-  if (!conn.tmp_dir.empty()) {
+-    tmp_path = conn.tmp_dir / filename;
+-  } else {
+-    tmp_path = file_path;
+-    tmp_path.replace_extension(TMP_EXT);
+-  }
+-
+   int flags = O_CREAT | O_WRONLY | O_TRUNC;
+   bool do_odirect = conn.use_odirect;
+   if (do_odirect) {
+@@ -296,7 +436,6 @@ void FSConnector::do_single_set(WorkerFSConn& conn, const std::string& key,
+     write_all(fd, buf, len);
+   } catch (...) {
+     ::close(fd);
+-    // Clean up temp file on failure
+     std::error_code remove_ec;
+     std::filesystem::remove(tmp_path, remove_ec);
+     if (capacity_reserved) {
+@@ -308,11 +447,9 @@ void FSConnector::do_single_set(WorkerFSConn& conn, const std::string& key,
+   }
+   ::close(fd);
+ 
+-  // Atomic rename: tmp -> final
+   std::error_code ec;
+   std::filesystem::rename(tmp_path, file_path, ec);
+   if (ec) {
+-    // Try to clean up, but prioritize reporting the original error.
+     std::error_code remove_ec;
+     std::filesystem::remove(tmp_path, remove_ec);
+     if (capacity_reserved) {
+@@ -326,35 +463,41 @@ void FSConnector::do_single_set(WorkerFSConn& conn, const std::string& key,
+   if (capacity_reserved) {
+     std::lock_guard<std::mutex> lock(capacity_mu_);
+     pending_files_.erase(file_path.string());
++    file_records_[file_path.string()] = {len, ++access_clock_};
+   }
+ }
+ 
+ bool FSConnector::do_single_exists(WorkerFSConn& conn, const std::string& key) {
+   std::string filename = key_to_filename(key);
+   auto file_path = conn.base_path / filename;
+-  return std::filesystem::exists(file_path);
++  if (max_capacity_bytes_ == 0) return std::filesystem::exists(file_path);
++
++  std::lock_guard<std::mutex> lock(capacity_mu_);
++  track_existing_file_locked(file_path);
++  const bool exists = file_records_.find(file_path.string()) != file_records_.end();
++  if (exists) {
++    touch_file_locked(file_path);
++    ++pinned_files_[file_path.string()];
++  }
++  return exists;
+ }
+ 
+ bool FSConnector::do_single_delete(WorkerFSConn& conn, const std::string& key) {
+   std::string filename = key_to_filename(key);
+   auto file_path = conn.base_path / filename;
+-  std::lock_guard<std::mutex> lock(capacity_mu_);
+-  if (pending_files_.find(file_path.string()) != pending_files_.end()) {
+-    return false;
+-  }
+-  std::error_code size_ec;
+-  const size_t file_size = std::filesystem::file_size(file_path, size_ec);
+-  std::error_code ec;
+-  const bool removed = std::filesystem::remove(file_path, ec);
+-  if (ec) {
+-    throw std::runtime_error("remove failed: " + file_path.string() + ": " +
+-                             ec.message());
+-  }
+-  if (removed && max_capacity_bytes_ > 0 && !size_ec) {
+-    current_size_bytes_ =
+-        file_size > current_size_bytes_ ? 0 : current_size_bytes_ - file_size;
++  if (max_capacity_bytes_ == 0) {
++    std::error_code ec;
++    const bool removed = std::filesystem::remove(file_path, ec);
++    if (ec) {
++      throw std::runtime_error("remove failed: " + file_path.string() + ": " +
++                               ec.message());
++    }
++    return removed;
+   }
+-  return removed;
++
++  std::lock_guard<std::mutex> lock(capacity_mu_);
++  track_existing_file_locked(file_path);
++  return remove_accounted_file_locked(file_path);
+ }
+ 
+ }  // namespace connector
+diff --git a/csrc/storage_backends/fs/connector.h b/csrc/storage_backends/fs/connector.h
+index 496238f..943a5e8 100644
+--- a/csrc/storage_backends/fs/connector.h
++++ b/csrc/storage_backends/fs/connector.h
+@@ -6,10 +6,12 @@
+ #include <sys/stat.h>
+ #include <sys/statvfs.h>
+ #include <unistd.h>
++#include <cstdint>
+ #include <cstring>
+ #include <filesystem>
+ #include <mutex>
+ #include <string>
++#include <unordered_map>
+ #include <unordered_set>
+ #include <vector>
+ 
+@@ -38,9 +40,13 @@ class FSConnector : public ConnectorBase<WorkerFSConn> {
+  public:
+   FSConnector(std::string base_path, int num_workers,
+               std::string relative_tmp_dir = "", bool use_odirect = false,
+-              size_t read_ahead_size = 0, size_t max_capacity_bytes = 0);
++              size_t read_ahead_size = 0, size_t max_capacity_bytes = 0,
++              double trigger_watermark = 0.0, double eviction_ratio = 0.0);
+   ~FSConnector() override;
+ 
++  size_t get_current_size_bytes();
++  void release_keys(const std::vector<std::string>& keys);
++
+  protected:
+   WorkerFSConn create_connection() override;
+   void do_single_get(WorkerFSConn& conn, const std::string& key, void* buf,
+@@ -62,6 +68,17 @@ class FSConnector : public ConnectorBase<WorkerFSConn> {
+                                  const std::string& from,
+                                  const std::string& to);
+ 
++  struct FileRecord {
++    size_t size_bytes;
++    uint64_t last_access;
++  };
++
++  void track_existing_file_locked(const std::filesystem::path& path);
++  void touch_file_locked(const std::filesystem::path& path);
++  bool remove_accounted_file_locked(const std::filesystem::path& path);
++  void evict_for_reservation_locked(size_t incoming_bytes);
++  void release_reader(const std::filesystem::path& path);
++
+   std::string base_path_;
+   std::string relative_tmp_dir_;
+   bool use_odirect_;
+@@ -69,7 +86,12 @@ class FSConnector : public ConnectorBase<WorkerFSConn> {
+   size_t read_ahead_size_;
+   size_t max_capacity_bytes_;
+   size_t current_size_bytes_;
++  double trigger_watermark_;
++  double eviction_ratio_;
++  uint64_t access_clock_;
+   std::mutex capacity_mu_;
++  std::unordered_map<std::string, FileRecord> file_records_;
++  std::unordered_map<std::string, size_t> pinned_files_;
+   std::unordered_set<std::string> pending_files_;
+ };
+ 
+diff --git a/csrc/storage_backends/fs/pybind.cpp b/csrc/storage_backends/fs/pybind.cpp
+index ec3941e..cf05190 100644
+--- a/csrc/storage_backends/fs/pybind.cpp
++++ b/csrc/storage_backends/fs/pybind.cpp
+@@ -7,10 +7,18 @@ namespace py = pybind11;
+ 
+ PYBIND11_MODULE(lmcache_fs, m) {
+   py::class_<lmcache::connector::FSConnector>(m, "LMCacheFSClient")
+-      .def(py::init<std::string, int, std::string, bool, size_t, size_t>(),
++      .def(py::init<std::string, int, std::string, bool, size_t, size_t, double,
++                    double>(),
+            py::arg("base_path"), py::arg("num_workers"),
+            py::arg("relative_tmp_dir") = "", py::arg("use_odirect") = false,
+            py::arg("read_ahead_size") = 0,
+-           py::arg("max_capacity_bytes") = 0)
++           py::arg("max_capacity_bytes") = 0,
++           py::arg("trigger_watermark") = 0.0,
++           py::arg("eviction_ratio") = 0.0)
++      .def("get_current_size_bytes",
++           &lmcache::connector::FSConnector::get_current_size_bytes,
++           py::call_guard<py::gil_scoped_release>())
++      .def("release_keys", &lmcache::connector::FSConnector::release_keys,
++           py::call_guard<py::gil_scoped_release>())
+           LMCACHE_BIND_CONNECTOR_METHODS(lmcache::connector::FSConnector);
+ }
+diff --git a/docs/design/v1/distributed/l2_adapters/l2_eviction.md b/docs/design/v1/distributed/l2_adapters/l2_eviction.md
+index 02fb3ef..4b97e27 100644
+--- a/docs/design/v1/distributed/l2_adapters/l2_eviction.md
++++ b/docs/design/v1/distributed/l2_adapters/l2_eviction.md
+@@ -223,10 +223,13 @@ Two caveats:
+ 
+ For the built-in `fs_native` connector, `max_capacity_gb` is also a hard write
+ admission limit. The connector scans existing `.data` and `.tmp` files on
+-startup, atomically reserves bytes across store workers, and rejects a store
+-whose reservation would exceed the limit. This hard guard applies even when no
+-`eviction` sub-object is configured. LRU remains opt-in and is useful for
+-freeing older entries before stores reach the hard limit.
++startup and atomically reserves bytes across store workers. With an LRU
++`eviction` object, the native connector triggers on projected usage at
++`trigger_watermark` and evicts to `trigger_watermark - eviction_ratio` before
++reserving the new write. Its single mutex protects capacity, LRU metadata,
++in-flight reservations, and reader pins; opened retrieves cannot be evicted.
++Abandoned `.tmp` files are counted and are eligible LRU victims. Other eviction
++policies keep using the shared Python controller.
+ 
+ Example configuration with eviction enabled:
+ 
+diff --git a/lmcache/v1/distributed/l2_adapters/base.py b/lmcache/v1/distributed/l2_adapters/base.py
+index fab1305..8335b3a 100644
+--- a/lmcache/v1/distributed/l2_adapters/base.py
++++ b/lmcache/v1/distributed/l2_adapters/base.py
+@@ -493,6 +493,11 @@ class L2AdapterInterface(ABC):
+     # Eviction Interface
+     #####################
+ 
++    @property
++    def manages_global_eviction_natively(self) -> bool:
++        """Whether the backend owns global watermark eviction itself."""
++        return False
++
+     @property
+     def supports_global_eviction(self) -> bool:
+         """Whether this adapter supports **aggregate** (global) usage-driven
+diff --git a/lmcache/v1/distributed/l2_adapters/fs_native_l2_adapter.py b/lmcache/v1/distributed/l2_adapters/fs_native_l2_adapter.py
+index d35ffd3..9b7bfc6 100644
+--- a/lmcache/v1/distributed/l2_adapters/fs_native_l2_adapter.py
++++ b/lmcache/v1/distributed/l2_adapters/fs_native_l2_adapter.py
+@@ -145,6 +145,13 @@ def _create_fs_native_l2_adapter(
+     )
+ 
+     assert isinstance(config, FSNativeL2AdapterConfig)
++    eviction_config = config.eviction_config
++    native_lru = (
++        eviction_config is not None
++        and eviction_config.eviction_policy == "LRU"
++    )
++    trigger_watermark = eviction_config.trigger_watermark if native_lru else 0.0
++    eviction_ratio = eviction_config.eviction_ratio if native_lru else 0.0
+     native_client = LMCacheFSClient(
+         config.base_path,
+         config.num_workers,
+@@ -152,6 +159,8 @@ def _create_fs_native_l2_adapter(
+         config.use_odirect,
+         config.read_ahead_size or 0,
+         int(config.max_capacity_gb * (1024**3)),
++        trigger_watermark,
++        eviction_ratio,
+     )
+     logger.info(
+         "Created FS native L2 adapter: %s (workers=%d, odirect=%s, "
+@@ -162,6 +171,12 @@ def _create_fs_native_l2_adapter(
+         config.read_ahead_size,
+         config.max_capacity_gb,
+     )
++    if native_lru:
++        logger.info(
++            "fs_native LRU eviction: trigger=%.3f target=%.3f",
++            trigger_watermark,
++            max(0.0, trigger_watermark - eviction_ratio),
++        )
+     return NativeConnectorL2Adapter(
+         native_client,
+         max_capacity_gb=config.max_capacity_gb,
+@@ -171,7 +186,9 @@ def _create_fs_native_l2_adapter(
+             "use_odirect": config.use_odirect,
+             "num_workers": config.num_workers,
+             "read_ahead_size": config.read_ahead_size,
++            "native_lru_eviction": native_lru,
+         },
++        manages_global_eviction_natively=native_lru,
+     )
+ 
+ 
+diff --git a/lmcache/v1/distributed/l2_adapters/native_connector_l2_adapter.py b/lmcache/v1/distributed/l2_adapters/native_connector_l2_adapter.py
+index 5eb0051..6b333e9 100644
+--- a/lmcache/v1/distributed/l2_adapters/native_connector_l2_adapter.py
++++ b/lmcache/v1/distributed/l2_adapters/native_connector_l2_adapter.py
+@@ -32,6 +32,7 @@ from lmcache.native_storage_ops import Bitmap
+ from lmcache.v1.distributed.api import MemoryLayoutDesc, ObjectKey
+ from lmcache.v1.distributed.internal_api import L2StoreResult
+ from lmcache.v1.distributed.l2_adapters.base import (
++    AdapterUsage,
+     L2AdapterInterface,
+     L2TaskId,
+ )
+@@ -108,12 +109,16 @@ class NativeConnectorL2Adapter(L2AdapterInterface):
+         max_capacity_gb: float = 0,
+         type_name: str = "",
+         extra_status: dict[str, Any] | None = None,
++        manages_global_eviction_natively: bool = False,
+     ) -> None:
+         super().__init__(max_capacity_bytes=int(max_capacity_gb * (1024**3)))
+         self._client = native_client
+         self._client_fd: int = int(native_client.event_fd())
+         self._type_name: str = type_name or type(native_client).__name__
+         self._extra_status: dict[str, Any] = dict(extra_status or {})
++        self._manages_global_eviction_natively = (
++            manages_global_eviction_natively
++        )
+ 
+         # 3 distinct cross-platform notifiers for the L2 adapter
+         # interface
+@@ -247,15 +252,21 @@ class NativeConnectorL2Adapter(L2AdapterInterface):
+             return self._completed_lookups.pop(task_id, None)
+ 
+     def submit_unlock(self, keys: list[ObjectKey]) -> None:
++        native_unlock_keys: list[str] = []
+         with self._lock:
+             for key in keys:
+                 if key not in self._locked_keys:
+                     continue
++                native_unlock_keys.append(_object_key_to_string(key))
+                 if self._locked_keys[key] <= 1:
+                     del self._locked_keys[key]
+                 else:
+                     self._locked_keys[key] -= 1
+ 
++        release_keys = getattr(self._client, "release_keys", None)
++        if native_unlock_keys and callable(release_keys):
++            release_keys(native_unlock_keys)
++
+     # ---------------------------------------------------------------
+     # Load Interface
+     # ---------------------------------------------------------------
+@@ -288,6 +299,11 @@ class NativeConnectorL2Adapter(L2AdapterInterface):
+     # Eviction Interface
+     # ---------------------------------------------------------------
+ 
++    @property
++    def manages_global_eviction_natively(self) -> bool:
++        """Whether this connector performs its own global watermark eviction."""
++        return self._manages_global_eviction_natively
++
+     def delete(self, keys: list[ObjectKey]) -> None:
+         """Delete a batch of keys from the remote backend.
+ 
+@@ -337,9 +353,17 @@ class NativeConnectorL2Adapter(L2AdapterInterface):
+         # backend reports per-key deletion results, so we don't notify
+         # again here.
+ 
+-    # ``get_usage()`` is inherited from ``L2AdapterInterface``. The base
+-    # class tracks aggregate + per-user totals via ``_notify_keys_*``;
+-    # we feed it the byte sizes from each store/delete completion.
++    def get_usage(self) -> AdapterUsage:
++        """Return native exact global bytes when the connector owns eviction."""
++        usage = super().get_usage()
++        native_usage = getattr(self._client, "get_current_size_bytes", None)
++        if not self._manages_global_eviction_natively or not callable(native_usage):
++            return usage
++        return AdapterUsage(
++            total_bytes_used=int(native_usage()),
++            total_capacity_bytes=usage.total_capacity_bytes,
++            bytes_by_cache_salt=usage.bytes_by_cache_salt,
++        )
+ 
+     # ---------------------------------------------------------------
+     # Status Interface
+@@ -362,6 +386,10 @@ class NativeConnectorL2Adapter(L2AdapterInterface):
+             "type": self._type_name,
+         }
+         status.update(self._extra_status)
++        if self._manages_global_eviction_natively:
++            native_usage = getattr(self._client, "get_current_size_bytes", None)
++            if callable(native_usage):
++                status["current_size_bytes"] = int(native_usage())
+         return status
+ 
+     # ---------------------------------------------------------------
+diff --git a/lmcache/v1/distributed/storage_manager.py b/lmcache/v1/distributed/storage_manager.py
+index b6713fd..6205248 100644
+--- a/lmcache/v1/distributed/storage_manager.py
++++ b/lmcache/v1/distributed/storage_manager.py
+@@ -1119,6 +1119,8 @@ class StorageManager:
+         """
+         if eviction_config is None:
+             return False
++        if adapter.manages_global_eviction_natively:
++            return False
+         policy_name = eviction_config.eviction_policy
+         if policy_name != "IsolatedLRU" and not adapter.supports_global_eviction:
+             logger.warning(
+diff --git a/tests/v1/distributed/test_fs_native_capacity.py b/tests/v1/distributed/test_fs_native_capacity.py
+index 8d9c4b2..71daec4 100644
+--- a/tests/v1/distributed/test_fs_native_capacity.py
++++ b/tests/v1/distributed/test_fs_native_capacity.py
+@@ -24,6 +24,16 @@ class _FSClient(Protocol):
+         self, keys: list[str], memoryviews: list[memoryview]
+     ) -> int: ...
+ 
++    def submit_batch_get(
++        self, keys: list[str], memoryviews: list[memoryview]
++    ) -> int: ...
++
++    def submit_batch_exists(self, keys: list[str]) -> int: ...
++
++    def get_current_size_bytes(self) -> int: ...
++
++    def release_keys(self, keys: list[str]) -> None: ...
++
+     def submit_batch_delete(self, keys: list[str]) -> int: ...
+ 
+     def drain_completions(self) -> list[Completion]: ...
+@@ -46,6 +56,29 @@ def _wait_for_completion(client: _FSClient, future_id: int) -> Completion:
+     raise TimeoutError(f"native completion {future_id} did not arrive")
+ 
+ 
++def _wait_for_completions(
++    client: _FSClient, future_ids: set[int]
++) -> dict[int, Completion]:
++    """Wait for several concurrent futures without dropping early results."""
++    pending = set(future_ids)
++    results: dict[int, Completion] = {}
++    deadline = time.monotonic() + 5
++    while pending and time.monotonic() < deadline:
++        readable, _, _ = select.select(
++            [client.event_fd()], [], [], max(0, deadline - time.monotonic())
++        )
++        if not readable:
++            break
++        for completion in client.drain_completions():
++            future_id = completion[0]
++            if future_id in pending:
++                pending.remove(future_id)
++                results[future_id] = completion
++    if pending:
++        raise TimeoutError(f"native completions {sorted(pending)} did not arrive")
++    return results
++
++
+ def _store(client: _FSClient, key: str, payload: bytearray) -> Completion:
+     """Submit one SET and return its completion while retaining the buffer."""
+     future_id = client.submit_batch_set([key], [memoryview(payload)])
+@@ -101,3 +134,86 @@ def test_capacity_counts_restart_files_and_reuses_deleted_space(
+         assert sum(path.stat().st_size for path in _connector_files(tmp_path)) == 4
+     finally:
+         restarted.close()
++
++
++def _lookup(client: _FSClient, keys: list[str]) -> list[bool]:
++    """Return native existence results and update their LRU recency."""
++    completion = _wait_for_completion(client, client.submit_batch_exists(keys))
++    assert completion[1] is True
++    assert completion[3] is not None
++    return completion[3]
++
++
++def test_watermark_lru_evicts_to_target_and_preserves_recent_key(
++    tmp_path: Path,
++) -> None:
++    """Crossing 80% evicts oldest files until post-store usage is 60%."""
++    client = lmcache_fs.LMCacheFSClient(
++        str(tmp_path), 2, "", False, 0, 100, 0.8, 0.2
++    )
++    keys = [
++        "model@00000000@0@a1",
++        "model@00000000@0@b2",
++        "model@00000000@0@c3",
++    ]
++    payload = bytearray(b"x" * 30)
++    try:
++        assert _store(client, keys[0], payload)[1] is True
++        assert _store(client, keys[1], payload)[1] is True
++        assert _lookup(client, [keys[0]]) == [True]
++        client.release_keys([keys[0]])
++
++        assert _store(client, keys[2], payload)[1] is True
++        assert _lookup(client, keys) == [True, False, True]
++        assert client.get_current_size_bytes() == 60
++    finally:
++        client.close()
++
++
++def test_watermark_lru_accounts_and_evicts_orphan_tmp(tmp_path: Path) -> None:
++    """Abandoned temp bytes participate in both trigger and victim selection."""
++    orphan = tmp_path / "abandoned.tmp"
++    orphan.write_bytes(b"o" * 50)
++    client = lmcache_fs.LMCacheFSClient(
++        str(tmp_path), 2, "", False, 0, 100, 0.8, 0.2
++    )
++    try:
++        key = "model@00000000@0@d4"
++        assert _store(client, key, bytearray(b"n" * 40))[1] is True
++        assert not orphan.exists()
++        assert client.get_current_size_bytes() == 40
++        assert _lookup(client, [key]) == [True]
++    finally:
++        client.close()
++
++
++def test_concurrent_retrieve_and_eviction_never_returns_partial_data(
++    tmp_path: Path,
++) -> None:
++    """An active read is pinned while a store performs native eviction."""
++    client = lmcache_fs.LMCacheFSClient(
++        str(tmp_path), 3, "", False, 0, 100, 0.8, 0.2
++    )
++    first = "model@00000000@0@e5"
++    second = "model@00000000@0@f6"
++    third = "model@00000000@0@a7"
++    first_payload = bytearray(b"r" * 40)
++    try:
++        assert _store(client, first, first_payload)[1] is True
++        assert _store(client, second, bytearray(b"s" * 30))[1] is True
++        assert _lookup(client, [first]) == [True]
++
++        destination = bytearray(40)
++        third_payload = bytearray(b"t" * 20)
++        get_id = client.submit_batch_get([first], [memoryview(destination)])
++        set_id = client.submit_batch_set([third], [memoryview(third_payload)])
++        completions = _wait_for_completions(client, {get_id, set_id})
++        get_completion = completions[get_id]
++        set_completion = completions[set_id]
++        assert get_completion[3] == [True]
++        assert set_completion[1] is True
++        assert destination == first_payload
++        assert client.get_current_size_bytes() <= 60
++        client.release_keys([first])
++    finally:
++        client.close()
+diff --git a/tests/v1/distributed/test_l2_adapter_factory.py b/tests/v1/distributed/test_l2_adapter_factory.py
+index 0849feb..767eace 100644
+--- a/tests/v1/distributed/test_l2_adapter_factory.py
++++ b/tests/v1/distributed/test_l2_adapter_factory.py
+@@ -883,6 +883,8 @@ class _FakeLMCacheFSClient:
+         use_odirect=False,
+         read_ahead_size=0,
+         max_capacity_bytes=0,
++        trigger_watermark=0.0,
++        eviction_ratio=0.0,
+     ):
+         self.base_path = base_path
+         self.num_workers = num_workers
+@@ -890,6 +892,8 @@ class _FakeLMCacheFSClient:
+         self.use_odirect = use_odirect
+         self.read_ahead_size = read_ahead_size
+         self.max_capacity_bytes = max_capacity_bytes
++        self.trigger_watermark = trigger_watermark
++        self.eviction_ratio = eviction_ratio
+         self._efd = create_event_notifier()
+         self._closed = False
+ 

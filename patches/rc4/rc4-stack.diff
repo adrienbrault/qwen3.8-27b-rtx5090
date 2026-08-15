@@ -1,0 +1,1671 @@
+diff --color -ruN a/csrc/storage_backends/fs/connector.cpp b/csrc/storage_backends/fs/connector.cpp
+--- a/csrc/storage_backends/fs/connector.cpp	2026-08-15 06:06:15
++++ b/csrc/storage_backends/fs/connector.cpp	2026-08-15 17:48:41
+@@ -1,6 +1,7 @@
+ // SPDX-License-Identifier: Apache-2.0
+ 
+ #include "connector.h"
++#include <algorithm>
+ #include <cerrno>
+ #include <cstdint>
+ #include <cstdio>
+@@ -27,23 +28,11 @@
+ }
+ 
+ std::string FSConnector::key_to_filename(const std::string& key) {
+-  // Input key format (from _object_key_to_string):
+-  //   Unsalted: <model_name>@<kv_rank_hex>@<chunk_hash_hex>
+-  //   Salted  : <model_name>@<kv_rank_hex>@<chunk_hash_hex>@<cache_salt>
+-  //
+-  // Output filename (matching fs_l2_adapter.py._object_key_to_filename):
+-  //   Unsalted: <model_name_safe>@0x<kv_rank_hex>@<chunk_hash_hex>.data
+-  //   Salted  :
+-  //   <model_name_safe>@0x<kv_rank_hex>@<chunk_hash_hex>@<cache_salt>.data
+-  //
+-  // The unsalted 3-field shape is bit-identical to the pre-cache_salt
+-  // format, so existing cache directories remain valid.
+-  //
+-  // NOTE: both model_name and cache_salt are forbidden from containing
+-  // '@' (invariant enforced on the Python side), so splitting on '@'
+-  // is unambiguous — no marker, no rsplit.
+-
+-  // Split on '@' — must yield 3 (unsalted) or 4 (salted) fields.
++  // LMCache 0.5.3 wire format:
++  //   Unsalted: <model>@<rank_hex>@<object_group_hex>@<chunk_hash_hex>
++  //   Salted: the unsalted form plus @<cache_salt>.
++  // Output matches fs_l2_adapter.py, with escaped model slashes, a 0x rank
++  // prefix, and the .data suffix.
+   std::vector<std::string> parts;
+   size_t start = 0;
+   for (size_t pos = 0; pos <= key.size(); ++pos) {
+@@ -52,16 +41,17 @@
+       start = pos + 1;
+     }
+   }
+-  if (parts.size() != 3 && parts.size() != 4) {
++  if (parts.size() != 4 && parts.size() != 5) {
+     throw std::runtime_error(
+-        "FSConnector: malformed key (expected 3 or 4 '@'-separated fields): " +
++        "FSConnector: malformed key (expected 4 or 5 '@'-separated fields): " +
+         key);
+   }
+ 
+   const std::string& model_name = parts[0];
+   const std::string& kv_rank_hex = parts[1];
+-  const std::string& chunk_hash = parts[2];
+-  const std::string cache_salt = parts.size() == 4 ? parts[3] : std::string();
++  const std::string& object_group_hex = parts[2];
++  const std::string& chunk_hash = parts[3];
++  const std::string cache_salt = parts.size() == 5 ? parts[4] : std::string();
+ 
+   // Replace '/' with '-SEP-' for filesystem safety
+   std::string safe_model = replace_all(model_name, "/", PATH_SLASH_REPLACEMENT);
+@@ -69,13 +59,16 @@
+   // Emit filename. Salt is appended at the tail so the unsalted shape
+   // matches what older builds wrote to disk.
+   std::string result;
+-  result.reserve(safe_model.size() + kv_rank_hex.size() + chunk_hash.size() +
++  result.reserve(safe_model.size() + kv_rank_hex.size() +
++                 object_group_hex.size() + chunk_hash.size() +
+                  cache_salt.size() + 32);
+   result += safe_model;
+   result += KEY_SEP;
+   result += "0x";
+   result += kv_rank_hex;
+   result += KEY_SEP;
++  result += object_group_hex;
++  result += KEY_SEP;
+   result += chunk_hash;
+   if (!cache_salt.empty()) {
+     result += KEY_SEP;
+@@ -148,22 +141,58 @@
+ 
+ FSConnector::FSConnector(std::string base_path, int num_workers,
+                          std::string relative_tmp_dir, bool use_odirect,
+-                         size_t read_ahead_size)
++                         size_t read_ahead_size, size_t max_capacity_bytes,
++                         double trigger_watermark, double eviction_ratio)
+     : ConnectorBase(num_workers),
+       base_path_(std::move(base_path)),
+       relative_tmp_dir_(std::move(relative_tmp_dir)),
+       use_odirect_(use_odirect),
+       disk_block_size_(0),
+-      read_ahead_size_(read_ahead_size) {
+-  // Create base directory
+-  std::filesystem::create_directories(base_path_);
++      read_ahead_size_(read_ahead_size),
++      max_capacity_bytes_(max_capacity_bytes),
++      current_size_bytes_(0),
++      trigger_watermark_(trigger_watermark),
++      eviction_ratio_(eviction_ratio),
++      access_clock_(0) {
++  if (trigger_watermark_ < 0.0 || trigger_watermark_ > 1.0 ||
++      eviction_ratio_ < 0.0 || eviction_ratio_ > trigger_watermark_) {
++    throw std::runtime_error(
++        "FSConnector eviction requires 0 <= eviction_ratio <= "
++        "trigger_watermark <= 1");
++  }
++  if (trigger_watermark_ > 0.0 && max_capacity_bytes_ == 0) {
++    throw std::runtime_error(
++        "FSConnector eviction requires max_capacity_bytes > 0");
++  }
+ 
+-  // Create tmp directory if configured
++  std::filesystem::create_directories(base_path_);
+   if (!relative_tmp_dir_.empty()) {
+     auto tmp_path = std::filesystem::path(base_path_) / relative_tmp_dir_;
+     std::filesystem::create_directories(tmp_path);
+   }
+ 
++  // Account for both final data and abandoned temporary files. Sorting by
++  // mtime seeds a deterministic oldest-first order after a restart.
++  if (max_capacity_bytes_ > 0) {
++    std::vector<std::filesystem::directory_entry> entries;
++    for (const auto& entry :
++         std::filesystem::recursive_directory_iterator(base_path_)) {
++      if (!entry.is_regular_file()) continue;
++      const auto extension = entry.path().extension();
++      if (extension == FILE_EXT || extension == TMP_EXT) entries.push_back(entry);
++    }
++    std::sort(entries.begin(), entries.end(), [](const auto& lhs,
++                                                  const auto& rhs) {
++      return lhs.last_write_time() < rhs.last_write_time();
++    });
++    for (const auto& entry : entries) {
++      const size_t size = entry.file_size();
++      current_size_bytes_ += size;
++      file_records_[entry.path().string()] = {size, ++access_clock_};
++    }
++    if (trigger_watermark_ > 0.0) evict_for_reservation_locked(0);
++  }
++
+   // Query disk block size for O_DIRECT
+   if (use_odirect_) {
+     struct statvfs st;
+@@ -177,6 +206,112 @@
+ 
+ FSConnector::~FSConnector() { close(); }
+ 
++size_t FSConnector::get_current_size_bytes() {
++  std::lock_guard<std::mutex> lock(capacity_mu_);
++  return current_size_bytes_;
++}
++
++void FSConnector::release_keys(const std::vector<std::string>& keys) {
++  if (max_capacity_bytes_ == 0) return;
++  std::lock_guard<std::mutex> lock(capacity_mu_);
++  for (const auto& key : keys) {
++    const auto path = std::filesystem::path(base_path_) / key_to_filename(key);
++    auto it = pinned_files_.find(path.string());
++    if (it == pinned_files_.end()) continue;
++    if (it->second <= 1) {
++      pinned_files_.erase(it);
++    } else {
++      --it->second;
++    }
++  }
++}
++
++void FSConnector::track_existing_file_locked(
++    const std::filesystem::path& path) {
++  const std::string path_string = path.string();
++  if (file_records_.find(path_string) != file_records_.end()) return;
++  std::error_code ec;
++  const size_t size = std::filesystem::file_size(path, ec);
++  if (ec) return;
++  current_size_bytes_ += size;
++  file_records_[path_string] = {size, ++access_clock_};
++}
++
++void FSConnector::touch_file_locked(const std::filesystem::path& path) {
++  auto it = file_records_.find(path.string());
++  if (it != file_records_.end()) it->second.last_access = ++access_clock_;
++}
++
++bool FSConnector::remove_accounted_file_locked(
++    const std::filesystem::path& path) {
++  const std::string path_string = path.string();
++  if (pending_files_.find(path_string) != pending_files_.end() ||
++      pinned_files_.find(path_string) != pinned_files_.end()) {
++    return false;
++  }
++  auto record = file_records_.find(path_string);
++  std::error_code ec;
++  const bool removed = std::filesystem::remove(path, ec);
++  if (ec) {
++    throw std::runtime_error("remove failed: " + path_string + ": " +
++                             ec.message());
++  }
++  if (record != file_records_.end()) {
++    const size_t size = record->second.size_bytes;
++    current_size_bytes_ =
++        size > current_size_bytes_ ? 0 : current_size_bytes_ - size;
++    file_records_.erase(record);
++  }
++  return removed;
++}
++
++void FSConnector::evict_for_reservation_locked(size_t incoming_bytes) {
++  if (max_capacity_bytes_ == 0 || trigger_watermark_ <= 0.0) return;
++  const size_t trigger_bytes = static_cast<size_t>(
++      static_cast<double>(max_capacity_bytes_) * trigger_watermark_);
++  const size_t projected =
++      incoming_bytes > SIZE_MAX - current_size_bytes_
++          ? SIZE_MAX
++          : current_size_bytes_ + incoming_bytes;
++  if (projected < trigger_bytes) return;
++
++  const double target_fraction =
++      std::max(0.0, trigger_watermark_ - eviction_ratio_);
++  const size_t target_after_reservation = static_cast<size_t>(
++      static_cast<double>(max_capacity_bytes_) * target_fraction);
++  const size_t target_existing = target_after_reservation > incoming_bytes
++                                     ? target_after_reservation - incoming_bytes
++                                     : 0;
++  while (current_size_bytes_ > target_existing) {
++    auto victim = file_records_.end();
++    for (auto it = file_records_.begin(); it != file_records_.end(); ++it) {
++      if (pending_files_.find(it->first) != pending_files_.end() ||
++          pinned_files_.find(it->first) != pinned_files_.end()) {
++        continue;
++      }
++      if (victim == file_records_.end() ||
++          it->second.last_access < victim->second.last_access) {
++        victim = it;
++      }
++    }
++    if (victim == file_records_.end()) break;
++    const std::filesystem::path victim_path(victim->first);
++    remove_accounted_file_locked(victim_path);
++  }
++}
++
++void FSConnector::release_reader(const std::filesystem::path& path) {
++  if (max_capacity_bytes_ == 0) return;
++  std::lock_guard<std::mutex> lock(capacity_mu_);
++  auto it = pinned_files_.find(path.string());
++  if (it == pinned_files_.end()) return;
++  if (it->second <= 1) {
++    pinned_files_.erase(it);
++  } else {
++    --it->second;
++  }
++}
++
+ WorkerFSConn FSConnector::create_connection() {
+   WorkerFSConn conn;
+   conn.base_path = base_path_;
+@@ -191,8 +326,19 @@
+ 
+ void FSConnector::do_single_get(WorkerFSConn& conn, const std::string& key,
+                                 void* buf, size_t len, size_t chunk_size) {
++  (void)chunk_size;
+   std::string filename = key_to_filename(key);
+   auto file_path = conn.base_path / filename;
++  bool reader_registered = false;
++  if (max_capacity_bytes_ > 0) {
++    std::lock_guard<std::mutex> lock(capacity_mu_);
++    track_existing_file_locked(file_path);
++    if (file_records_.find(file_path.string()) != file_records_.end()) {
++      ++pinned_files_[file_path.string()];
++      touch_file_locked(file_path);
++      reader_registered = true;
++    }
++  }
+ 
+   int flags = O_RDONLY;
+   bool do_odirect = conn.use_odirect &&
+@@ -200,6 +346,7 @@
+ 
+   int fd = ::open(file_path.c_str(), flags);
+   if (fd < 0) {
++    if (reader_registered) release_reader(file_path);
+     throw std::runtime_error("open for read failed: " + file_path.string() +
+                              ": " + strerror(errno));
+   }
+@@ -231,23 +378,19 @@
+     }
+   } catch (...) {
+     ::close(fd);
++    if (reader_registered) release_reader(file_path);
+     throw;
+   }
+   ::close(fd);
++  if (reader_registered) release_reader(file_path);
+ }
+ 
+ void FSConnector::do_single_set(WorkerFSConn& conn, const std::string& key,
+                                 const void* buf, size_t len,
+                                 size_t chunk_size) {
++  (void)chunk_size;
+   std::string filename = key_to_filename(key);
+   auto file_path = conn.base_path / filename;
+-
+-  // Skip if already stored on disk
+-  if (std::filesystem::exists(file_path)) {
+-    return;
+-  }
+-
+-  // Determine temp file path
+   std::filesystem::path tmp_path;
+   if (!conn.tmp_dir.empty()) {
+     tmp_path = conn.tmp_dir / filename;
+@@ -256,6 +399,35 @@
+     tmp_path.replace_extension(TMP_EXT);
+   }
+ 
++  bool capacity_reserved = false;
++  if (max_capacity_bytes_ > 0) {
++    std::lock_guard<std::mutex> lock(capacity_mu_);
++    track_existing_file_locked(file_path);
++    if (file_records_.find(file_path.string()) != file_records_.end() ||
++        pending_files_.find(file_path.string()) != pending_files_.end()) {
++      touch_file_locked(file_path);
++      return;
++    }
++    // A restart can leave the exact temporary pathname this write will use.
++    // Remove its accounted bytes before reserving the replacement.
++    track_existing_file_locked(tmp_path);
++    remove_accounted_file_locked(tmp_path);
++    evict_for_reservation_locked(len);
++    if (current_size_bytes_ > max_capacity_bytes_ ||
++        len > max_capacity_bytes_ - current_size_bytes_) {
++      throw std::runtime_error(
++          "FSConnector capacity exceeded after eviction: current=" +
++          std::to_string(current_size_bytes_) + ", requested=" +
++          std::to_string(len) + ", max=" +
++          std::to_string(max_capacity_bytes_));
++    }
++    current_size_bytes_ += len;
++    pending_files_.insert(file_path.string());
++    capacity_reserved = true;
++  } else if (std::filesystem::exists(file_path)) {
++    return;
++  }
++
+   int flags = O_CREAT | O_WRONLY | O_TRUNC;
+   if (conn.use_odirect) {
+     try_enable_odirect(flags, buf, len, conn.disk_block_size);
+@@ -263,6 +435,11 @@
+ 
+   int fd = ::open(tmp_path.c_str(), flags, 0644);
+   if (fd < 0) {
++    if (capacity_reserved) {
++      std::lock_guard<std::mutex> lock(capacity_mu_);
++      current_size_bytes_ -= len;
++      pending_files_.erase(file_path.string());
++    }
+     throw std::runtime_error("open for write failed: " + tmp_path.string() +
+                              ": " + strerror(errno));
+   }
+@@ -271,35 +448,68 @@
+     write_all(fd, buf, len);
+   } catch (...) {
+     ::close(fd);
+-    // Clean up temp file on failure
+-    std::filesystem::remove(tmp_path);
++    std::error_code remove_ec;
++    std::filesystem::remove(tmp_path, remove_ec);
++    if (capacity_reserved) {
++      std::lock_guard<std::mutex> lock(capacity_mu_);
++      current_size_bytes_ -= len;
++      pending_files_.erase(file_path.string());
++    }
+     throw;
+   }
+   ::close(fd);
+ 
+-  // Atomic rename: tmp -> final
+   std::error_code ec;
+   std::filesystem::rename(tmp_path, file_path, ec);
+   if (ec) {
+-    // Try to clean up, but prioritize reporting the original error.
+     std::error_code remove_ec;
+     std::filesystem::remove(tmp_path, remove_ec);
++    if (capacity_reserved) {
++      std::lock_guard<std::mutex> lock(capacity_mu_);
++      current_size_bytes_ -= len;
++      pending_files_.erase(file_path.string());
++    }
+     throw std::runtime_error("rename failed: " + tmp_path.string() + " -> " +
+                              file_path.string() + ": " + ec.message());
+   }
++  if (capacity_reserved) {
++    std::lock_guard<std::mutex> lock(capacity_mu_);
++    pending_files_.erase(file_path.string());
++    file_records_[file_path.string()] = {len, ++access_clock_};
++  }
+ }
+ 
+ bool FSConnector::do_single_exists(WorkerFSConn& conn, const std::string& key) {
+   std::string filename = key_to_filename(key);
+   auto file_path = conn.base_path / filename;
+-  return std::filesystem::exists(file_path);
++  if (max_capacity_bytes_ == 0) return std::filesystem::exists(file_path);
++
++  std::lock_guard<std::mutex> lock(capacity_mu_);
++  track_existing_file_locked(file_path);
++  const bool exists = file_records_.find(file_path.string()) != file_records_.end();
++  if (exists) {
++    touch_file_locked(file_path);
++    ++pinned_files_[file_path.string()];
++  }
++  return exists;
+ }
+ 
+ bool FSConnector::do_single_delete(WorkerFSConn& conn, const std::string& key) {
+   std::string filename = key_to_filename(key);
+   auto file_path = conn.base_path / filename;
+-  std::error_code ec;
+-  return std::filesystem::remove(file_path, ec);
++  if (max_capacity_bytes_ == 0) {
++    std::error_code ec;
++    const bool removed = std::filesystem::remove(file_path, ec);
++    if (ec) {
++      throw std::runtime_error("remove failed: " + file_path.string() + ": " +
++                               ec.message());
++    }
++    return removed;
++  }
++
++  std::lock_guard<std::mutex> lock(capacity_mu_);
++  track_existing_file_locked(file_path);
++  return remove_accounted_file_locked(file_path);
+ }
+ 
+ }  // namespace connector
+diff --color -ruN a/csrc/storage_backends/fs/connector.h b/csrc/storage_backends/fs/connector.h
+--- a/csrc/storage_backends/fs/connector.h	2026-08-15 06:06:15
++++ b/csrc/storage_backends/fs/connector.h	2026-08-15 17:48:41
+@@ -6,9 +6,13 @@
+ #include <sys/stat.h>
+ #include <sys/statvfs.h>
+ #include <unistd.h>
++#include <cstdint>
+ #include <cstring>
+ #include <filesystem>
++#include <mutex>
+ #include <string>
++#include <unordered_map>
++#include <unordered_set>
+ #include <vector>
+ 
+ namespace lmcache {
+@@ -36,9 +40,13 @@
+  public:
+   FSConnector(std::string base_path, int num_workers,
+               std::string relative_tmp_dir = "", bool use_odirect = false,
+-              size_t read_ahead_size = 0);
++              size_t read_ahead_size = 0, size_t max_capacity_bytes = 0,
++              double trigger_watermark = 0.0, double eviction_ratio = 0.0);
+   ~FSConnector() override;
+ 
++  size_t get_current_size_bytes();
++  void release_keys(const std::vector<std::string>& keys);
++
+  protected:
+   WorkerFSConn create_connection() override;
+   void do_single_get(WorkerFSConn& conn, const std::string& key, void* buf,
+@@ -49,31 +57,42 @@
+   bool do_single_delete(WorkerFSConn& conn, const std::string& key) override;
+ 
+  private:
+-  // Build the filesystem-safe filename from a serialized key string.
+-  //
+-  // Input key (from NativeConnectorL2Adapter._object_key_to_string):
+-  //   Unsalted: "{model}@{kv_rank:08x}@{hash.hex()}"
+-  //   Salted  : "{model}@{kv_rank:08x}@{hash.hex()}@{cache_salt}"
+-  //
+-  // Output filename (matching fs_l2_adapter.py._object_key_to_filename):
+-  //   Unsalted: "{safe_model}@{kv_rank:#010x}@{hash.hex()}.data"
+-  //   Salted  : "{safe_model}@{kv_rank:#010x}@{hash.hex()}@{cache_salt}.data"
+-  //
+-  // Differences from the input: '/' in model becomes '-SEP-', kv_rank
+-  // gains a '0x' prefix, and '.data' is appended. Both model_name and
+-  // cache_salt are forbidden from containing '@' (enforced on the
+-  // Python side), so the parse is unambiguous.
++  // Build the filesystem-safe filename from LMCache 0.5.3's serialized key:
++  //   Unsalted: "{model}@{rank:08x}@{object_group:x}@{hash.hex()}"
++  //   Salted: the unsalted form plus "@{cache_salt}".
++  // Output matches fs_l2_adapter.py: model slashes are escaped, rank gains a
++  // "0x" prefix, and ".data" is appended.
+   static std::string key_to_filename(const std::string& key);
+ 
+   static std::string replace_all(const std::string& str,
+                                  const std::string& from,
+                                  const std::string& to);
+ 
++  struct FileRecord {
++    size_t size_bytes;
++    uint64_t last_access;
++  };
++
++  void track_existing_file_locked(const std::filesystem::path& path);
++  void touch_file_locked(const std::filesystem::path& path);
++  bool remove_accounted_file_locked(const std::filesystem::path& path);
++  void evict_for_reservation_locked(size_t incoming_bytes);
++  void release_reader(const std::filesystem::path& path);
++
+   std::string base_path_;
+   std::string relative_tmp_dir_;
+   bool use_odirect_;
+   size_t disk_block_size_;
+   size_t read_ahead_size_;
++  size_t max_capacity_bytes_;
++  size_t current_size_bytes_;
++  double trigger_watermark_;
++  double eviction_ratio_;
++  uint64_t access_clock_;
++  std::mutex capacity_mu_;
++  std::unordered_map<std::string, FileRecord> file_records_;
++  std::unordered_map<std::string, size_t> pinned_files_;
++  std::unordered_set<std::string> pending_files_;
+ };
+ 
+ }  // namespace connector
+diff --color -ruN a/csrc/storage_backends/fs/pybind.cpp b/csrc/storage_backends/fs/pybind.cpp
+--- a/csrc/storage_backends/fs/pybind.cpp	2026-08-15 06:06:15
++++ b/csrc/storage_backends/fs/pybind.cpp	2026-08-15 17:48:41
+@@ -7,9 +7,18 @@
+ 
+ PYBIND11_MODULE(lmcache_fs, m) {
+   py::class_<lmcache::connector::FSConnector>(m, "LMCacheFSClient")
+-      .def(py::init<std::string, int, std::string, bool, size_t>(),
++      .def(py::init<std::string, int, std::string, bool, size_t, size_t, double,
++                    double>(),
+            py::arg("base_path"), py::arg("num_workers"),
+            py::arg("relative_tmp_dir") = "", py::arg("use_odirect") = false,
+-           py::arg("read_ahead_size") = 0)
++           py::arg("read_ahead_size") = 0,
++           py::arg("max_capacity_bytes") = 0,
++           py::arg("trigger_watermark") = 0.0,
++           py::arg("eviction_ratio") = 0.0)
++      .def("get_current_size_bytes",
++           &lmcache::connector::FSConnector::get_current_size_bytes,
++           py::call_guard<py::gil_scoped_release>())
++      .def("release_keys", &lmcache::connector::FSConnector::release_keys,
++           py::call_guard<py::gil_scoped_release>())
+           LMCACHE_BIND_CONNECTOR_METHODS(lmcache::connector::FSConnector);
+ }
+diff --color -ruN a/docs/design/integration/vllm/kv_cache_group_edits.md b/docs/design/integration/vllm/kv_cache_group_edits.md
+--- a/docs/design/integration/vllm/kv_cache_group_edits.md	2026-08-15 06:06:15
++++ b/docs/design/integration/vllm/kv_cache_group_edits.md	2026-08-15 17:48:41
+@@ -52,21 +52,43 @@
+ *logical* block size (`vllm/platforms/interface.py:_align_hybrid_block_size`;
+ Qwen3.5-0.8B: 544), while the attention backend re-pages the physical tensor
+ at its own *kernel* block size (`vllm/v1/worker/utils.py:
+-prepare_kernel_block_sizes`; FlashAttention on hybrids: 32). Logical block `n`
+-then occupies the `k = logical/kernel` contiguous kernel pages
++prepare_kernel_block_sizes`; examples include FlashAttention 32 and
++blocks-first fp8 16). Logical block `n` then occupies the
++`k = logical/kernel` contiguous kernel pages
+ `n*k .. n*k+k-1` (vLLM expands the worker-side block table the same way,
+ `BlockTable.map_to_kernel_blocks`); the scheduler-side block IDs LMCache
+ receives stay logical.
+ 
+ Registering the raw kernel-paged tensor makes LMCache discover
+-`block_size == kernel < logical`, and `_derive_compression_metadata`
+-(`lmcache/v1/kv_layer_groups.py`) misclassifies the group as compressed:
++`block_size == kernel < logical`, and the compression metadata in
++`lmcache/v1/kv_layer_groups.py` misclassifies the group as compressed:
+ only `1/k` of each chunk's KV is transferred, addressed against the kernel
+-page space. The edit re-views the tensor as
+-`(num_kernel_pages / k, 2, logical_block_size, 1, head_size)` — a pure
+-`view()`, valid because `k` kernel pages tile each logical page's bytes
+-exactly (enforced; see Invariants).
++page space. The edit re-views a split-K/V tensor as
++`(num_kernel_pages / k, 2, logical_block_size, 1, head_size)`. Blocks-first
++fused-K/V tensors are rank 4 (`[NB, BS, NH, 2*HS]` for NHD or
++`[NB, NH, BS, 2*HS]` for HND); the edit identifies their kernel-block axis by
++exact page-byte accounting, expands that axis to `logical_block_size`, and
++preserves the real head and packed-head axes for format detection. Both are
++pure tensor views, valid because `k` kernel pages tile each logical page's
++bytes exactly (enforced; see Invariants).
+ 
++The fused fp8 GPU layout can arrive as a non-contiguous HND-shaped view over
++dense NHD storage. For example, the 16-token, four-head, packed-head-size-512
++kernel page is exposed as shape `[NB, 4, 16, 512]`, stride
++`[32768, 512, 2048, 1]`. The tensor is non-contiguous only because the two
++middle dimensions are permuted: every page is dense and `stride(0) == 32768`
++puts pages directly next to each other. The edit regroups these pages with
++`as_strided`, multiplying the page stride by `k` and expanding the token axis.
++It rejects padding, overlap, or a kernel-token axis that is not the outer
++physical axis within each page. Because format detection next normalizes this
++HND-shaped view to its physical NHD axes, the edit also changes the mutable
++`kv_layout` hint to `NHD`. Rank-5 split-K/V keeps its original contiguous
++`view()` path.
++
++If the backend already registers scheduler-sized pages (kernel block size
++equals logical block size), the rule does not match and the tensor is left
++unchanged.
++
+ ## Startup validation
+ 
+ `validate_kv_cache_groups` (called at connector init and again at
+@@ -109,8 +131,11 @@
+ The named dims are **not** semantic: a Mamba view's "K plane" is conv/ssm
+ bytes, and a sub-paged attention view's "K plane" interleaves true K and V at
+ kernel-page granularity (true K is not contiguous across kernel pages, so no
+-logical-block view can have a pure-K plane). The synthetic head shape
+-`(1, page_bytes / (2 * block_size * elem))` signals this deliberately.
++logical-block view can have a pure-K plane). Split-K/V uses the synthetic head
++shape `(1, page_bytes / (2 * block_size * elem))` to signal this deliberately.
++Fused-K/V preserves its real head geometry because its rank-4 shape must remain
++classifiable as packed K/V after the edit; its logical-page view is still byte
++opaque when it combines multiple physical kernel pages.
+ 
+ Byte transport round-trips correctly because store and retrieve share the same
+ bijective block-id → bytes mapping. Consequences:
+@@ -129,6 +154,11 @@
+ - A sub-paged view is only produced when `kernel_page_bytes * k ==
+   spec.page_size_bytes`; any mismatch raises `ValueError` (fail loudly rather
+   than silently transfer a compressed layout).
++- A strided rank-4 fused page must be a dense inner-axis permutation, have
++  `stride(0) == elements_per_kernel_page`, and satisfy
++  `stride(kernel_block_axis) * kernel_block_size == stride(0)`. These prove
++  that `as_strided` covers exactly `k` adjacent pages without overlap or
++  padding.
+ - After edits, every registered tensor's block dim equals its group's
+   `kv_cache_spec.block_size`, so the server derives `compress_ratio == 1` for
+   these groups.
+diff --color -ruN a/docs/design/v1/distributed/l2_adapters/l2_eviction.md b/docs/design/v1/distributed/l2_adapters/l2_eviction.md
+--- a/docs/design/v1/distributed/l2_adapters/l2_eviction.md	2026-08-15 06:06:15
++++ b/docs/design/v1/distributed/l2_adapters/l2_eviction.md	2026-08-15 17:48:41
+@@ -221,6 +221,16 @@
+    degrades to a miss (the load path treats the missing file as not-found); a
+    racing store may re-create the key, which a later cycle re-picks.
+ 
++For the built-in `fs_native` connector, `max_capacity_gb` is also a hard write
++admission limit. The connector scans existing `.data` and `.tmp` files on
++startup and atomically reserves bytes across store workers. With an LRU
++`eviction` object, the native connector triggers on projected usage at
++`trigger_watermark` and evicts to `trigger_watermark - eviction_ratio` before
++reserving the new write. Its single mutex protects capacity, LRU metadata,
++in-flight reservations, and reader pins; opened retrieves cannot be evicted.
++Abandoned `.tmp` files are counted and are eligible LRU victims. Other eviction
++policies keep using the shared Python controller.
++
+ Example configuration with eviction enabled:
+ 
+ ```json
+diff --color -ruN a/lmcache/integration/vllm/kv_cache_group_edits.py b/lmcache/integration/vllm/kv_cache_group_edits.py
+--- a/lmcache/integration/vllm/kv_cache_group_edits.py	2026-08-15 06:06:15
++++ b/lmcache/integration/vllm/kv_cache_group_edits.py	2026-08-15 17:48:41
+@@ -269,12 +269,18 @@
+     For a Mamba-hybrid model vLLM inflates the attention block size to align
+     with the Mamba page (e.g. 544 for Qwen3.5-0.8B), and that size is used for
+     all prefix-caching logic at the scheduler. But at the worker the attention
+-    kernel has to run at block size 32 for numerical stability (vLLM #27753,
+-    working around the NaN-propagation issue
+-    Dao-AILab/flash-attention#1974), so the registered tensor is paged as
++    kernel can run at a smaller block size -- 32 for the FlashAttention
++    numerical-stability workaround (vLLM #27753 /
++    Dao-AILab/flash-attention#1974), or 16 for a blocks-first fp8 backend -- so
++    the registered tensor is paged as, for example,
+ 
+         ``[#blocks, 2, 32, #heads, head_size]``
+ 
++    or, for vLLM's blocks-first fused-K/V backends, as one of
++
++        ``[#blocks, 32, #heads, 2 * head_size]`` (NHD)
++        ``[#blocks, #heads, 32, 2 * head_size]`` (HND).
++
+     which makes LMCache detect block size 32, mistake the group for a
+     DeepSeek-compression layer (``block size < scheduler block size``), and
+     corrupt the store/retrieve. Fix: re-view the tensor at the scheduler
+@@ -282,6 +288,11 @@
+ 
+         ``[#blocks / 17, 2, 544, 1, head_size']``
+ 
++    for split K/V, or preserves the non-block axes and expands the kernel-block
++    axis to 544 for fused K/V. Fused tensors must retain their real head count
++    and packed head size so format detection can still validate and classify
++    them after this edit.
++
+     Cost: before this fix ``kv_caches[:, 0]`` is just the K tensor; after, it
+     interleaves K and V at kernel-page granularity. The bytes round-trip
+     correctly (store and retrieve share the mapping), but the dims are no
+@@ -296,19 +307,24 @@
+             # compression (DeepSeek) belong to other transfer paths.
+             get_kv_cache_spec_kind(spec) in _SUBPAGEABLE_ATTENTION_KINDS
+             and not _declares_slot_compression(spec)
+-            # (num_blocks, 2, block_size, num_heads, head_size) layout whose
+-            # block dim disagrees with the scheduler block-id unit -- the
+-            # backend re-paged the tensor at its kernel block size.
++            # Split K/V is rank 5 and fused K/V is rank 4. In both cases the
++            # physical kernel block dimension disagrees with the scheduler
++            # block-id unit because the backend re-paged the tensor.
+             and isinstance(kv_cache, torch.Tensor)
+-            and kv_cache.ndim == 5
+-            and kv_cache.shape[2] != spec.block_size
++            and (
++                (kv_cache.ndim == 5 and kv_cache.shape[2] != spec.block_size)
++                or (
++                    kv_cache.ndim == 4
++                    and bool(self._rank4_kernel_block_axes(spec, kv_cache))
++                )
++            )
+         )
+ 
+     def apply(
+         self,
+         spec: KVCacheSpec,
+         kv_cache: RegisteredKVCache,
+-        _layout_hints: LayoutHints,
++        layout_hints: LayoutHints,
+     ) -> torch.Tensor:
+         """Re-view ``kv_cache`` at logical-block granularity.
+ 
+@@ -323,18 +339,45 @@
+                 logical block do not tile its page bytes exactly (which would
+                 indicate an undeclared packed layout that must not be edited).
+         """
+-        if not isinstance(kv_cache, torch.Tensor) or kv_cache.shape[1] != 2:
++        if not isinstance(kv_cache, torch.Tensor) or kv_cache.ndim not in (4, 5):
+             got = (
+                 tuple(kv_cache.shape)
+                 if isinstance(kv_cache, torch.Tensor)
+                 else type(kv_cache).__name__
+             )
+             raise ValueError(
+-                f"expected a (num_blocks, 2, block_size, num_heads, head_size) "
+-                f"attention KV tensor, got {got}"
++                "expected a rank-5 split-K/V or rank-4 fused-K/V attention "
++                f"tensor, got {got}"
+             )
+         logical_block_size = spec.block_size
+-        kernel_block_size = kv_cache.shape[2]
++        kernel_page_bytes = kv_cache.shape[1:].numel() * kv_cache.element_size()
++
++        if kv_cache.ndim == 5:
++            if kv_cache.shape[1] != 2:
++                raise ValueError(
++                    "expected split-K/V attention shape "
++                    "(num_blocks, 2, block_size, num_heads, head_size), got "
++                    f"{tuple(kv_cache.shape)}"
++                )
++            kernel_block_axis = 2
++        else:
++            # Rank-4 fused K/V is either [NB, BS, NH, 2*HS] (NHD) or
++            # [NB, NH, BS, 2*HS] (HND). Shape alone cannot name the two middle
++            # axes, but exactly one can be the kernel block size whose pages
++            # tile spec.page_size_bytes. This also avoids model/backend names.
++            candidate_axes = self._rank4_kernel_block_axes(spec, kv_cache)
++            if len(candidate_axes) != 1:
++                raise ValueError(
++                    "rank-4 fused-K/V attention tensor must have exactly one "
++                    "middle axis whose kernel pages tile the logical page; got "
++                    f"shape={tuple(kv_cache.shape)}, "
++                    f"logical_block_size={logical_block_size}, "
++                    f"page_size_bytes={spec.page_size_bytes}, "
++                    f"candidate_axes={candidate_axes}"
++                )
++            kernel_block_axis = candidate_axes[0]
++
++        kernel_block_size = kv_cache.shape[kernel_block_axis]
+         if logical_block_size % kernel_block_size != 0:
+             raise ValueError(
+                 f"logical block size {logical_block_size} is not a multiple of "
+@@ -348,24 +391,117 @@
+                 f"kernel page count {num_kernel_pages} is not a multiple of "
+                 f"the logical/kernel block ratio {ratio}"
+             )
+-        kernel_page_bytes = kv_cache.shape[1:].numel() * kv_cache.element_size()
+         if kernel_page_bytes * ratio != spec.page_size_bytes:
+             raise ValueError(
+                 f"{ratio} kernel pages ({kernel_page_bytes * ratio} bytes) do "
+                 f"not tile the logical page ({spec.page_size_bytes} bytes)"
+             )
++        num_blocks = num_kernel_pages // ratio
++        if kv_cache.ndim == 4:
++            logical_shape = list(kv_cache.shape)
++            logical_shape[0] = num_blocks
++            logical_shape[kernel_block_axis] = logical_block_size
++            if kv_cache.is_contiguous():
++                return kv_cache.view(*logical_shape)
++            return self._rank4_strided_logical_page_view(
++                kv_cache,
++                logical_shape,
++                kernel_block_axis,
++                ratio,
++                layout_hints,
++            )
++
++        # Preserve the original rank-5 behavior: its synthetic K/V-plane view
++        # relies on the complete tensor being contiguous.
+         if not kv_cache.is_contiguous():
+             raise ValueError(
+                 "kernel-paged attention KV tensor must be contiguous to "
+                 "re-view as logical pages"
+             )
+ 
+-        num_blocks = num_kernel_pages // ratio
+         elems_per_page = spec.page_size_bytes // kv_cache.element_size()
+         num_heads, head_size = _synthetic_attention_shape(
+             elems_per_page, logical_block_size
+         )
+         return kv_cache.view(num_blocks, 2, logical_block_size, num_heads, head_size)
++
++    @staticmethod
++    def _rank4_kernel_block_axes(
++        spec: KVCacheSpec, kv_cache: torch.Tensor
++    ) -> list[int]:
++        """Return middle axes that exactly map kernel pages to a logical page."""
++        logical_block_size = spec.block_size
++        kernel_page_bytes = kv_cache.shape[1:].numel() * kv_cache.element_size()
++        return [
++            axis
++            for axis in (1, 2)
++            if kv_cache.shape[axis] != logical_block_size
++            and logical_block_size % kv_cache.shape[axis] == 0
++            and kernel_page_bytes * (logical_block_size // kv_cache.shape[axis])
++            == spec.page_size_bytes
++        ]
++
++    @staticmethod
++    def _rank4_strided_logical_page_view(
++        kv_cache: torch.Tensor,
++        logical_shape: list[int],
++        kernel_block_axis: int,
++        ratio: int,
++        layout_hints: LayoutHints,
++    ) -> torch.Tensor:
++        """Regroup adjacent dense-NHD kernel pages without copying."""
++        shape = tuple(kv_cache.shape)
++        stride = tuple(kv_cache.stride())
++        kernel_page_elems = kv_cache.shape[1:].numel()
++
++        # A middle-axis permutation is harmless, but padding, overlap, and
++        # broadcast strides are not: they would make a logical block span
++        # bytes outside its ratio consecutive kernel pages.
++        expected_inner_stride = 1
++        for axis in sorted(range(1, kv_cache.ndim), key=stride.__getitem__):
++            if shape[axis] == 1:
++                continue
++            if stride[axis] != expected_inner_stride:
++                raise ValueError(
++                    "strided fused-K/V kernel page must be a dense permutation; "
++                    f"shape={shape}, stride={stride}, axis={axis}, "
++                    f"expected_stride={expected_inner_stride}"
++                )
++            expected_inner_stride *= shape[axis]
++        if expected_inner_stride != kernel_page_elems:
++            raise ValueError(
++                "strided fused-K/V kernel page does not cover exactly its "
++                f"elements; shape={shape}, stride={stride}, "
++                f"covered={expected_inner_stride}, expected={kernel_page_elems}"
++            )
++        if stride[0] != kernel_page_elems:
++            raise ValueError(
++                "strided fused-K/V kernel pages must be physically adjacent; "
++                f"shape={shape}, stride={stride}, page_elems={kernel_page_elems}"
++            )
++
++        kernel_block_size = shape[kernel_block_axis]
++        if stride[kernel_block_axis] * kernel_block_size != stride[0]:
++            raise ValueError(
++                "strided fused-K/V kernel-block axis must be the outer physical "
++                "axis within each page to regroup it directly; "
++                f"shape={shape}, stride={stride}, "
++                f"kernel_block_axis={kernel_block_axis}"
++            )
++
++        # The validated token-axis stride proves the physical page is NHD even
++        # when vLLM exposes an HND-shaped permute. Format detection normalizes
++        # that permute next, so keep its shared mutable hint consistent with
++        # the normalized physical axes.
++        layout_hints["kv_layout"] = "NHD"
++
++        logical_stride = list(stride)
++        logical_stride[0] *= ratio
++        return kv_cache.as_strided(
++            logical_shape,
++            logical_stride,
++            storage_offset=kv_cache.storage_offset(),
++        )
+ 
+ 
+ ######################
+diff --color -ruN a/lmcache/v1/distributed/l2_adapters/base.py b/lmcache/v1/distributed/l2_adapters/base.py
+--- a/lmcache/v1/distributed/l2_adapters/base.py	2026-08-15 06:06:15
++++ b/lmcache/v1/distributed/l2_adapters/base.py	2026-08-15 17:48:41
+@@ -494,6 +494,11 @@
+     #####################
+ 
+     @property
++    def manages_global_eviction_natively(self) -> bool:
++        """Whether the backend owns global watermark eviction itself."""
++        return False
++
++    @property
+     def supports_global_eviction(self) -> bool:
+         """Whether this adapter supports **aggregate** (global) usage-driven
+         eviction.
+diff --color -ruN a/lmcache/v1/distributed/l2_adapters/fs_native_l2_adapter.py b/lmcache/v1/distributed/l2_adapters/fs_native_l2_adapter.py
+--- a/lmcache/v1/distributed/l2_adapters/fs_native_l2_adapter.py	2026-08-15 06:06:15
++++ b/lmcache/v1/distributed/l2_adapters/fs_native_l2_adapter.py	2026-08-15 17:48:41
+@@ -45,6 +45,7 @@
+     - use_odirect: bypass page cache via O_DIRECT.
+     - read_ahead_size: trigger filesystem readahead by
+       reading this many bytes first (optional).
++    - max_capacity_gb: hard maximum for connector-owned files; zero disables it.
+     """
+ 
+     def __init__(
+@@ -115,7 +116,7 @@
+             "readahead by reading this many bytes "
+             "first (optional)\n"
+             "- max_capacity_gb (float): max L2 capacity "
+-            "in GB for usage tracking / eviction "
++            "in GiB; native stores are rejected at the cap "
+             "(default 0 = disabled)"
+         )
+ 
+@@ -144,20 +145,38 @@
+     )
+ 
+     assert isinstance(config, FSNativeL2AdapterConfig)
++    eviction_config = config.eviction_config
++    native_lru = (
++        eviction_config is not None
++        and eviction_config.eviction_policy == "LRU"
++    )
++    trigger_watermark = eviction_config.trigger_watermark if native_lru else 0.0
++    eviction_ratio = eviction_config.eviction_ratio if native_lru else 0.0
+     native_client = LMCacheFSClient(
+         config.base_path,
+         config.num_workers,
+         config.relative_tmp_dir,
+         config.use_odirect,
+         config.read_ahead_size or 0,
++        int(config.max_capacity_gb * (1024**3)),
++        trigger_watermark,
++        eviction_ratio,
+     )
+     logger.info(
+-        "Created FS native L2 adapter: %s (workers=%d, odirect=%s, read_ahead=%s)",
++        "Created FS native L2 adapter: %s (workers=%d, odirect=%s, "
++        "read_ahead=%s, max_capacity_gb=%s)",
+         config.base_path,
+         config.num_workers,
+         config.use_odirect,
+         config.read_ahead_size,
++        config.max_capacity_gb,
+     )
++    if native_lru:
++        logger.info(
++            "fs_native LRU eviction: trigger=%.3f target=%.3f",
++            trigger_watermark,
++            max(0.0, trigger_watermark - eviction_ratio),
++        )
+     return NativeConnectorL2Adapter(
+         native_client,
+         max_capacity_gb=config.max_capacity_gb,
+@@ -167,7 +186,9 @@
+             "use_odirect": config.use_odirect,
+             "num_workers": config.num_workers,
+             "read_ahead_size": config.read_ahead_size,
++            "native_lru_eviction": native_lru,
+         },
++        manages_global_eviction_natively=native_lru,
+     )
+ 
+ 
+diff --color -ruN a/lmcache/v1/distributed/l2_adapters/native_connector_l2_adapter.py b/lmcache/v1/distributed/l2_adapters/native_connector_l2_adapter.py
+--- a/lmcache/v1/distributed/l2_adapters/native_connector_l2_adapter.py	2026-08-15 06:06:15
++++ b/lmcache/v1/distributed/l2_adapters/native_connector_l2_adapter.py	2026-08-15 17:48:41
+@@ -32,6 +32,7 @@
+ from lmcache.v1.distributed.api import MemoryLayoutDesc, ObjectKey
+ from lmcache.v1.distributed.internal_api import L2StoreResult
+ from lmcache.v1.distributed.l2_adapters.base import (
++    AdapterUsage,
+     L2AdapterInterface,
+     L2TaskId,
+ )
+@@ -108,12 +109,16 @@
+         max_capacity_gb: float = 0,
+         type_name: str = "",
+         extra_status: dict[str, Any] | None = None,
++        manages_global_eviction_natively: bool = False,
+     ) -> None:
+         super().__init__(max_capacity_bytes=int(max_capacity_gb * (1024**3)))
+         self._client = native_client
+         self._client_fd: int = int(native_client.event_fd())
+         self._type_name: str = type_name or type(native_client).__name__
+         self._extra_status: dict[str, Any] = dict(extra_status or {})
++        self._manages_global_eviction_natively = (
++            manages_global_eviction_natively
++        )
+ 
+         # 3 distinct cross-platform notifiers for the L2 adapter
+         # interface
+@@ -247,15 +252,21 @@
+             return self._completed_lookups.pop(task_id, None)
+ 
+     def submit_unlock(self, keys: list[ObjectKey]) -> None:
++        native_unlock_keys: list[str] = []
+         with self._lock:
+             for key in keys:
+                 if key not in self._locked_keys:
+                     continue
++                native_unlock_keys.append(_object_key_to_string(key))
+                 if self._locked_keys[key] <= 1:
+                     del self._locked_keys[key]
+                 else:
+                     self._locked_keys[key] -= 1
+ 
++        release_keys = getattr(self._client, "release_keys", None)
++        if native_unlock_keys and callable(release_keys):
++            release_keys(native_unlock_keys)
++
+     # ---------------------------------------------------------------
+     # Load Interface
+     # ---------------------------------------------------------------
+@@ -288,6 +299,11 @@
+     # Eviction Interface
+     # ---------------------------------------------------------------
+ 
++    @property
++    def manages_global_eviction_natively(self) -> bool:
++        """Whether this connector performs its own global watermark eviction."""
++        return self._manages_global_eviction_natively
++
+     def delete(self, keys: list[ObjectKey]) -> None:
+         """Delete a batch of keys from the remote backend.
+ 
+@@ -337,9 +353,17 @@
+         # backend reports per-key deletion results, so we don't notify
+         # again here.
+ 
+-    # ``get_usage()`` is inherited from ``L2AdapterInterface``. The base
+-    # class tracks aggregate + per-user totals via ``_notify_keys_*``;
+-    # we feed it the byte sizes from each store/delete completion.
++    def get_usage(self) -> AdapterUsage:
++        """Return native exact global bytes when the connector owns eviction."""
++        usage = super().get_usage()
++        native_usage = getattr(self._client, "get_current_size_bytes", None)
++        if not self._manages_global_eviction_natively or not callable(native_usage):
++            return usage
++        return AdapterUsage(
++            total_bytes_used=int(native_usage()),
++            total_capacity_bytes=usage.total_capacity_bytes,
++            bytes_by_cache_salt=usage.bytes_by_cache_salt,
++        )
+ 
+     # ---------------------------------------------------------------
+     # Status Interface
+@@ -362,6 +386,10 @@
+             "type": self._type_name,
+         }
+         status.update(self._extra_status)
++        if self._manages_global_eviction_natively:
++            native_usage = getattr(self._client, "get_current_size_bytes", None)
++            if callable(native_usage):
++                status["current_size_bytes"] = int(native_usage())
+         return status
+ 
+     # ---------------------------------------------------------------
+@@ -452,6 +480,12 @@
+                     if op_type == self._OP_STORE:
+                         store_info = self._pending_store_sizes.pop(fid, None)
+                         task_bytes = 0
++                        if not ok:
++                            logger.error(
++                                "Native L2 store task %d failed: %s",
++                                task_id,
++                                error or "unknown native connector error",
++                            )
+                         if ok and store_info is not None:
+                             store_keys, sizes = store_info
+                             for key, size in zip(store_keys, sizes, strict=True):
+diff --color -ruN a/lmcache/v1/distributed/storage_manager.py b/lmcache/v1/distributed/storage_manager.py
+--- a/lmcache/v1/distributed/storage_manager.py	2026-08-15 06:06:15
++++ b/lmcache/v1/distributed/storage_manager.py	2026-08-15 17:48:41
+@@ -1147,6 +1147,8 @@
+         """
+         if eviction_config is None:
+             return False
++        if adapter.manages_global_eviction_natively:
++            return False
+         policy_name = eviction_config.eviction_policy
+         if policy_name != "IsolatedLRU" and not adapter.supports_global_eviction:
+             logger.warning(
+diff --color -ruN a/lmcache/v1/platform/cuda/cache_context.py b/lmcache/v1/platform/cuda/cache_context.py
+--- a/lmcache/v1/platform/cuda/cache_context.py	2026-08-15 06:06:15
++++ b/lmcache/v1/platform/cuda/cache_context.py	2026-08-15 17:48:41
+@@ -37,6 +37,7 @@
+     engine_group_layer_indices,
+ )
+ from lmcache.v1.platform.base.cache_context import BaseCacheContext
++from lmcache.v1.platform.cuda.staging_config import get_gpu_staging_batch_size
+ 
+ logger = init_logger(__name__)
+ 
+@@ -407,7 +408,7 @@
+             kv_layer_groups_manager=self.kv_layer_groups_manager_,
+             lmcache_tokens_per_chunk=lmcache_tokens_per_chunk,
+             device=self.device_,
+-            max_batch_size=4,
++            max_batch_size=get_gpu_staging_batch_size(),
+         )
+ 
+         # GPU streams
+diff --color -ruN a/lmcache/v1/platform/cuda/staging_config.py b/lmcache/v1/platform/cuda/staging_config.py
+--- a/lmcache/v1/platform/cuda/staging_config.py	1970-01-01 01:00:00
++++ b/lmcache/v1/platform/cuda/staging_config.py	2026-08-15 17:48:41
+@@ -0,0 +1,30 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Configuration for LMCache-driven CUDA staging buffers."""
++
++# Standard
++import os
++
++GPU_STAGING_BATCH_SIZE_ENV = "LMCACHE_MP_GPU_STAGING_BATCH_SIZE"
++DEFAULT_GPU_STAGING_BATCH_SIZE = 4
++MAX_GPU_STAGING_BATCH_SIZE = 4
++
++
++def get_gpu_staging_batch_size() -> int:
++    """Return the configured number of per-context GPU staging slots."""
++    raw_value = os.getenv(
++        GPU_STAGING_BATCH_SIZE_ENV, str(DEFAULT_GPU_STAGING_BATCH_SIZE)
++    )
++    try:
++        batch_size = int(raw_value)
++    except ValueError as exc:
++        raise ValueError(
++            f"{GPU_STAGING_BATCH_SIZE_ENV} must be an integer from 1 to "
++            f"{MAX_GPU_STAGING_BATCH_SIZE}, got {raw_value!r}"
++        ) from exc
++
++    if not 1 <= batch_size <= MAX_GPU_STAGING_BATCH_SIZE:
++        raise ValueError(
++            f"{GPU_STAGING_BATCH_SIZE_ENV} must be from 1 to "
++            f"{MAX_GPU_STAGING_BATCH_SIZE}, got {batch_size}"
++        )
++    return batch_size
+diff --color -ruN a/tests/v1/distributed/test_fs_native_capacity.py b/tests/v1/distributed/test_fs_native_capacity.py
+--- a/tests/v1/distributed/test_fs_native_capacity.py	1970-01-01 01:00:00
++++ b/tests/v1/distributed/test_fs_native_capacity.py	2026-08-15 17:48:41
+@@ -0,0 +1,219 @@
++# SPDX-License-Identifier: Apache-2.0
++"""CPU-only hard-cap tests for the native filesystem connector."""
++
++# Standard
++from pathlib import Path
++from typing import Protocol
++import select
++import time
++
++# Third Party
++import pytest
++
++lmcache_fs = pytest.importorskip("lmcache.lmcache_fs")
++
++Completion = tuple[int, bool, str, list[bool] | None]
++
++
++class _FSClient(Protocol):
++    """Structural type exposed by the native filesystem pybind module."""
++
++    def event_fd(self) -> int: ...
++
++    def submit_batch_set(
++        self, keys: list[str], memoryviews: list[memoryview]
++    ) -> int: ...
++
++    def submit_batch_get(
++        self, keys: list[str], memoryviews: list[memoryview]
++    ) -> int: ...
++
++    def submit_batch_exists(self, keys: list[str]) -> int: ...
++
++    def get_current_size_bytes(self) -> int: ...
++
++    def release_keys(self, keys: list[str]) -> None: ...
++
++    def submit_batch_delete(self, keys: list[str]) -> int: ...
++
++    def drain_completions(self) -> list[Completion]: ...
++
++    def close(self) -> None: ...
++
++
++def _wait_for_completion(client: _FSClient, future_id: int) -> Completion:
++    """Wait for and return one native connector completion."""
++    deadline = time.monotonic() + 5
++    while time.monotonic() < deadline:
++        readable, _, _ = select.select(
++            [client.event_fd()], [], [], max(0, deadline - time.monotonic())
++        )
++        if not readable:
++            break
++        for completion in client.drain_completions():
++            if completion[0] == future_id:
++                return completion
++    raise TimeoutError(f"native completion {future_id} did not arrive")
++
++
++def _wait_for_completions(
++    client: _FSClient, future_ids: set[int]
++) -> dict[int, Completion]:
++    """Wait for several concurrent futures without dropping early results."""
++    pending = set(future_ids)
++    results: dict[int, Completion] = {}
++    deadline = time.monotonic() + 5
++    while pending and time.monotonic() < deadline:
++        readable, _, _ = select.select(
++            [client.event_fd()], [], [], max(0, deadline - time.monotonic())
++        )
++        if not readable:
++            break
++        for completion in client.drain_completions():
++            future_id = completion[0]
++            if future_id in pending:
++                pending.remove(future_id)
++                results[future_id] = completion
++    if pending:
++        raise TimeoutError(f"native completions {sorted(pending)} did not arrive")
++    return results
++
++
++def _store(client: _FSClient, key: str, payload: bytearray) -> Completion:
++    """Submit one SET and return its completion while retaining the buffer."""
++    future_id = client.submit_batch_set([key], [memoryview(payload)])
++    return _wait_for_completion(client, future_id)
++
++
++def _connector_files(path: Path) -> list[Path]:
++    """Return final data files created by the filesystem connector."""
++    return list(path.rglob("*.data"))
++
++
++def test_capacity_rejects_concurrent_overshoot(tmp_path: Path) -> None:
++    """Concurrent worker reservations must never put more than the cap on disk."""
++    client = lmcache_fs.LMCacheFSClient(str(tmp_path), 3, "", False, 0, 10)
++    payloads = [bytearray(b"abcdef") for _ in range(3)]
++    try:
++        future_id = client.submit_batch_set(
++            ["model@00000000@0@01", "model@00000000@0@02", "model@00000000@0@03"],
++            [memoryview(payload) for payload in payloads],
++        )
++        completion = _wait_for_completion(client, future_id)
++        assert completion[1] is False
++        assert "capacity exceeded" in completion[2]
++        assert sum(path.stat().st_size for path in _connector_files(tmp_path)) <= 10
++    finally:
++        client.close()
++
++
++def test_capacity_counts_restart_files_and_reuses_deleted_space(
++    tmp_path: Path,
++) -> None:
++    """Persisted files consume capacity; a successful delete releases it."""
++    first_key = "model@00000000@0@01"
++    second_key = "model@00000000@0@02"
++    client = lmcache_fs.LMCacheFSClient(str(tmp_path), 1, "", False, 0, 10)
++    try:
++        assert _store(client, first_key, bytearray(b"12345678"))[1] is True
++    finally:
++        client.close()
++
++    restarted = lmcache_fs.LMCacheFSClient(str(tmp_path), 1, "", False, 0, 10)
++    try:
++        rejected = _store(restarted, second_key, bytearray(b"1234"))
++        assert rejected[1] is False
++        assert "current=8, requested=4, max=10" in rejected[2]
++
++        delete_id = restarted.submit_batch_delete([first_key])
++        deleted = _wait_for_completion(restarted, delete_id)
++        assert deleted[1] is True
++        assert deleted[3] == [True]
++
++        assert _store(restarted, second_key, bytearray(b"1234"))[1] is True
++        assert sum(path.stat().st_size for path in _connector_files(tmp_path)) == 4
++    finally:
++        restarted.close()
++
++
++def _lookup(client: _FSClient, keys: list[str]) -> list[bool]:
++    """Return native existence results and update their LRU recency."""
++    completion = _wait_for_completion(client, client.submit_batch_exists(keys))
++    assert completion[1] is True
++    assert completion[3] is not None
++    return completion[3]
++
++
++def test_watermark_lru_evicts_to_target_and_preserves_recent_key(
++    tmp_path: Path,
++) -> None:
++    """Crossing 80% evicts oldest files until post-store usage is 60%."""
++    client = lmcache_fs.LMCacheFSClient(
++        str(tmp_path), 2, "", False, 0, 100, 0.8, 0.2
++    )
++    keys = [
++        "model@00000000@0@a1",
++        "model@00000000@0@b2",
++        "model@00000000@0@c3",
++    ]
++    payload = bytearray(b"x" * 30)
++    try:
++        assert _store(client, keys[0], payload)[1] is True
++        assert _store(client, keys[1], payload)[1] is True
++        assert _lookup(client, [keys[0]]) == [True]
++        client.release_keys([keys[0]])
++
++        assert _store(client, keys[2], payload)[1] is True
++        assert _lookup(client, keys) == [True, False, True]
++        assert client.get_current_size_bytes() == 60
++    finally:
++        client.close()
++
++
++def test_watermark_lru_accounts_and_evicts_orphan_tmp(tmp_path: Path) -> None:
++    """Abandoned temp bytes participate in both trigger and victim selection."""
++    orphan = tmp_path / "abandoned.tmp"
++    orphan.write_bytes(b"o" * 50)
++    client = lmcache_fs.LMCacheFSClient(
++        str(tmp_path), 2, "", False, 0, 100, 0.8, 0.2
++    )
++    try:
++        key = "model@00000000@0@d4"
++        assert _store(client, key, bytearray(b"n" * 40))[1] is True
++        assert not orphan.exists()
++        assert client.get_current_size_bytes() == 40
++        assert _lookup(client, [key]) == [True]
++    finally:
++        client.close()
++
++
++def test_concurrent_retrieve_and_eviction_never_returns_partial_data(
++    tmp_path: Path,
++) -> None:
++    """An active read is pinned while a store performs native eviction."""
++    client = lmcache_fs.LMCacheFSClient(
++        str(tmp_path), 3, "", False, 0, 100, 0.8, 0.2
++    )
++    first = "model@00000000@0@e5"
++    second = "model@00000000@0@f6"
++    third = "model@00000000@0@a7"
++    first_payload = bytearray(b"r" * 40)
++    try:
++        assert _store(client, first, first_payload)[1] is True
++        assert _store(client, second, bytearray(b"s" * 30))[1] is True
++        assert _lookup(client, [first]) == [True]
++
++        destination = bytearray(40)
++        third_payload = bytearray(b"t" * 20)
++        get_id = client.submit_batch_get([first], [memoryview(destination)])
++        set_id = client.submit_batch_set([third], [memoryview(third_payload)])
++        completions = _wait_for_completions(client, {get_id, set_id})
++        get_completion = completions[get_id]
++        set_completion = completions[set_id]
++        assert get_completion[3] == [True]
++        assert set_completion[1] is True
++        assert destination == first_payload
++        assert client.get_current_size_bytes() <= 60
++        client.release_keys([first])
++    finally:
++        client.close()
+diff --color -ruN a/tests/v1/distributed/test_l2_adapter_factory.py b/tests/v1/distributed/test_l2_adapter_factory.py
+--- a/tests/v1/distributed/test_l2_adapter_factory.py	2026-08-15 06:06:15
++++ b/tests/v1/distributed/test_l2_adapter_factory.py	2026-08-15 17:48:41
+@@ -882,12 +882,18 @@
+         relative_tmp_dir="",
+         use_odirect=False,
+         read_ahead_size=0,
++        max_capacity_bytes=0,
++        trigger_watermark=0.0,
++        eviction_ratio=0.0,
+     ):
+         self.base_path = base_path
+         self.num_workers = num_workers
+         self.relative_tmp_dir = relative_tmp_dir
+         self.use_odirect = use_odirect
+         self.read_ahead_size = read_ahead_size
++        self.max_capacity_bytes = max_capacity_bytes
++        self.trigger_watermark = trigger_watermark
++        self.eviction_ratio = eviction_ratio
+         self._efd = create_event_notifier()
+         self._closed = False
+ 
+@@ -973,6 +979,7 @@
+                 config.relative_tmp_dir,
+                 config.use_odirect,
+                 config.read_ahead_size or 0,
++                int(config.max_capacity_gb * (1024**3)),
+             )
+             # First Party
+             from lmcache.v1.distributed.l2_adapters.native_connector_l2_adapter import (
+@@ -991,6 +998,7 @@
+                 relative_tmp_dir=".tmp",
+                 use_odirect=True,
+                 read_ahead_size=4096,
++                max_capacity_gb=2.5,
+             )
+             adapter = create_l2_adapter_from_registry(cfg)
+             assert captured["args"] == (
+@@ -999,6 +1007,7 @@
+                 ".tmp",
+                 True,
+                 4096,
++                int(2.5 * (1024**3)),
+             )
+             adapter.close()
+         finally:
+@@ -1093,6 +1102,7 @@
+                 config.relative_tmp_dir,
+                 config.use_odirect,
+                 config.read_ahead_size or 0,
++                int(config.max_capacity_gb * (1024**3)),
+             )
+             # First Party
+             from lmcache.v1.distributed.l2_adapters.native_connector_l2_adapter import (
+@@ -1134,5 +1144,6 @@
+         config.relative_tmp_dir,
+         config.use_odirect,
+         config.read_ahead_size or 0,
++        int(config.max_capacity_gb * (1024**3)),
+     )
+     return NativeConnectorL2Adapter(client)
+diff --color -ruN a/tests/v1/platform/test_gpu_staging_config.py b/tests/v1/platform/test_gpu_staging_config.py
+--- a/tests/v1/platform/test_gpu_staging_config.py	1970-01-01 01:00:00
++++ b/tests/v1/platform/test_gpu_staging_config.py	2026-08-15 17:48:41
+@@ -0,0 +1,31 @@
++# SPDX-License-Identifier: Apache-2.0
++
++"""CPU-only tests for LMCache-driven CUDA staging configuration."""
++
++# Third Party
++import pytest
++
++# First Party
++from lmcache.v1.platform.cuda.staging_config import get_gpu_staging_batch_size
++
++
++@pytest.mark.parametrize("value", ["1", "2", "3", "4"])
++def test_accepts_kernel_supported_range(
++    monkeypatch: pytest.MonkeyPatch, value: str
++) -> None:
++    monkeypatch.setenv("LMCACHE_MP_GPU_STAGING_BATCH_SIZE", value)
++    assert get_gpu_staging_batch_size() == int(value)
++
++
++def test_defaults_to_four(monkeypatch: pytest.MonkeyPatch) -> None:
++    monkeypatch.delenv("LMCACHE_MP_GPU_STAGING_BATCH_SIZE", raising=False)
++    assert get_gpu_staging_batch_size() == 4
++
++
++@pytest.mark.parametrize("value", ["0", "5", "not-an-integer"])
++def test_rejects_invalid_values(
++    monkeypatch: pytest.MonkeyPatch, value: str
++) -> None:
++    monkeypatch.setenv("LMCACHE_MP_GPU_STAGING_BATCH_SIZE", value)
++    with pytest.raises(ValueError, match="LMCACHE_MP_GPU_STAGING_BATCH_SIZE"):
++        get_gpu_staging_batch_size()
+diff --color -ruN a/tests/v1/test_vllm_kv_cache_group_edits.py b/tests/v1/test_vllm_kv_cache_group_edits.py
+--- a/tests/v1/test_vllm_kv_cache_group_edits.py	1970-01-01 01:00:00
++++ b/tests/v1/test_vllm_kv_cache_group_edits.py	2026-08-15 17:48:41
+@@ -0,0 +1,202 @@
++# SPDX-License-Identifier: Apache-2.0
++# Standard
++from dataclasses import dataclass
++from unittest.mock import patch
++
++# Third Party
++import pytest
++import torch
++from vllm.v1.kv_cache_interface import KVCacheSpecKind
++
++# First Party
++from lmcache.integration.vllm.kv_cache_group_edits import (
++    apply_kv_cache_group_edits,
++)
++
++
++@dataclass
++class _AttentionSpec:
++    block_size: int
++    page_size_bytes: int
++    compress_ratio: int = 1
++    tq_slot_size: int = 0
++
++
++@dataclass
++class _CacheGroup:
++    layer_names: list[str]
++    kv_cache_spec: _AttentionSpec
++
++
++@dataclass
++class _CacheConfig:
++    kv_cache_groups: list[_CacheGroup]
++    has_mamba_layers: bool = True
++
++
++def test_subpaged_fused_attention_regroups_real_strided_fp8_geometry() -> None:
++    """The rig's dense-NHD/HND-view fp8 pages must regroup without a copy."""
++    logical_block_size = 1616
++    kernel_block_size = 16
++    kernel_pages_per_logical_block = logical_block_size // kernel_block_size
++    num_logical_blocks = 2
++    num_kernel_pages = num_logical_blocks * kernel_pages_per_logical_block
++    num_heads = 4
++    fused_head_size = 512
++
++    # The rig exposed [NB, NH, BS, 2*HS] over dense NHD storage. Its complete
++    # run had NB=15251; two logical blocks retain the exact per-page geometry
++    # and strides without making this CPU regression allocate 500 MB.
++    physical_nhd = (
++        torch.arange(num_kernel_pages, dtype=torch.uint8)
++        .reshape(num_kernel_pages, 1, 1, 1)
++        .expand(
++            num_kernel_pages,
++            kernel_block_size,
++            num_heads,
++            fused_head_size,
++        )
++        .clone()
++    )
++    raw_hnd_view = physical_nhd.permute(0, 2, 1, 3)
++    assert tuple(raw_hnd_view.shape) == (202, 4, 16, 512)
++    assert tuple(raw_hnd_view.stride()) == (32768, 512, 2048, 1)
++    assert not raw_hnd_view.is_contiguous()
++
++    spec = _AttentionSpec(
++        block_size=logical_block_size,
++        page_size_bytes=logical_block_size * num_heads * fused_head_size,
++    )
++    config = _CacheConfig([_CacheGroup(["attention"], spec)])
++
++    layout_hints = {"kv_layout": "HND"}
++    with patch(
++        "lmcache.integration.vllm.kv_cache_group_edits.get_kv_cache_spec_kind",
++        return_value=KVCacheSpecKind.FULL_ATTENTION,
++    ):
++        edited = apply_kv_cache_group_edits(  # type: ignore[arg-type]
++            config, {"attention": raw_hnd_view}, layout_hints
++        )["attention"]
++
++    assert layout_hints["kv_layout"] == "NHD"
++    assert tuple(edited.shape) == (2, 4, 1616, 512)
++    assert tuple(edited.stride()) == (3309568, 512, 2048, 1)
++    assert edited.data_ptr() == raw_hnd_view.data_ptr()
++    expected_nhd = physical_nhd.view(2, 1616, 4, 512)
++    torch.testing.assert_close(edited.permute(0, 2, 1, 3), expected_nhd, rtol=0, atol=0)
++
++
++@pytest.mark.parametrize(
++    ("layout", "dtype"),
++    [
++        pytest.param("NHD", torch.uint8, id="nhd-fp8-bytes"),
++        pytest.param("HND", torch.uint8, id="hnd-fp8-bytes"),
++        pytest.param("NHD", torch.bfloat16, id="nhd-bf16"),
++        pytest.param("HND", torch.bfloat16, id="hnd-bf16"),
++    ],
++)
++def test_subpaged_fused_attention_logical_page_view(
++    layout: str, dtype: torch.dtype
++) -> None:
++    """A logical block ID must round-trip every fused-attention kernel page."""
++    logical_block_size = 6
++    kernel_block_size = 2
++    kernel_pages_per_logical_block = logical_block_size // kernel_block_size
++    num_logical_blocks = 2
++    num_kernel_pages = num_logical_blocks * kernel_pages_per_logical_block
++    num_heads = 3
++    fused_head_size = 4
++
++    if layout == "NHD":
++        kernel_shape = (
++            num_kernel_pages,
++            kernel_block_size,
++            num_heads,
++            fused_head_size,
++        )
++        logical_shape = (
++            num_logical_blocks,
++            logical_block_size,
++            num_heads,
++            fused_head_size,
++        )
++    else:
++        kernel_shape = (
++            num_kernel_pages,
++            num_heads,
++            kernel_block_size,
++            fused_head_size,
++        )
++        logical_shape = (
++            num_logical_blocks,
++            num_heads,
++            logical_block_size,
++            fused_head_size,
++        )
++
++    source = torch.arange(torch.Size(kernel_shape).numel(), dtype=torch.float32)
++    source = source.reshape(kernel_shape).to(dtype)
++    spec = _AttentionSpec(
++        block_size=logical_block_size,
++        page_size_bytes=(
++            logical_block_size * num_heads * fused_head_size * source.element_size()
++        ),
++    )
++    config = _CacheConfig([_CacheGroup(["attention"], spec)])
++
++    with patch(
++        "lmcache.integration.vllm.kv_cache_group_edits.get_kv_cache_spec_kind",
++        return_value=KVCacheSpecKind.FULL_ATTENTION,
++    ):
++        edited_source = apply_kv_cache_group_edits(  # type: ignore[arg-type]
++            config, {"attention": source}, {"kv_layout": layout}
++        )["attention"]
++        destination = torch.zeros_like(source)
++        edited_destination = apply_kv_cache_group_edits(  # type: ignore[arg-type]
++            config, {"attention": destination}, {"kv_layout": layout}
++        )["attention"]
++
++    assert tuple(edited_source.shape) == logical_shape
++    assert edited_source.data_ptr() == source.data_ptr()
++
++    # Regrouping is metadata-only: each logical block covers exactly the
++    # ratio adjacent kernel pages in physical storage order.
++    torch.testing.assert_close(
++        edited_source.reshape(num_logical_blocks, -1),
++        source.reshape(num_logical_blocks, -1),
++        rtol=0,
++        atol=0,
++    )
++    edited_destination[1].copy_(edited_source[1])
++    expected = torch.zeros_like(edited_source)
++    expected[1].copy_(edited_source[1])
++    torch.testing.assert_close(edited_destination, expected, rtol=0, atol=0)
++
++
++def test_scheduler_sized_fused_attention_is_not_edited() -> None:
++    """A backend with no kernel subpaging must keep its native fused view."""
++    logical_block_size = 6
++    num_blocks = 2
++    num_heads = 3
++    fused_head_size = 4
++    source = torch.zeros(
++        (num_blocks, logical_block_size, num_heads, fused_head_size),
++        dtype=torch.bfloat16,
++    )
++    spec = _AttentionSpec(
++        block_size=logical_block_size,
++        page_size_bytes=(
++            logical_block_size * num_heads * fused_head_size * source.element_size()
++        ),
++    )
++    config = _CacheConfig([_CacheGroup(["attention"], spec)])
++
++    with patch(
++        "lmcache.integration.vllm.kv_cache_group_edits.get_kv_cache_spec_kind",
++        return_value=KVCacheSpecKind.FULL_ATTENTION,
++    ):
++        edited = apply_kv_cache_group_edits(  # type: ignore[arg-type]
++            config, {"attention": source}, {"kv_layout": "NHD"}
++        )["attention"]
++
++    assert edited is source
