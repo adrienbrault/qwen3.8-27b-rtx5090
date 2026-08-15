@@ -7,6 +7,16 @@ Tool: [llama-benchy](https://github.com/eugr/llama-benchy) — *not* ad-hoc curl
 
 > **Status (2026-07-20): the current daily is natfii NVFP4 W4A4 + fp8 KV + MTP `ns=4` + LMCache DRAM/NVMe tiers** (util 0.95, pool 214,084). Its engine numbers are in [the natfii promotion section](#promotion-2026-07-19-natfii-nvfp4-w4a4-is-the-daily--util-098-pool-239436) (measured at what is now the *plain* profile, util 0.98 / pool 239,436 — same weights and kernels, so decode carries over; the tier profile's narrower `mnbt` 3231 costs a few percent on synthetic deep prefill) and the agentic scores are in [the README](../README.md#agentic-benchmark-results). Below that: the Lorbus INT4-AutoRound era (2026-07-18, image `k8v4-so-pr42603`), then the TurboQuant `4bit_nc`/`k8v4` era on the Unsloth NVFP4 model — **prior-daily / alternative** data, kept for the record; see [the lineage](../docs/HISTORY.md#daily-lineage--what-each-daily-was-and-why-the-next-took-over).
 
+## Nightly re-platform measurements — 2026-08-15 (vLLM 0.27.2rc1.dev77, saka Qwen3.8, plain, util 0.98/200K)
+
+Decode (pp8192, tg512): c1 **123.1** / c2 207.1 / c4 314.6 / c8 **321.7** tok/s aggregate (0.23 tier daily same protocol: 84.5 / 134.5 / 215.4 / 255.6 — the delta is nightly's spec path + T=0.6; the earlier "84.5" also suffered a T=1.0 boot). Prefill c1: 12,972 @8K / 9,690 @32K / 5,048 @100K tok/s. Deep-concurrent pp30000×c8: 122.9. Pool 207,042. MTP acceptance 60–65% (accept-len 3.4–3.6).
+
+Quality ladder (69×2 @T0.6): async ON no-align 87 ± 1.4 → async OFF no-align 88.5 ± 0.7 → **async OFF + `--mamba-cache-mode align` 91 ± 0.0** → align + async ON 90 ± 1.4. Alignment of the GDN state cache with spec decode is load-bearing; async costs ~1pt.
+
+DSpark (vLLM-native, RadixArk draft, block 7, fixed verify): c1 essay 138 / c1 code 174 / c2 229 / c4 442 aggregate — beats MTP at 20–22% draft acceptance (draft trained for the FP8 target). Draft KV limits context to ~64K (pool 84,292 @0.98); adaptive verification rejected on the GDN backend. Quick-eval 93.
+
+Caveat: 2-trial pairs, not the 4-trial CI protocol; SWE-Bench/TB numbers for this base do not exist yet.
+
 ## Tool-eval cross-trial statistics — 69×4 on the tier daily (2026-07-22)
 
 The daily's standing quality number, re-measured with four full trials for real error bars: tool-eval-bench v2.1.0, all 69 scenarios, temp 0.6 / top-p 0.95 / top-k 20, thinking on, parallel 8 — the promotion-run protocol with the trial count doubled.
