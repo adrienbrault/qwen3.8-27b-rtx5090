@@ -19,12 +19,12 @@ export PATH="$HOME/.local/bin:$PATH"   # llama-benchy (pre-warm) commonly lives 
 MODEL_DIR=${MODEL_DIR:-/srv/qwen5090/models/saka-qwen3.8-27b-mtp-nvfp4}  # sakamakismile/Qwen3.8-27B-MTP-NVFP4
 MODEL_NAME=${MODEL_NAME:-qwen3.8-27b}
 MODEL_ALIAS=${MODEL_ALIAS:-qwen3.6-27b}   # alias for clients configured before the 2026-08-14 model change
-IMAGE=${IMAGE:-vllm-qwen38:tiers-rc4-ba07e4a}   # Dockerfile.rc4 --build-arg VLLM_BASE=<08-21 nightly digest>
+IMAGE=${IMAGE:-vllm-qwen38:tiers-nvfp4kv}   # patches-nvfp4kv/Dockerfile.nvfp4kv --build-arg VLLM_BASE=vllm-qwen38:tiers-rc4-ba07e4a (R81)
 PORT=${PORT:-8029}   # gauntlet default = experiment port; promotion passes PORT=8020
 BIND_ADDR=${BIND_ADDR:-127.0.0.1}    # loopback by default — the API has NO auth. Set 0.0.0.0
                                      # only behind a firewall/VPN or an authenticated proxy.
 NAME=${NAME:-vllm-exp}
-KVDTYPE=${KVDTYPE:-fp8_e4m3}   # R81 audition: nvfp4 (needs IMAGE=vllm-qwen38:tiers-nvfp4kv = tier image + patches-nvfp4kv)
+KVDTYPE=${KVDTYPE:-nvfp4}      # R81 daily: nvfp4 (image tiers-nvfp4kv). fp8_e4m3 = the R79 generation (image tiers-rc4-ba07e4a)
 # Unified hybrid block (vLLM: "Setting attention block size to N tokens to ensure that attention page
 # size is >= mamba page size"): fp8 KV + MTP ns=4 -> 1616 (1568 without MTP); nvfp4 KV -> 2864 (0.5625 B/elt
 # inflates the attention block to cover the mamba page). LMCache chunk MUST equal this block (rc4 rule).
@@ -34,8 +34,8 @@ BATCHED=$((2 * BLK - 1))             # LMCache MP requires batched tokens in [ch
 
 # L2 NVMe tier. 200 GB ~= 2.13M tokens, survives container restarts.
 # The cap is only real because of patch 0008 + the eviction block below — verify both.
-L2DIR=${L2DIR:-/srv/qwen5090/lmcache-l2-rc4-v2}   # FRESH namespace per stack generation (R79: V2 + new nightly)
-UTIL=${UTIL:-0.95}
+L2DIR=${L2DIR:-/srv/qwen5090/lmcache-l2-nvfp4-v2}   # FRESH namespace per stack generation (R81: nvfp4 pages)
+UTIL=${UTIL:-0.93}   # R81: 0.95 makes the FlashInfer autotuner OOM-fallback with the bigger V2 pool
 EXTRA_ENV=${EXTRA_ENV-"-e VLLM_USE_V2_MODEL_RUNNER=1"}   # R79: V2 model runner is the daily. `${VAR-default}` on purpose: an EXPLICIT empty EXTRA_ENV= reverts to V1 (`:-` would re-apply the default)
 L2CAP=${L2CAP:-200}
 sudo mkdir -p "$L2DIR"
@@ -119,8 +119,8 @@ fi
 # cache. 165K/185K/205K = stale util. Fail closed instead of printing a warning nobody reads.
 POOL=$(sudo docker logs "$NAME" 2>&1 | grep -a 'GPU KV cache size' | tail -1 | grep -oE 'cache size: [0-9,]+' | tr -dc 0-9)
 echo "daily up. KV pool: ${POOL} tokens"
-POOL_MIN=${POOL_MIN:-195000}   # R79: V2 + ba07e4a48 tier boots at 209,859 (profiling varies ~6% boot to boot)
-POOL_MAX=${POOL_MAX:-225000}
+POOL_MIN=${POOL_MIN:-285000}   # R81: nvfp4 tier boots at 309,090 @0.93 (profiling varies ~6% boot to boot)
+POOL_MAX=${POOL_MAX:-335000}
 if [ -z "$POOL" ] || [ "$POOL" -lt "$POOL_MIN" ] || [ "$POOL" -gt "$POOL_MAX" ]; then
   echo "FAILED: pool ${POOL:-<missing>} outside expected ${POOL_MIN}-${POOL_MAX} (util 0.95, seqs 8, mnbt 3231)."
   echo "  Pool alone can NOT prove the connector attached at these settings — see the positive check below."
