@@ -1,6 +1,6 @@
 # Reproduce the agentic benchmark scores
 
-Raw artifacts and pinned commands behind the headline numbers, so the 69.4% / 48.3% can be audited rather than trusted. The serving side is always the tier daily from [`../../scripts/serve.sh`](../../scripts/serve.sh) (or a port-shifted copy), model snapshot `natfii/Qwen3.6-27B-VLM-NVFP4-MTP@2e46c0ed7606f35e357bc5674d20c710fc51b178`.
+Raw artifacts and pinned commands behind the headline numbers, so the 69.4% / 48.3% can be audited rather than trusted. The serving side is always the tier daily from [`../../scripts/legacy/serve.sh`](../../scripts/legacy/serve.sh) (or a port-shifted copy), model snapshot `natfii/Qwen3.6-27B-VLM-NVFP4-MTP@2e46c0ed7606f35e357bc5674d20c710fc51b178`.
 
 ## What's in this directory
 

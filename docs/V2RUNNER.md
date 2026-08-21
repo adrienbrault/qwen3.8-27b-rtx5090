@@ -1,6 +1,6 @@
 # The V2 model runner + the 2026-08-21 nightly: +16–20% decode on the tier daily (measured 2026-08-21)
 
-**Status: PROMOTED 2026-08-21 — this is the daily.** This came out of the DFlash2 audition ([docs/DFLASH2.md](DFLASH2.md)): the drafter's apparent +34% was the runner and the newer nightly. Re-measured with the daily's own stack — fp8 KV + LMCache tiers + MTP `ns=4` — on nightly `ba07e4a48` with `VLLM_USE_V2_MODEL_RUNNER=1`.
+**Status: promoted 2026-08-21; the daily runs on the V2 runner (since the evening with nvfp4 KV, [NVFP4KV.md](NVFP4KV.md)).** This came out of the DFlash2 audition ([docs/DFLASH2.md](DFLASH2.md)): the drafter's apparent +34% was the runner and the newer nightly. Re-measured with the daily's own stack — fp8 KV + LMCache tiers + MTP `ns=4` — on nightly `ba07e4a48` with `VLLM_USE_V2_MODEL_RUNNER=1`.
 
 | tier stack (mnbt 3231, util 0.95, 200K, tiers ON) | current daily (V1, `ac7509e2b`) | V2 runner, `ba07e4a48` |
 |---|---|---|
@@ -19,4 +19,4 @@ Both columns measured within the same hour on the same card. The vLLM-side tier 
 
 Two things to know before flipping: the nightly's `_C_stable_libtorch` extension raised a spawn-child `ImportError` (undefined cutlass symbol) once in six boots — a retry boots clean, so a health-loop launcher covers it; and at util 0.98 on the plain profile the V2 runner's first request OOMed inside the FlashInfer `fp4_gemm` autotuner, so keep util at 0.95 (the tier profile already is).
 
-Recipe: `patches/lmcache/Dockerfile` with `--build-arg VLLM_BASE=vllm/vllm-openai@sha256:4e9299fb10c93ba020fbbe3237f7b5998d96cfe9fae962319babc9d7796ea66e`, then `serve.sh` with `VLLM_USE_V2_MODEL_RUNNER=1` in the container environment and a **fresh L2 directory** (a new stack generation never shares a namespace with the old one).
+Recipe: `patches/rc4/Dockerfile.rc4` with `--build-arg VLLM_BASE=vllm/vllm-openai@sha256:4e9299fb10c93ba020fbbe3237f7b5998d96cfe9fae962319babc9d7796ea66e`, then [`../scripts/serve-tier-rc4.sh`](../scripts/serve-tier-rc4.sh) (which sets `VLLM_USE_V2_MODEL_RUNNER=1` by default) and a **fresh L2 directory** (a new stack generation never shares a namespace with the old one).

@@ -6,10 +6,11 @@ Newest first. Every switch is documented with numbers in the Status sections bel
 
 | daily | weights · KV | pool | why it took over |
 |---|---|---|---|
+| **Qwen3.8-27B tiers + NVFP4 KV on the V2 model runner (2026-08-21 evening, the daily)** | W4A4 NVFP4 · `nvfp4` KV | **309,090** @0.93 + tiers | The NVFP4 KV cache that R77 measured on the plain profile (+37% pool, overlay numerically required) composed with the LMCache tiers without new page code: the rc4 group edits work by byte accounting, and the only requirement was chunk = the nvfp4 unified block (2864; the launcher hardcoded fp8's 1616 until the advisor caught it). Gates: needles 10/10 + 10/10 to 100K with real retrieves, restart-proof 40K 6.3 → 2.5 s / 60K 11.6 → 3.3 s, sean gate 15/15 + 15/15, decode c1 141 / c4 339 / c8 353 (fp8 tier: 152 / 360 / 367), prefill 12.8K at 8K (mnbt 5727), tool-eval 92 ± 1.4. Image `tiers-nvfp4kv` = `Dockerfile.nvfp4kv` built FROM the tier image. Post-promotion 69×4, vision, SO probe and a soak are pending. FINDINGS R80/R81. |
 | **Qwen3.8-27B tier-rc4 on the V2 model runner + nightly `ba07e4a48` (2026-08-21)** | *(same tiers, same patches)* | **209,859** @0.95 + tiers | The DFlash2 audition ([DFLASH2.md](DFLASH2.md)) showed the speed lived in the runner and the newer nightly, not the drafter. Same stack re-platformed: `patches/rc4/Dockerfile.rc4` on the 08-21 nightly digest, `VLLM_USE_V2_MODEL_RUNNER=1`, fresh L2 namespace. Measured against the V1 daily the same hour: decode **c1 152 / c4 360 / deep-30K 143 t/s (+19% / +16% / +20%)**, pool +4%, needles 10/10+10/10 to 100K with L2 warm revisits 0.5–1.5 s, restart-proof L2 3.3/4.7 s, killer 8/8, tool-eval 91 ± 0 (vs 92.5 ± 0.7 record). Nightly wart: a flaky spawn-child `ImportError` (undefined cutlass symbol) 1 in 6 boots — a retry boots clean. Keep util 0.95 (V2 at 0.98 OOMs in the fp4_gemm autotuner). [V2RUNNER.md](V2RUNNER.md). |
 | **Qwen3.8 on vLLM nightly 0.27, plain (current, 2026-08-15)** | *(same weights)* | **207K** @0.98 | User directive: off the frozen 0.23 base. Zero patches survive: #42603/#44993/parser-workaround/async-crash all obsolete upstream. Still true: `--mamba-cache-mode align` is worth ~3pts of 69×2 (91 ± 0 with, 87–88.5 without — hybrid GDN state × spec decode) and async-off ~1pt. Perf: c1 123 / c8 322 tok/s, prefill 13.0K @8K. vLLM-native DSpark beats MTP +12–40% but its draft KV caps context at ~64K → opt-in profile. **Tier profile temporarily back on the 0.23 image** (same day: agentic workloads re-prefill everything without LMCache — native prefix cache measured 0.0% hit under 4×50K contexts) until LMCache 0.5.3 is rebuilt against nightly. |
 | **Qwen3.8-27B saka MTP-NVFP4 (2026-08-14)** | *(same engine + tiers)* | **214K** @0.95 + tiers | Qwen3.8 dropped 2026-08-14 shape-identical to 3.6 (`qwen3_5`); the saka checkpoint reproduces natfii's W4A4 recipe byte-for-byte in size, so the whole profile carried over — same image, same patches, same pool. Promotion gauntlet: plain 69×2 pairs **91/90** (3.6 plain ~89.8), tier 69×4 **87.8 ± 1.3** at T=1.0 (3.6: 89.0 ± 1.4 at T=0.6; CIs overlap), cold near-full burst 8/8, 60K needle, vision, parallel tool calls. Deltas: `deepseek_r1` reasoning parser (prefilled `<think>` + reasoning-effort system line), fresh L2 namespace, alias `qwen3.6-27b`; the T=0.6 override was KEPT after a same-protocol control — tier 69×4 **90.5 ± 2.1** at T=0.6 (equal-or-better vs 3.6's 89.0 ± 1.4, point estimate +1.5) vs 87.8 ± 1.3 at the model-default T=1.0. The unsloth fp8-attention NVFP4 was rejected (+2 GB weights → 132K max-len ceiling); SGLang DSpark measured demo-only on 32 GB (~140 tok/s c1 / 197–293 aggregate c2 in a 6.7K-KV no-vision shape; the "206 tok/s" needs an unpublished SPS table). |
-| + LMCache DRAM/NVMe tiers (2026-07-20) | *(same engine)* | **214K** @0.95 **+ ~2.4M tiered** | Six local patches made tiered KV *faithful* on this fp8 hybrid (cross-restart needle + 69×2 = **89** vs a ~89.8 baseline). Trades 25K hot tokens and `mnbt` 4096 for ~2.4M tokens of second-chance capacity and a **warm start after restarts** — a 60K revisit costs 2 s (DRAM) or 4–7 s (NVMe) instead of an 11–13 s re-prefill. Validated by an 858-cycle soak (flat VRAM, L2 stable under its cap). [`../scripts/serve-plain.sh`](../scripts/serve-plain.sh) keeps the row below available. |
+| + LMCache DRAM/NVMe tiers (2026-07-20) | *(same engine)* | **214K** @0.95 **+ ~2.4M tiered** | Six local patches made tiered KV *faithful* on this fp8 hybrid (cross-restart needle + 69×2 = **89** vs a ~89.8 baseline). Trades 25K hot tokens and `mnbt` 4096 for ~2.4M tokens of second-chance capacity and a **warm start after restarts** — a 60K revisit costs 2 s (DRAM) or 4–7 s (NVMe) instead of an 11–13 s re-prefill. Validated by an 858-cycle soak (flat VRAM, L2 stable under its cap). [`../scripts/legacy/serve-plain.sh`](../scripts/legacy/serve-plain.sh) keeps the row below available. |
 | natfii NVFP4 W4A4 · fp8_e4m3 + FlashInfer + MTP `ns=4` (2026-07-19) | NVFP4 W4A4 · fp8 | ~239K @0.98 | **Prefill 3.4×** (13.5K vs 4.0K t/s @8K — native Blackwell FP4 GEMM vs Marlin dequant), deep-concurrent sustained **2.2×** (148 vs 67 t/s at pp30K×c8 tg512), cold 60K context 10 s vs 23 s — at **equal 69×2 quality** (~90, 4 trials each side; the W4A4 activation cost was bounded at ≈1 pt via a chimera A/B and natfii's calibration covers it). Survived the full promotion gauntlet incl. a 106-cycle soak and a 0.98 combined-wave battery. Pool is 11% smaller than AR's 270K (heavier MTP head + FP4 scales) — traded for re-prefilling 3× faster. |
 | Lorbus INT4-AutoRound · fp8_e4m3 + FlashInfer + MTP `ns=4` (2026-07-18) | INT4-AutoRound · fp8 | ~270K @0.96 | Flat deep decode (fp8+FlashInfer has **no** decode crater at depth, where the custom TurboQuant kernel drops); biggest pool ever; **MTP `ns=4`** restored by [PR #42603](https://github.com/vllm-project/vllm/pull/42603); tool-eval 90; dropped the experimental TurboQuant KV kernel for the **battle-tested fp8** path. (A one-day 0.98/287K promotion was reverted the same night: serve-time autotune OOM — [GOTCHAS.md](GOTCHAS.md) #8.) |
 | turboquant_4bit_nc (NVFP4) + MTP `ns=3` (2026-07-15) | NVFP4 · TQ 4-bit K/V | ~235K | +42% pool over k8v4, once the "4bit_nc destroys retrieval" **0/8** was traced to the async×spec KV confound and fixed with `--no-async-scheduling`. Decode still craters at deep single-stream (the custom-kernel cost). |
@@ -32,7 +33,7 @@ Three findings from the campaign worth keeping:
 
 - **The W4A4 quality question was settled by construction, not vibes.** We built a *chimera* checkpoint — natfii's W4A4 MLPs + NVIDIA's fp8 attention projections merged tensor-by-tensor into one MIXED_PRECISION export (both kernel classes co-dispatching in one graph) — and scored all three variants on the full 69×2. Chimera 90.0, natfii ~89.8, NVIDIA 91.0: the *entire* activation-quant cost is ≈1 point, natfii's calibration covers it, and no attention/MLP remix beats it without requantizing. The chimera was archived the day it answered the question.
 - **The util ceiling is model-specific.** 0.98 serve-time-OOM'd the AR daily (addendum below) but passes on natfii — lighter margin pressure per shape, `VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE=134217728` capping the autotune workspace, and a boot-time `pp8192×c8` pre-warm so the allocation happens before traffic. Earned via: full battery at 0.98 (needle, both killer shapes, 8× text flood, 8× vision burst), then two *simultaneous* combined waves on a cold engine, then a 106-cycle overnight soak. Steady-state floor ~130–190 MiB, no drift.
-- **The checkpoint shipped a poison pill:** `tokenizer.json` with `truncation: {max_length: 8192}` baked in (calibration leftover) — text fine, multimodal >8K tokens hard-400s. `serve.sh` now nulls it at every launch, because a re-download reinstates it.
+- **The checkpoint shipped a poison pill:** `tokenizer.json` with `truncation: {max_length: 8192}` baked in (calibration leftover) — text fine, multimodal >8K tokens hard-400s. `serve-tier-rc4.sh` (then `serve.sh`) nulls it at every launch, because a re-download reinstates it.
 
 ## Status addendum: util 0.98 lived one day (2026-07-18 → 2026-07-19)
 
@@ -124,3 +125,114 @@ return output
 ```
 
 This is almost certainly why the PR passed on the author's Ampere box (the eager/piecewise path *does* consume the return value) and fails on Blackwell, where full CUDA-graph capture is the default.
+
+---
+
+## Archive — the 2026-07 LMCache investigation (vLLM 0.24 / LMCache 0.5.1 / the 0.23 base)
+
+*Historically accurate; superseded by the current profile wherever the two conflict (vision, util, chunk size, `ns`, image, KV dtype). Moved here from LMCACHE.md on 2026-08-21.*
+
+
+## Architecture
+
+vLLM keeps its KV cache on the GPU and evicts on pool pressure; a revisit re-prefills from scratch (**5.8s** on a 40K-token session). [LMCache](https://github.com/LMCache/LMCache) adds tiers below the GPU:
+
+```
+on-GPU prefix cache   ≈ instant     (vLLM's own, evicts under pressure)
+  └─ L1: 24 GB pinned host RAM   ~0.5s hit
+       └─ L2: 150 GB SSD         ~2.7s hit   (~2M tokens; survives restarts)
+            └─ cold re-prefill    5.8s
+```
+
+Qwen3.6 is a **hybrid** (GDN/linear-attention + full-attention), so its mamba state must be stored as an opaque page. Only LMCache's **`LMCacheMPConnector`** does that ([LMCache PR #3613](https://github.com/LMCache/LMCache/pull/3613), in 0.5.1), and it needs an out-of-process `lmcache server` sidecar (ZMQ :5555) that owns the L1/L2 tiers.
+
+## The image
+
+```bash
+IMAGE=lmcache-vllm:fixed
+```
+
+`lmcache/vllm-openai:latest-cu129` (vLLM **0.24** + lmcache **0.5.1**) with one fix: it's CUDA-13-linked but ships no `libcudart.so.13`, so `csrc` load fails. Multi-stage `COPY` `libcudart.so.13*` from `nvidia/cuda:13.0.1-runtime-ubuntu24.04`, then `ldconfig`. (`pip install nvidia-cuda-runtime-cu13` does not work — PEP 668, then no wheel.)
+
+**Do not use the nightly pairing** (`latest-nightly-cu129`, lmcache 0.5.2-dev releases through at least 2026-07-06): it rejects this model's KV layout with `Unsupported EngineKVFormat: 10` on **every store** — and because the error is logged by the sidecar while serving continues, the profile silently degrades to vLLM's in-GPU prefix cache only; every "tiered revisit" you measure is a mirage. Our first fix attempt — a hand-written format-10 transfer kernel ([patch, now **withdrawn**](../patches/README.md#lmcache-format-10-kernel-patch-separate-project)) — made stores *run* but restored **corrupted context** (needle vanishes after reload; tool-eval 88 → 47). Root cause (established later, and it is *not* what we first guessed): vLLM's fp8 attention backend registers each hybrid-aligned page as ~100 contiguous **16-token kernel pages** in a fused rank-4 tensor; LMCache's kernel-page→logical-page regrouping only matched the rank-5 split-K/V layout, so it misread the 16-vs-1616 slots/tokens ratio as *compression* and transferred **one 16-token page per logical block** — wrongly addressed, zero errors logged. The GDN state pages were stored and restored fine all along (which is why output stayed fluent while distant facts vanished). LMCache **`main`** (≥ `0.5.2.dev66`, PR #4128) has the native format kernels, but as of `e38ee415` the regrouping gap is still there for the fp8 fused layout — bf16 hybrid passes a cross-restart needle (its raw page is already scheduler-sized); fp8 hybrid does not. A stride-aware fix is in progress *(it landed: patches 0001/0002 in the current image)*. Whatever you run: **needle-test across a restart before trusting any external KV tier on a hybrid model** — hit counters and coherent output do not prove fidelity.
+
+## Container flags
+
+```bash
+--entrypoint bash        # the image entrypoint is `vllm serve` — it would swallow our `bash -c`
+--ipc=host               # CUDA-IPC across processes; without it, hangs at "Creating transfer context"
+--memory 52g             # cgroup cap. The 24 GB L1 is PINNED host RAM — drop_caches before launch
+-e MAX_JOBS=4 -e FLASHINFER_NUM_COMPILE_JOBS=4      # cap the sm120 fp4-GEMM JIT (see gotcha 1)
+-v .../cache/flashinfer:/root/.cache/flashinfer     # MANDATORY persistent cache for that JIT build
+```
+
+**Never** add `-e PYTORCH_ALLOC_CONF=expandable_segments:True`. cuMem/VMM memory is not CUDA-IPC-exportable ([pytorch #165685](https://github.com/pytorch/pytorch/issues/165685), [vllm #29544](https://github.com/vllm-project/vllm/issues/29544)); the sidecar crashes importing the KV handles and never acks, and vLLM's `register_kv_caches` silently times out at 300s. This is the single most expensive gotcha here — it read as "version skew" for days.
+
+## The `lmcache server` sidecar
+
+```bash
+lmcache server --host 0.0.0.0 --port 5555 --chunk-size 1600 \
+  --l1-size-gb 24 --l1-init-size-gb 2 --eviction-policy LRU \
+  --worker-reap-timeout-seconds 0 \
+  --l2-adapter '{"type":"fs_native","base_path":"/l2","max_capacity_gb":150,"num_workers":4}'
+```
+
+- **`--chunk-size 1600`** — must equal vLLM's **unified block size**: **1600** with MTP `ns=3`, **1568** without (discovered, not documented — it is not 16). Mismatch → "chunk size must be a multiple of vLLM block size".
+- **`--l1-size-gb 24`** — the pinned-RAM tier. **It must exceed the hot working set / 0.8**, or LMCache's lookup breaks at the first missing chunk and LRU evicts the oldest session's *head* chunks first → head-miss → full re-store → evicts the next head → permanent thrash, **0% hits**. Partial caching does not degrade gracefully; undersize this and the cache is inert, not merely smaller.
+- **`--worker-reap-timeout-seconds 0`** — disables the worker-registration reaper. Default 120s + a lazily-started heartbeat means a long idle/blocked span gets reaped, after which the cache **cannot recover** (permanent zombie: `found_count=0`, stores silently dropped at the worker's health gate).
+- **`--l2-adapter fs_native … 150 GB`** — the SSD tier on a host dir mounted at `/l2`. ~2M tokens; survives container restarts. A 10×40K working set (29 GB) spills here with zero thrash.
+
+## vLLM flags
+
+```bash
+--kv-cache-dtype fp8_e4m3
+```
+fp8 KV. (4-bit TurboQuant KV is not composed here — this profile prioritises retention + concurrency, where fp8 already wins.)
+
+```bash
+--kv-transfer-config '{"kv_connector":"LMCacheMPConnector","kv_role":"kv_both"}'
+```
+Routes KV through the MP connector (store + load). The **only** connector that handles this hybrid's mamba state. *Belt-and-braces:* vLLM 0.24 also accepts `kv_load_failure_policy: "recompute"` here — the default `"fail"` turns any load failure into a request 500.
+
+```bash
+--speculative-config '{"method":"qwen3_5_mtp","num_speculative_tokens":3}'
+```
+MTP, composed with the cache. The composition the upstream trackers call unsupported — it works here; the "MTP+LMCache crashes" reports were a VRAM burst-OOM (gotcha below), not the scheduler wall. Keep **default cudagraph mode**: forcing `FULL_DECODE_ONLY` fails to cover MTP's verify-step shapes on 0.24 and collapses decode to **c1 46 / c8 179** (vs 118/450).
+
+```bash
+--gpu-memory-utilization 0.93
+```
+**Not 0.94.** The `lmcache server` process holds ~1.4 GB of VRAM (CUDA context + IPC mappings) that `--gpu-memory-utilization` does not account for. At 0.94, a burst of concurrent cold prefills OOMs (74 MB free at crash) and kills the engine — this was the entire "MTP crashes with LMCache" myth.
+
+```bash
+--max-model-len 120000
+--max-num-batched-tokens 3199        # = 2*chunk - 1
+```
+`120000` = the opencode client's context. `--max-num-batched-tokens` **must** be `2·chunk−1` (3199 with chunk 1600; 3135 with 1568) — LMCache's MP connector requires batched-tokens ∈ [chunk, 2·chunk). This batched-token ceiling is why prefill runs ≈−10% vs the daily's 8192 path at depth.
+
+```bash
+--limit-mm-per-prompt '{"image":0,"video":0}'
+```
+**Vision off.** The one capability gap vs the daily. A vision-on variant is untested; `image:0` also buys a thriftier KV pool (163K tokens no-MTP, 124K composed).
+
+```bash
+--max-num-seqs 8 --mamba-cache-mode align --enable-prefix-caching --enable-chunked-prefill
+--reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_xml
+--override-generation-config '{"temperature":0.6,"top_p":0.95,"top_k":20}'
+```
+Identical to the daily — see [CONFIG.md](CONFIG.md) for each. `--mamba-cache-mode align` is what lets prefix caching work on the Mamba layers; `qwen3_xml` is the correct tool parser (`hermes` drops the calls).
+
+## Known rough edges
+
+- **Two stochastic flakes** shared by every composed run: an instant-EOS at depth (`comp=1` empty — the documented temp-0.6 quirk) and a ~1-in-3 flake at pool capacity. Noisier than the clean no-MTP LMCache run; a flake-rate probe is pending.
+- **`engine_driven` transfer mode** serves but scores 0 hits on this hybrid — stick with the default `lmcache_driven`.
+- The **no-MTP** LMCache config (chunk 1568, no `--speculative-config`, util 0.90+) is the conservative fallback if MTP composition ever regresses: c8 517 (beats the daily's 488), c1 69 (the 0.24 image tax + no MTP).
+
+## LMCache + k8v4: composes, but the persisted tier is lossy — not shipped
+
+`turboquant_k8v4` KV (a prior daily; the later TurboQuant daily's `turboquant_4bit_nc` packed tighter still — both since retired, see [REJECTED.md](REJECTED.md)) composes with LMCache in the lab, but its **persisted (L2 SSD) tier is not bit-faithful** — so this profile stays **fp8-only**.
+
+- **It builds and runs.** The clean TQ image already ships lmcache 0.5.1; graft the format-10 `c_ops.so` from the [fmt10 build](../patches/lmcache-0.5.1-format10-NL_X_NB_NH_BS_TWO_HS.patch) (identical ABI, single file, no recompile). It launches, composes with MTP, stores land (0 format-10 errors), and the L2 SSD tier fills.
+- **But the L2 reload corrupts long-context retrieval.** After a container restart LMCache reloads 16–21K tokens in ~26 ms and the output stays fully coherent — yet planted long-context needles **vanish** (measured **7/7 miss** across two needles; a fresh prefill retrieves every time; the sidecar log confirms LMCache served the reload). Root cause: the format-10 transfer kernel copies bytes for the standard `[NB, NH, BS, 2·HS=512]` fp8/bf16 layout, but k8v4 packs `[…, 262]` (8-bit K + 4-bit V + scales) — the stride mismatch corrupts the L2 serialization round-trip. Coherent-but-lossy is exactly the failure that kills long-context coding.
+- **`engine_driven` doesn't rescue it.** The `engine_driven` transfer mode ([LMCache PR #4073](https://github.com/LMCache/LMCache/pull/4073)) reclaims the ~900 MB sidecar VRAM (1,370 → 498 MiB), but its SHM-registration handshake is unstable grafted onto the older-nightly TQ base (300 s `register_kv_caches` timeout), and even the prior working run was parked as unstable (≥30K-prefill OOM) with fidelity unverified.
+- **Conclusion.** LMCache's persistence tier only round-trips faithfully with **fp8 KV**. k8v4 keeps vLLM's in-pool `--enable-prefix-caching` (fast in-pool reuse) but **no tiered persistence**. A faithful k8v4 tier would need a new lmcache `KVFormatSpec` + transfer kernel for the 262-wide packed layout (or forcing opaque BINARY blocks) — not worth it single-user.

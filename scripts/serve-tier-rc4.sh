@@ -4,31 +4,21 @@
 # vs the 08-15 V1 daily measured the same hour: pool 209,859 (+4%), decode c1 152 / c4 360 / deep 143
 # (+19%/+16%/+20%), needles+L2+restart-proof+killer clean, tool-eval 91+-0. Fresh L2 namespace rc4-v2.
 # Previous generation: IMAGE=vllm-qwen38:tiers-rc4 EXTRA_ENV= L2DIR=/srv/qwen5090/lmcache-l2-rc4.
-# Derived from launch-tier-daily.sh; nightly deltas: qwen3 parser, effort=medium kwarg,
-# no SO-config graft (native), no deepseek_r1, fresh rc4 L2 namespace.
-# THE DAILY. Qwen3.8-27B (PROMOTED 2026-08-14, user-approved, replacing natfii 3.6):
-# sakamakismile MTP-NVFP4 W4A4 (natfii recipe on 3.8) + fp8_e4m3 KV + FlashInfer + MTP ns=4
-# + vision, with LMCache tiered KV offload (fresh L2 namespace — 3.6 chunks are NOT valid
-# for 3.8). Why (results dir 2026-08-14-qwen38-nvfp4): 69x2 pairs 91/90 vs 3.6's 89.0+-1.4;
-# pool at parity; killer cold round 8/8 @98% pool; needle/vision/tools clean.
-# 3.8 serving deltas vs 3.6: template prefills <think> + reasoning-effort system line
-# (default xhigh) -> deepseek_r1 parser; T=0.6 override kept (measured better than model-default T=1.0);
-# API serves reasoning as message.reasoning. Alias qwen3.6-27b kept for existing clients.
+# Model: sakamakismile/Qwen3.8-27B-MTP-NVFP4 (W4A4, MTP head, vision), served as qwen3.8-27b with the
+# qwen3.6-27b alias for clients configured before 2026-08-14. Serving notes: the 3.8 template prefills
+# <think> and injects a reasoning-effort system line (qwen3 parser; effort medium by default); the
+# T=0.6 override beat the model-default T=1.0 on a 69x4 (90.5+-2.1 vs 87.8+-1.3, 2026-08-14).
+# Requires the tier image (patches/rc4) with the nvfp4kv stack on top (patches-nvfp4kv); on stock
+# LMCache this profile stores wrong-addressed pages and restores garbage state with fluent output.
+# Flag rationale: docs/CONFIG.md. Failure modes: docs/GOTCHAS.md. No-tier variant: scripts/serve-nvfp4kv.sh.
 #
-# Requires the TIER image (../patches/lmcache/) — six local patches on top of the base image.
-# Running this profile on stock LMCache is WORSE THAN NOT CACHING: stores are silently
-# wrong-addressed and retrieves restore garbage state. Read ../patches/lmcache/README.md.
-#
-# For the no-LMCache variant (bigger hot pool, no tiers, no patches), see ./serve-plain.sh
-# and "What removing LMCache changes" in ../docs/LMCACHE.md.
-#
-#   MODEL_DIR=/path/to/Qwen3.6-27B-VLM-NVFP4-MTP ./serve.sh
+#   MODEL_DIR=/path/to/Qwen3.8-27B-MTP-NVFP4 ./serve-tier-rc4.sh
 set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"   # llama-benchy (pre-warm) commonly lives here
 
 MODEL_DIR=${MODEL_DIR:-/srv/qwen5090/models/saka-qwen3.8-27b-mtp-nvfp4}  # sakamakismile/Qwen3.8-27B-MTP-NVFP4
 MODEL_NAME=${MODEL_NAME:-qwen3.8-27b}
-MODEL_ALIAS=${MODEL_ALIAS:-qwen3.6-27b}   # legacy name — hermes/owui/prime configs still say 3.6
+MODEL_ALIAS=${MODEL_ALIAS:-qwen3.6-27b}   # alias for clients configured before the 2026-08-14 model change
 IMAGE=${IMAGE:-vllm-qwen38:tiers-rc4-ba07e4a}   # Dockerfile.rc4 --build-arg VLLM_BASE=<08-21 nightly digest>
 PORT=${PORT:-8029}   # gauntlet default = experiment port; promotion passes PORT=8020
 BIND_ADDR=${BIND_ADDR:-127.0.0.1}    # loopback by default — the API has NO auth. Set 0.0.0.0

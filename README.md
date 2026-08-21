@@ -1,222 +1,126 @@
-# Qwen3.6-27B on a single RTX 5090: SWE-Bench Verified 69.4%\*
+# Qwen3.8-27B on a single RTX 5090: 309K-token KV pool, restart-proof cache tiers, 200K context
 
-> **2026-08-15 evening — the tiers are BACK on the modern base**: `vllm-qwen38:tiers-rc4` = vLLM nightly 0.27 + **LMCache v0.5.4rc4** + a re-audited patch stack ([`patches/rc4/`](patches/rc4/)): 0003 retired (fixed upstream), 0001/0002 re-derived for 0.27's layout (runtime needle-gate passed: cold 10.1s / warm 0.8s / post-restart 4.7s, exact retrieval), and **new 0009 — fs_native watermark LRU eviction that actually works** (L2 measurably shrinks under write load at cap; the freeze-at-cap failure mode is gone). Tier-profile 69×2 **92.5 ± 0.7 — the best tier score this project has produced** (0.23 tiers: 90.5 ± 2.1), at `reasoning_effort: medium` + T=0.6. Pool 214,084. One migration rule: the rc4 stack's on-disk L2 filename format changed — always use a fresh L2 namespace per stack generation.
->
-> **2026-08-15 — re-platformed on current vLLM nightly (0.27), ZERO local patches**: the entire graft/patch stack this repo documents (#42603, #44993, the six LMCache patches) is only needed on the frozen 0.23 base. On nightly, MTP ns=4 survives the c8 killer ungrafted, structured-outputs-with-reasoning is native, and the modern `qwen3` parser handles 3.8's prefilled-`<think>` template. Two findings remain load-bearing: **`--mamba-cache-mode align`** (69×2 quality 91 ± 0 with it, 87–88.5 without — hybrid GDN state × spec decode) and **async scheduling off** for quality (−1pt when on). Perf on nightly: c1 123 / c8 322 tok/s decode, 13.0K tok/s prefill @8K, pool 207,042 @0.98/200K. New script: [`scripts/serve-nightly.sh`](scripts/serve-nightly.sh) (digest-pinned). The LMCache tier profile is temporarily retired pending a rebuild against LMCache 0.5.3; `serve.sh`/`serve-plain.sh` document the 0.23 fallback. vLLM-native **DSpark** (merged upstream 2026-08-14) beats MTP by 12–40% here with the RadixArk draft but caps context at ~64K (draft KV) — an opt-in profile, not the daily.
->
-> **2026-08-14 — the daily on this box is now [Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B)** (released that day; same `qwen3_5` architecture, so the whole stack below runs it unmodified). Checkpoint: [sakamakismile/Qwen3.8-27B-MTP-NVFP4](https://huggingface.co/sakamakismile/Qwen3.8-27B-MTP-NVFP4) — the same W4A4 recipe as natfii's 3.6 quant (20.6 GB, MTP head bf16, vision kept). Same tier profile, same pool (214,084), three serving deltas: `--reasoning-parser deepseek_r1` (3.8's template prefills `<think>` and injects a reasoning-effort system line, default `xhigh`), the T=0.6 sampling override stays (measured; see below), and it serves as `qwen3.8-27b` with a `qwen3.6-27b` alias. Day-one quality on this box: plain-profile 69×2 pairs **91** and **90**/100 (3.6 plain: ~89.8); tier-profile 69×4 at the matched T=0.6 protocol **90.5 ± 2.1** vs 3.6's **89.0 ± 1.4** — and the same-temperature control showed the model-default T=1.0 costs ~2.7 pts with double the trial variance (87.8 ± 1.3), so the daily keeps the T=0.6 override. The SWE-Bench/Terminal-Bench numbers below are the **3.6** results and stay until re-run on 3.8.
+The repo name is historical (it started on Qwen3.6); the served model has been Qwen3.8-27B since 2026-08-14 and the engine below is the 2026-08-21 daily. Lineage, reversals and every previous generation are in [docs/HISTORY.md](docs/HISTORY.md).
 
-The most comprehensively validated single-5090 setup we know of for **concurrent long-context coding agents**: Qwen3.6-27B at 200K context with MTP speculative decoding, vision, and a three-tier KV cache whose NVMe tier survives restarts, so yesterday's agent session is still warm this morning. All of it on one 32 GB consumer GPU (Blackwell `sm_120`); every throughput and capacity number is in [the table below](#the-config-at-a-glance).
+This is a serving config for concurrent long-context coding agents on one 32 GB Blackwell card (`sm_120`): a W4A4 NVFP4 checkpoint, an NVFP4 KV cache, MTP speculative decoding, vision, and a DRAM/NVMe KV tier that survives restarts. Every number here was measured on this box on the date given; the raw results directory or FINDINGS round is named next to it.
 
-> **Validated end to end, not just on throughput**: this exact profile scores **69.4%\* on SWE-Bench-Verified** (full 500, single attempt, official `swebench` harness) and **48.3% on Terminal-Bench 2.1** (Harbor + terminus-2, default timeouts), with agents hammering the box for ~12 h stretches and zero engine crashes. [The numbers, their anatomy, and the \* →](#agentic-benchmark-results)
-
-The daily is the **[natfii NVFP4 W4A4](https://huggingface.co/natfii/Qwen3.6-27B-VLM-NVFP4-MTP)** checkpoint + **`fp8_e4m3` KV cache** + **FlashInfer** attention + **MTP `ns=4`** + **[LMCache](https://github.com/LMCache/LMCache) DRAM/NVMe offload**, on a patched vLLM image. Two things carry it:
-
-- **W4A4 turns on Blackwell's native FP4 tensor cores**: **3.4× the prefill** of the weight-only-quant daily it replaced, at equal measured quality ([why, in DESIGN.md](docs/DESIGN.md#why-these-weights--and-what-actually-governs-prefill-speed)). MTP `ns=4` needs a one-line synchronization workaround from [vLLM PR #42603](https://github.com/vllm-project/vllm/pull/42603), closed unmerged upstream; without it, MTP + fp8 KV crashes with an illegal memory access under any real concurrency.
-- **The KV tiers turn eviction into a 2–7 s reload instead of an 11–13 s re-prefill**, and turn a restart from a total cache loss into a warm start. Agents resend their whole transcript every step, so almost every request is a long prefix revisit; on a 16-task SWE-Bench-Verified run at 4 concurrent agents that is **3.4× the wall-clock throughput** ([A/B](docs/LMCACHE.md#what-removing-lmcache-changes)). Getting the tiers *faithful* on an fp8 hybrid took **[six local patches](patches/lmcache/README.md)**, four on LMCache and two on vLLM. Unpatched, this profile is worse than no cache at all: it stores wrong-addressed pages and restores garbage recurrent state, with fluent output and zero errors logged.
-
-If you want the engine without the tiers — bigger hot pool, no sidecar, no local LMCache patches — that's [`scripts/serve-plain.sh`](scripts/serve-plain.sh), and the exact trade is spelled out in [What removing LMCache changes](docs/LMCACHE.md#what-removing-lmcache-changes).
-
-## The config at a glance
+## The config at a glance (daily since 2026-08-21)
 
 | | |
 |---|---|
-| model | [natfii Qwen3.6-27B-VLM-NVFP4-MTP](https://huggingface.co/natfii/Qwen3.6-27B-VLM-NVFP4-MTP) — W4A4, MTP head, vision tower |
-| engine | patched vLLM (3 base + 6 tier patches) + FlashInfer 0.6.15, `fp8_e4m3` KV, MTP `ns=4`, `--no-async-scheduling` |
-| context / hot pool | 200K / **214,084 tokens** on-GPU (util 0.95; plain profile: 239,436 @0.98) |
-| tiered KV | + ~245K tok pinned DRAM (~2 s revisit) + ~2.13M tok NVMe (~4.4–7.5 s, **survives restarts**) ≈ **2.59M reusable** — aggregate *reusable prefixes* across sessions, **not** the per-request window (that caps at 200K) |
-| prefill | **~13.5K t/s @8K** (native Blackwell FP4 GEMM); cold 60K context ~11–13 s |
-| decode | **~80–160 t/s single-stream, content-dependent** (MTP acceptance: creative prose ~82, code ~158; benchy ~116–140); flat with depth to 180K; aggregate peaks 700–960 t/s (c8, warm) |
-| quality | tool-eval-bench **89.0 ± 1.4**/100 (full 69 scenarios × 4 trials on this exact profile) — parity with the best W4A16 daily |
-| **SWE-Bench-Verified** | **69.4%**\* (347/500, official harness, single attempt; [the \*](#agentic-benchmark-results)) |
-| **Terminal-Bench 2.1** | **48.3%** (43/89, terminus-2, default timeouts; **71.7%** on tasks that finished within budget) |
-| hardware | 1× RTX 5090 32 GB (+4500 MHz mem OC, 600 W) + Ryzen 9 5900X + 64 GB RAM |
-| endpoint | OpenAI-compatible, `http://127.0.0.1:8020/v1` — **loopback-bound by default, no auth**; opt into LAN with `BIND_ADDR=0.0.0.0` behind a firewall/VPN or authenticated proxy |
+| model | [sakamakismile/Qwen3.8-27B-MTP-NVFP4](https://huggingface.co/sakamakismile/Qwen3.8-27B-MTP-NVFP4) — W4A4 NVFP4 (ModelOpt recipe), MTP head, vision tower, 20.6 GB |
+| engine | vLLM nightly `ba07e4a48` (2026-08-21) on the V2 model runner, FlashInfer 0.6.17, two local patch stacks ([rc4](patches/rc4/) for the tiers, [nvfp4kv](patches-nvfp4kv/) for the KV cache) |
+| KV cache | `--kv-cache-dtype nvfp4` (E2M1 values + one FP8 scale per 16 elements, 0.5625 B/elt), unified hybrid block 2864 tokens |
+| hot pool | **309,090 tokens** at util 0.93, max-len 200K, 8 sequences (fp8 KV on the same engine: 208,450) |
+| tiers | LMCache 0.5.4rc4: 24 GiB pinned DRAM + 200 GiB NVMe (`fs_native`), chunk 2864; the NVMe tier survives restarts |
+| spec decode | MTP `ns=4`, `--no-async-scheduling`, `--mamba-cache-mode align` |
+| decode | c1 141 / c4 339 / c8 353 t/s aggregate at pp8192; 142 t/s single-stream at 30K depth |
+| prefill | 12.8K t/s at 8K, 9.3K at 30K, single stream (the prefill lane is shared; per-request divides by N) |
+| quality | tool-eval-bench 69×2 **92 ± 1.4**; fp8-tier control 69×4 90.8 ± 0.5 |
+| retrieval | needles 9K→100K cold + warm 10/10 + 10/10; restart-proof L2 revisit 40K 6.3 → 2.5 s, 60K 11.6 → 3.3 s; 15/15 + 15/15 under 4 concurrent loaders |
+| hardware | RTX 5090 32 GB (+4500 MHz memory OC, 600 W), Ryzen 9 5900X, 64 GB RAM, Ubuntu 24.04 |
+| endpoint | OpenAI-compatible `http://127.0.0.1:8020/v1`, served as `qwen3.8-27b` (alias `qwen3.6-27b` kept for old clients); loopback by default, no auth |
 
-## What this config optimizes for
+Source: FINDINGS R79 and R81, results dirs `2026-08-21-qwen38-tier-v2` and `2026-08-21-qwen38-tiers-nvfp4kv`.
 
-This is a **daily driver for agentic coding**: a handful of coding agents with deep (8K–100K+) contexts, plus interactive chat and the occasional image, on one always-on box. That workload ranks the goals, and the ranking explains every choice below:
+## What it optimizes for
 
-1. **Reliability over everything.** An engine that answers *fluently but wrongly* from a corrupted cache is worth less than a slower one; nothing becomes the daily without surviving the promotion gauntlet described in [Benchmarks](#benchmarks).
-2. **Trustworthy context capacity.** The biggest KV pool that passes rule 1, then ~2.4M more tokens of it below the GPU, on fp8 KV rather than denser-but-corrupting 4-bit kernels; capacity that lies is worse than no capacity ([what the tiers had to prove](docs/LMCACHE.md)).
-3. **Latency in the agent regime, not benchmark aggregate.** Agent latency is mostly prefill, which W4A4 roughly triples; MTP `ns=4` then roughly doubles deep single-stream decode ([mechanics in DESIGN.md](docs/DESIGN.md#why-these-weights--and-what-actually-governs-prefill-speed)).
-4. **Everything on at once.** Vision, 200K context, speculative decoding, reasoning + structured outputs, tool calling, simultaneously. No per-benchmark specialization; the numbers below are the config you'd actually run.
+A few coding agents with 8K–100K+ contexts, interactive chat, the occasional image, on one always-on box. Ranked:
 
-Non-goals: maximum batched throughput for many shallow users (this box peaks at ~700–960 t/s aggregate when streams are warm), multi-GPU, and minimum VRAM.
+1. Correctness of the cache. An engine that answers fluently from corrupted KV is worse than a slower one. Nothing becomes the daily without the gauntlet in [Benchmarks](#benchmarks): depth needles cold and warm, a needle retrieved after a container restart, the same under concurrent load, a cold 8×24K burst, a vision burst, and a full tool-eval.
+2. Context capacity that passes rule 1. The NVFP4 KV cache is the first 4-bit KV format that did on this hybrid; the tiers add DRAM and NVMe below it.
+3. Latency in the agent regime: prefill (W4A4 on the FP4 tensor cores) and single-stream decode (MTP).
+4. Everything on at once: vision, 200K context, speculative decoding, reasoning, structured outputs, tool calling.
 
-## The graveyard
+Non-goals: maximum aggregate throughput for many shallow users, multi-GPU, minimum VRAM.
 
-**Promoted 2026-08-21:** the tier daily now runs on the 08-21 nightly with vLLM's **V2 model runner** — **+19% c1 / +16% c4 / +20% deep decode**, pool +4%, tiers, restart-proof L2 and needles all clean, tool-eval 91: [docs/V2RUNNER.md](docs/V2RUNNER.md), launcher [`scripts/serve-tier-rc4.sh`](scripts/serve-tier-rc4.sh).
+## How the 2026-08-21 daily came about
 
-**Also measured 2026-08-21:** [DFlash2](docs/DFLASH2.md) instead of MTP — 164 t/s single-stream (2.25× AR), tool-eval parity, but MTP on the same V2 runner does 160 t/s with 2.5× the context and +40% at c4; the runner, not the drafter, was the win. Rejected; the V2-runner daily audition is the follow-up.
-
-**Promotion candidate, measured 2026-08-21:** an NVFP4 KV cache (FlashInfer's merged FA2 sm120 path + vLLM PR #49891 + a V-scale-layout overlay) **with the LMCache tiers** — **pool 309K (+48%)** at decode parity, L2 restart-proof, tool-eval 92; the only requirement was LMCache chunk = the nvfp4 unified block (2864): [docs/NVFP4KV.md](docs/NVFP4KV.md).
-
-Several faster configs died on the way here: a +6% KV-pool setting, two 4-bit KV kernels, and a tiered-cache stack that passed every hit-counter check while restoring garbage. Every rejection is documented with the number that killed it in [docs/REJECTED.md](docs/REJECTED.md), and [docs/HISTORY.md](docs/HISTORY.md) keeps the full daily lineage, reversals included. Read them before "improving" the config; odds are it has been tried.
+The session started from a 5-day outage (self-inflicted: procps `kill -TERM -<pgid>` parses to `kill(-1)`), found that a 20% SWE-Bench regression was the harness silently disabling function calling, tried DFlash2 instead of MTP (rejected: MTP on the same runner matched it at 2.5× the context — [docs/DFLASH2.md](docs/DFLASH2.md)), and in doing so found that the V2 model runner plus the newer nightly gave MTP +16–20% decode ([docs/V2RUNNER.md](docs/V2RUNNER.md)). The NVFP4 KV cache then went from "needs an LMCache page-regrouping project" to "works with one config line" once the unified block (2864 tokens) was read off the engine log ([docs/NVFP4KV.md](docs/NVFP4KV.md)).
 
 ## Benchmarks
 
-Hardware: RTX 5090 32 GB (`sm_120`, +4500 MHz mem OC, 600 W) + Ryzen 9 5900X + 64 GB RAM, Ubuntu 24.04.
-Model: Qwen3.6-27B natfii NVFP4 W4A4 + `fp8_e4m3` KV + FlashInfer 0.6.15 + MTP `ns=4` + vision, `--no-async-scheduling`.
-Tool: [llama-benchy](https://github.com/eugr/llama-benchy) 0.3.8. Full detail and protocols in [bench/RESULTS.md](bench/RESULTS.md).
+Tool: [llama-benchy](https://github.com/eugr/llama-benchy) 0.3.8 unless stated. Memory-overclocked card (+4500 MHz VRAM, about 15% more bandwidth than stock); decode is bandwidth-bound, so expect up to ~15% lower decode at stock clocks. Full tables: [bench/RESULTS.md](bench/RESULTS.md).
 
-Numbers are from a memory-overclocked card: +4500 MHz VRAM offset, roughly 15% more bandwidth than stock. Decode is bandwidth-bound on this model, so expect up to ~15% lower decode at stock clocks (derived from the bandwidth delta, not separately measured); prefill is compute-bound and barely affected ([host notes](docs/DESIGN.md#host-notes)).
+**Decode, tiers on (2026-08-21, pp8192 tg512, aggregate t/s):**
 
-> **Which profile these numbers are from.** Measured on the **no-LMCache** profile (util 0.98, pool 239,436, `mnbt` 4096) — they isolate the *engine*, and they're the numbers to compare against other setups. The same weights and kernels mean the tier profile decodes identically; its narrower `mnbt` (3231) costs a few percent on synthetic deep prefill — quantified in [What removing LMCache changes](docs/LMCACHE.md#what-removing-lmcache-changes).
+| | c1 | c2 | c4 | c8 | c1 at pp30000 |
+|---|---|---|---|---|---|
+| nvfp4 KV tiers (daily, R81) | 141 | — | 339 | 353 | 142 |
+| fp8 KV tiers, V2 runner (R79) | 152 | 249 | 360 | 367 | 143 |
+| fp8 KV tiers, V1 runner (previous daily, same hour) | 128 | — | 309 | — | 119 |
 
-**Stability — the promotion gauntlet.** Zero-crash across: the ceiling battery at util 0.98 (needle-in-haystack, `pp8192×c8` + `pp30000×c8` killer shapes, 8× distinct ~34K text floods, 8× four-image vision bursts), two *simultaneous* combined waves (16 mixed requests + benchy on a cold engine), a **106-cycle overnight soak** (zero VRAM drift), and 4 full **69×2 tool-evals** under load.
+**Why the aggregate plateaus past c4.** The mean above divides generated tokens by the whole request time, and benchy sends cold prompts: eight 8K prefills go through one chunked prefill lane (about 7 s serialized), so requests start decoding in a stagger and barely overlap at tg512. The peak column tells the other half: peak aggregate decode on the fp8 V2 run was 181 / 349 / 643 / 1033 t/s at c1 / c2 / c4 / c8, near-linear. Agents with cached contexts run near the peak; cold concurrent prefill runs near the mean. The remaining per-request loss at c8 is physical: 48 of 64 layers are GDN, whose decode cost is per sequence, not amortized across the batch.
 
-**The operating envelope** (full matrices, protocols, and per-run data: [bench/RESULTS.md](bench/RESULTS.md)):
+**Prefill, single stream (R81, mnbt 5727):** 12.8K t/s at 8K, 9.3K at 30K. The fp8 tier profile (mnbt 3231) reads 9.7K / 8.9K on the same engine; the plain profile at mnbt 4096 reads 13.0K / 9.7K.
 
-| | measured |
-|---|---|
-| prefill, single stream | **13.5K t/s** @8K → 10.1K @30K → 3.5K @180K (shared lane: aggregate flat under concurrency, per-request divides by N) |
-| e2e TTFT, cold context | **2.7 s** @30K · 14.1 s @90K · 47 s @180K (was 7.4/27.9/72.4 pre-W4A4) |
-| decode, single stream | **~80–160 t/s, content-dependent** (MTP acceptance: creative prose 82, code 158, benchy ~116–140) — flat with depth to 180K, no deep-context crater |
-| decode, aggregate | peaks **700–960 t/s** (c8, warm streams); sustained deep-cold c8 is prefill-lane-bound (466 @pp8192, 149 @pp30000) |
-| quality | tool-eval-bench pooled **89.8** on this plain profile (69×2, ×4 runs); tier daily **89.0 ± 1.4** (69×4, [cross-trial stats](bench/RESULTS.md#tool-eval-cross-trial-statistics--694-on-the-tier-daily-2026-07-22)) — parity with the best W4A16 daily (87.8) |
+**Retrieval and cache correctness (R81):** depth needles 9K / 20K / 40K / 60K / 100K, two samples each, exact match of a random secret, cold and warm: 10/10 + 10/10; warm revisits 0.5 s at 9K to 1.2–2.0 s at 100K (cold 27 s). Restart-proof: store 40K and 60K, `docker restart` the engine, revisit: 6.3 → 2.5 s and 11.6 → 3.3 s, both correct. Under 4 concurrent 20K loaders at 32K / 48K / 64K × 5: 15/15 cold, 15/15 warm. Cold burst of 8 × 24K: 8/8.
 
-> **Why decode is a range, not a number:** with MTP speculative decoding, the draft head lands more tokens per verify step on predictable output. Same engine, same 600-token budget: *"write a short story"* → 82 t/s, *"create a todo app"* → 158 t/s. If your workload is prose, read the low end; if it's code (this box's job), read the high end.
+**Quality:** tool-eval-bench 69×2 at T=0.6, reasoning effort medium: 92 ± 1.4 on the daily; 69×4 on the fp8 tier profile the same day: 90.8 ± 0.5; the previous image on the V2 runner: 91.2 ± 2.1. The 2026-07 era's 89.0 ± 1.4 and the 2026-08-15 92.5 ± 0.7 (n=2) sit in the same band. Lost points land in the same categories every run (Instruction Following, Context & State, Safety & Boundaries).
 
-### Agentic benchmark results
-
-Two official end-to-end benchmarks, run on this exact daily profile (tiers on), agents talking to the box like any other OpenAI endpoint:
-
-| benchmark | score | harness / agent | shape |
-|---|---|---|---|
-| **SWE-Bench-Verified** | **69.4%**\* (347/500) | official `swebench` harness, R2E-Gym scaffold | full 500, single attempt, zero retries |
-| **Terminal-Bench 2.1** | **48.3%** (43/89) | Harbor + terminus-2 (leaderboard reference agent) | k=1, default per-task timeouts |
-
-\* **The one methodology caveat on 69.4%:** exported patches had R2E-Gym image build-file hunks stripped before official-harness replay, applied uniformly across all 500 tasks. The artifacts, the fingerprint analysis showing what was stripped, and pinned rerun commands: [verify it yourself](bench/reproduce/README.md#is-the-sanitization-legitimate-verify-it-yourself).
-
-**SWE-Bench-Verified 69.4%**\* lands above the published same-model mini-swe-agent reference (67.8%), under the 79.2% public SOTA; the remaining headroom is agent-scaffold engineering, not engine configuration.
-
-**Terminal-Bench 2.1 48.3%** is wall-clock-bound before it is capability-bound: 27 of the 46 misses are agent *timeouts* (only 17 genuine fails), and the pass rate on tasks that finished within budget is **71.7% (43/60)**. The clock goes to 96–234K-token reasoning traces against a ~130–140 t/s per-stream ceiling — concurrency tuning doesn't move it (measured), and raising timeouts would disqualify the number. For scale: terminus-2 leaderboard rows (k=5) run Fable 5 80.4%, Opus 4.7 66.1%; best open-weight row GLM-5.1 58.7%.
-
-Full anatomy — the timeout A/B, the patch-sanitization mechanics, per-repo splits, leaderboard rules: [bench/RESULTS.md](bench/RESULTS.md#agentic-benchmarks--full-anatomy-2026-07-20--22-tier-daily).
-
-> **Safety note before you wire this to real tools.** Like most small open models, the default model **reliably follows instructions injected through tool results** — tool-eval's sleeper-injection scenario (an attacker directive hidden in an API response, activated on a later innocent request) succeeds 8/8 against the bare model. A 3-sentence system-prompt guard blocked it 4/4 in our probe, but treat that as mitigation, not proof: put the guard in every agent's system prompt, gate irreversible tools (send/pay/unlock) behind confirmation, and don't hand untrusted-content agents consequential tools. [Measurements + guard text](bench/RESULTS.md#prompt-injection-probe--tool-eval-tc-60-and-the-guard-that-stops-it-2026-07-22-tier-daily).
+**Agentic benchmarks** (SWE-Bench-Verified, Terminal-Bench 2.1) were last run in 2026-07 on the previous model and are archived in [bench/RESULTS.md](bench/RESULTS.md#archive--qwen36-era-2026-07) and [docs/HISTORY.md](docs/HISTORY.md). They have not been re-run on this daily. One finding from 2026-08-21 matters for anyone re-running them: R2E-Gym's function-calling gate keys on the served model name; with it off the model never sees the tool schema and scores 5/25 instead of 20/25 on the same tasks (FINDINGS R76).
 
 ## Quick start
 
 ```bash
-# 1. base image (~1 min of pure-Python patches on top of the vLLM base;
-#    the FlashInfer 0.6.15 step JIT-compiles its kernels on first run, so mount its cache)
-cd patches && docker build -t vllm-qwen36:patched . && cd ..
+# 1. tier image: vLLM nightly (digest as build-arg) + LMCache 0.5.4rc4 + the rc4 patch stack
+cd patches/rc4 && docker build \
+  --build-arg VLLM_BASE=vllm/vllm-openai@sha256:4e9299fb10c93ba020fbbe3237f7b5998d96cfe9fae962319babc9d7796ea66e \
+  -t vllm-qwen38:tiers-rc4-ba07e4a -f Dockerfile.rc4 . && cd ../..
 
-# 2. tier image — LMCache main + the six patches, each gated by its own regression test
-#    (this one compiles CUDA/C++, so it's minutes not seconds)
-cd patches/lmcache && docker build -t vllm-qwen36:tiers . && cd ../..
+# 2. nvfp4 KV on top of it: FA2 nvfp4 routing (PR #49891 rebase) + the sm120 V-scale overlay (AOT-built)
+cd patches-nvfp4kv && docker build \
+  --build-arg VLLM_BASE=vllm-qwen38:tiers-rc4-ba07e4a --build-arg VLLM_COMMIT=ba07e4a48 \
+  -t vllm-qwen38:tiers-nvfp4kv -f Dockerfile.nvfp4kv . && cd ..
 
-# 3. serve the daily (tiers on)
-./scripts/serve.sh
+# 3. serve (tiers on, nvfp4 KV, V2 runner)
+MODEL_DIR=/path/to/Qwen3.8-27B-MTP-NVFP4 ./scripts/serve-tier-rc4.sh
 ```
 
-Or skip both builds and pull the **exact validated daily image** (immutable tag — the same bits the agentic benchmarks and the tier soak ran on):
+`serve-tier-rc4.sh` derives the LMCache chunk from the KV dtype (2864 for nvfp4, 1616 for fp8), sets `mnbt = 2·chunk − 1`, checks the pool against a band after boot, and nulls a baked tokenizer truncation if the checkpoint ships one. `KVDTYPE=fp8_e4m3 IMAGE=vllm-qwen38:tiers-rc4-ba07e4a UTIL=0.95` runs the previous (fp8) generation from the same script. Every flag is annotated inline in the script and in [docs/GOTCHAS.md](docs/GOTCHAS.md).
 
-```bash
-docker pull ghcr.io/adrienbrault/qwen36-27b-vllm:tiers-lmcfix6-20260722
-# digest sha256:51f654b566c54451080164e27a34e5a180c67fa85e3414dabdb340e91b8dccb1
-IMAGE=ghcr.io/adrienbrault/qwen36-27b-vllm:tiers-lmcfix6-20260722 ./scripts/serve.sh
-```
+## Things that bite
 
-Then `http://localhost:8020/v1` speaks OpenAI. Every flag is explained inline in [`scripts/serve.sh`](scripts/serve.sh) and in [docs/GOTCHAS.md](docs/GOTCHAS.md).
+1. The LMCache chunk must equal vLLM's unified block. vLLM logs it at boot ("Setting attention block size to N tokens"): 1616 with fp8 KV, 2864 with nvfp4. A mismatch is either a loud error or a mis-chunked cache.
+2. `--no-async-scheduling` stays on with MTP. On this hybrid, async scheduling costs about 1 tool-eval point and has corrupted KV under spec decode ([vllm#42655](https://github.com/vllm-project/vllm/issues/42655)).
+3. Verify the engine after launch, not the banner: image name, vLLM version, `Using V2 Model Runner`, the overlay line `NVFP4KV-SM120: linear-V-scale store overlay ACTIVE`, and the pool (about 309K). A dispatcher that printed "tier-rc4" while running a 0.23 image went unnoticed for six days.
+4. The nvfp4 store overlay is required on sm120. vLLM's in-tree writer swizzles V block scales for SM100; FlashInfer's FA2 reader addresses them linearly. Behavioural probes do not catch it (needles and tool-eval pass with the wrong writer); [`patches-nvfp4kv/overlay/diag_vsf_layout.py`](patches-nvfp4kv/overlay/diag_vsf_layout.py) does: 2.7–10× the attention error without the overlay.
+5. Keep util at 0.93 on the V2 runner with nvfp4 KV. At 0.95 the FlashInfer autotuner OOM-falls-back to its default tactic on the first new shape.
+6. A 4-bit KV cache costs about 2 tool-eval points against fp8 on this model on the plain profile (R77/R80: 89–89.5 vs 91). The tier measurement (92 ± 1.4, n=2) did not show it; a 69×4 is pending.
+7. Needle-test across a restart before trusting any external KV tier on a hybrid model. Hit counters and fluent output were compatible with a broken cache through four rounds in 2026-07 ([docs/LMCACHE.md](docs/LMCACHE.md)).
 
-**Want it without the tiers?** Skip step 2 and run [`./scripts/serve-plain.sh`](scripts/serve-plain.sh) instead — bigger hot pool, no sidecar, base image only. [What you trade](docs/LMCACHE.md#what-removing-lmcache-changes).
+The rest: [docs/GOTCHAS.md](docs/GOTCHAS.md).
 
-## Before you run this — the three landmines
+## Patch stacks
 
-1. **MTP `ns≥2` + fp8 KV IMA-crashes stock vLLM under concurrency** — the image carries a one-line synchronization workaround (below). Single-stream tests hide it; load-test with 3+ parallel streams on day one.
-2. **`--no-async-scheduling` is mandatory with MTP** — vLLM's async scheduler corrupts KV under spec decode ([#42655](https://github.com/vllm-project/vllm/issues/42655)).
-3. **Verify the KV pool in the launch log**: ~214K on the tier daily, ~239K plain. On the tier daily, 239K means the connector silently didn't attach — the server looks perfectly healthy while every "tier hit" you measure is vLLM's own prefix cache. (The serve scripts now fail closed on this.)
+| stack | what | build |
+|---|---|---|
+| [patches/rc4/](patches/rc4/README.md) | LMCache 0.5.4rc4 for vLLM 0.27's hybrid layout: fused rank-4 page view (0001), strided fp8 regroup (0002), sidecar VRAM diet (0007), fs_native cap enforcement (0008) and watermark LRU eviction (0009); vLLM side: Mamba store boundary (0005), transfer-abort assert (0010). The page edits classify pages by byte accounting, which is why nvfp4 pages needed no new code. | `Dockerfile.rc4`, base digest as build-arg |
+| [patches-nvfp4kv/](patches-nvfp4kv/README.md) | vLLM [PR #49891](https://github.com/vllm-project/vllm/pull/49891) (ch2lab) rebased: sm120 nvfp4 → FlashInfer FA2 routing (0001, 0001b); the linear-V-scale store overlay as a stable-ABI op (0002, 0002b); optional MTP-drafter full cudagraph (0003, unmeasured); the numeric layout diagnostic. | `Dockerfile.nvfp4kv`, FROM any vLLM image of the matching commit |
 
-Six more shared ones, plus three tier-specific (the 876 GB disk-fill, the invisible sidecar VRAM, the needle-test discipline) — twelve total, in **[docs/GOTCHAS.md](docs/GOTCHAS.md)**.
+## Rejected
 
-## Why it needs a patch: MTP × fp8-KV × Blackwell crashes on stock vLLM
+[docs/REJECTED.md](docs/REJECTED.md) lists every rejected configuration with the number that killed it: TurboQuant and KVarN 4-bit KV kernels (corrupt under concurrency), DFlash v1 (21K context) and DFlash2 (matched by MTP on the same runner at 40% of the pool), async scheduling, the official NVIDIA quant, and more. Read it before changing the config.
 
-> ⚠️ **`ns≥2` MTP with `fp8_e4m3` KV on `sm_120` is a 100%-reproducible illegal-memory-access under concurrency** — a known, still-open upstream bug ([vllm#40756](https://github.com/vllm-project/vllm/issues/40756), same Qwen3.6-27B model; [vllm#35288](https://github.com/vllm-project/vllm/issues/35288)). It crashes at `rejection_sampler.py:267 parse_output → cudaErrorIllegalAddress`. Single-stream and `ns=1` are both clean; `CUDA_LAUNCH_BLOCKING=1` masks it (→ a timing race).
+## Docs
 
-What the image carries is a **locally validated synchronization workaround**, from [PR #42603](https://github.com/vllm-project/vllm/pull/42603): one stream-sync after the MTP draft loop writes its shared cudagraph input buffers, before the draft forward that reads them.
-
-```python
-self.input_ids[:batch_size] = input_ids
-self.hidden_states[:batch_size] = hidden_states
-torch.accelerator.current_stream().synchronize()   # from PR #42603 (closed unmerged)
-```
-
-Honesty about its status: **upstream closed that PR unmerged** — maintainers held that these operations should already be stream-ordered and that a forced sync may merely perturb timing rather than fix a proven race, and asked for a true root cause before accepting anything. What *we* can vouch for is empirical: on this exact profile the crash is 100%-reproducible without the sync and has never occurred with it — validated across concurrent c4/c8, deep `pp90000×c4`, and every 69×2 tool-eval, at zero measurable perf cost. The underlying upstream root cause remains unresolved. The multi-day bisection — including every plausible fix that *didn't* work — is in [docs/HISTORY.md](docs/HISTORY.md).
-
-## What's in the patch stack
-
-Three in the base image (below), plus [**six more for the KV tiers**](patches/lmcache/README.md) in the tier image — four on LMCache (fp8 page regrouping ×2, sidecar VRAM, L2 cap enforcement) and two on vLLM (connector-path EAGLE×hybrid hit reduction, Mamba store boundary).
-
-| patch | what it does |
-|---|---|
-| [`install_pr42603_sync.py`](patches/install_pr42603_sync.py) — from [PR #42603](https://github.com/vllm-project/vllm/pull/42603) (closed unmerged) | **The workaround that makes MTP `ns=4` usable on Blackwell here.** One stream-sync in the MTP draft loop; empirically eliminates the crash above on this profile. Perf-neutral. [Validated numbers](bench/RESULTS.md). |
-| FlashInfer 0.6.15 (Dockerfile pip step) | Latest FlashInfer, carrying the `sm_120` GDN/TMA fixes. cu130 AOT cubins aren't published for .15, so it JIT-compiles at runtime — **mount `/root/.cache/flashinfer`** (one build, warm forever). |
-| [PR #44993 graft](https://github.com/vllm-project/vllm/pull/44993) | **Structured output that survives thinking.** With a reasoning model, `response_format` json_schema + thinking-on returned EMPTY `content`. Needs `--structured-outputs-config` (see [GOTCHAS.md](docs/GOTCHAS.md)). Two pure-Python files. |
-
-## Alternatives — what this repo is, and isn't
-
-The honest positioning: **the most comprehensively validated single-5090 Qwen3.6-27B setup for concurrent long-context coding agents** — not the maximum-context record (requests cap at 200K where some recipes configure 256K) and not the cherry-picked single-stream decode record. What no alternative we know of documents: a multi-million-token restart-persistent KV hierarchy, deep-context concurrency matrices, and full agentic benchmarks (SWE-Bench-Verified, Terminal-Bench) on the served config.
-
-When something else fits better:
-
-- **[CobraPhil/qwen36-27b-single-5090](https://github.com/CobraPhil/qwen36-27b-single-5090)** — a much simpler Docker-Compose recipe (setup script, checksum-verified model download). W4A16 AutoRound, so no W4A4 prefill lane, and no tiered/persistent KV — but far easier onboarding for a conventional single-user server.
-- **[devnen/qwen3.6-windows-server](https://github.com/devnen/qwen3.6-windows-server)** — native Windows, one-click portable releases, no Docker/WSL. The right answer on Windows, and its release engineering (versioned zips, presets, loopback default) is a model we're catching up to.
-- **GGUF / llama.cpp routes** — broad frontend compatibility and simple deployment, at a large deficit in prefill and warm-fleet concurrency (measured on this box: [What didn't work](docs/REJECTED.md)).
-
-Our real weaknesses vs. all of them: the nine-patch operational complexity, Linux-only, and numbers measured on a 600 W memory-OC'd card ([DESIGN.md host notes](docs/DESIGN.md#host-notes)). Roadmap items stolen from the reviews of this repo: a `setup.sh` + Compose path with model checksum verification and a machine-readable boot report, and a content-aware MTP `ns=3…6` sweep on coding output.
-
-## How we got here / what didn't work
-
-The docs, by the question you're asking:
-
-- **"Why these weights / where does the VRAM go / what does the host contribute?"** → [docs/DESIGN.md](docs/DESIGN.md) — the W4A4-vs-W4A16 prefill mechanics, the measured 31.35 GiB memory budget, tier cost per token, the OC.
-- **"What do the KV tiers buy, and what breaks without the patches?"** → [docs/LMCACHE.md](docs/LMCACHE.md) — the trade table, the 3.4× agentic A/B, the c4 concurrency sweep, and the four rounds of silently-wrong "validated" profiles.
-- **"Why doesn't my port of this config work?"** → [docs/GOTCHAS.md](docs/GOTCHAS.md) — every flag with its failure mode, plus the 12 setup gotchas.
-- **"How did the config evolve / what's the full bug story?"** → [docs/HISTORY.md](docs/HISTORY.md) — the daily lineage table, the two reversals, the PR #42603 bisection.
-- **"Has X been tried?"** → [docs/REJECTED.md](docs/REJECTED.md) — everything rejected, with the number that killed it. Read it before "improving" the config.
-- **All result tables and protocols** → [bench/RESULTS.md](bench/RESULTS.md); raw artifacts + pinned rerun commands → [bench/reproduce/](bench/reproduce/README.md); probes in [bench/](bench/README.md).
+- [docs/GOTCHAS.md](docs/GOTCHAS.md) — every flag with its failure mode.
+- [docs/DESIGN.md](docs/DESIGN.md) — why W4A4 weights, where the VRAM goes, what the host contributes.
+- [docs/LMCACHE.md](docs/LMCACHE.md) — the tier profile, what removing it changes, and why a tier that looks fine can be wrong.
+- [docs/NVFP4KV.md](docs/NVFP4KV.md) — the NVFP4 KV cache, the overlay, the measurements.
+- [docs/V2RUNNER.md](docs/V2RUNNER.md) — the V2 model runner measurement.
+- [docs/DFLASH2.md](docs/DFLASH2.md) — DFlash2 vs MTP.
+- [docs/HISTORY.md](docs/HISTORY.md) — daily lineage since 2026-06, reversals included.
+- [bench/RESULTS.md](bench/RESULTS.md) — all tables; [bench/](bench/README.md) — probes and commands.
 
 ## License
 
-MIT (see [LICENSE](LICENSE)) for the original work here — docs, benchmarks, scripts, and the patch-installer tooling. Anything derived from vLLM or LMCache — redistributed PR diffs, patch context lines, and the patched files inside built images — **remains Apache-2.0-derived**; the full per-file inventory is in [THIRD_PARTY.md](THIRD_PARTY.md).
+MIT ([LICENSE](LICENSE)) for the original work here. Anything derived from vLLM, LMCache or FlashInfer — redistributed PR diffs, patch context, patched files inside built images — stays Apache-2.0-derived; per-file inventory in [THIRD_PARTY.md](THIRD_PARTY.md).
 
 ## Credits
 
-- [vLLM](https://github.com/vllm-project/vllm), and [PR #42603](https://github.com/vllm-project/vllm/pull/42603)'s author for the draft-loop sync this image carries as a workaround.
-- [natfii](https://huggingface.co/natfii/Qwen3.6-27B-VLM-NVFP4-MTP) for the Qwen3.6-27B W4A4 NVFP4 export (ModelOpt 0.43) — the current daily's weights.
-- [Lorbus](https://huggingface.co/Lorbus/Qwen3.6-27B-int4-AutoRound) for the Qwen3.6-27B INT4-AutoRound quant — the previous daily, still the W4A16 reference.
-
----
-
-<sub>Sections that used to live in this README, for old links:</sub>
-
-#### What you get
-
-Now [The config at a glance](#the-config-at-a-glance).
-
-#### Why these weights — and what actually governs prefill speed
-
-Moved to [docs/DESIGN.md](docs/DESIGN.md#why-these-weights--and-what-actually-governs-prefill-speed).
-
-#### Where the 31.35 GiB goes — memory budget
-
-Moved to [docs/DESIGN.md](docs/DESIGN.md#where-the-3135-gib-goes--memory-budget).
-
-#### What removing LMCache changes
-
-Moved to [docs/LMCACHE.md](docs/LMCACHE.md#what-removing-lmcache-changes).
-
-#### Config essentials
-
-Moved to [docs/GOTCHAS.md](docs/GOTCHAS.md#config-essentials).
-
-#### Gotchas that bite during setup
-
-Moved to [docs/GOTCHAS.md](docs/GOTCHAS.md#gotchas-that-bite-during-setup).
-
-#### Daily lineage — what each daily was, and why the next took over
-
-Moved to [docs/HISTORY.md](docs/HISTORY.md#daily-lineage--what-each-daily-was-and-why-the-next-took-over).
+- [vLLM](https://github.com/vllm-project/vllm), [LMCache](https://github.com/LMCache/LMCache), [FlashInfer](https://github.com/flashinfer-ai/flashinfer).
+- ch2lab for [vLLM PR #49891](https://github.com/vllm-project/vllm/pull/49891) (sm120 nvfp4 KV routing).
+- drowzeys, whose [DGX Spark repo](https://github.com/drowzeys/keys-vLLm.0.27-Qwen3.8-27B-ADay777Ablit-NVFP4-A4Q-NVFP4-KV-4M-KV-token-pool-MTP3-Single-DGX-Spark) carried the linear-V-scale writer patch this stack adopts.
+- [sakamakismile](https://huggingface.co/sakamakismile/Qwen3.8-27B-MTP-NVFP4) for the W4A4 export.
+- z-lab and inco.ai for the DFlash2 drafter and [vLLM PR #52816](https://github.com/vllm-project/vllm/pull/52816), measured and rejected here.
