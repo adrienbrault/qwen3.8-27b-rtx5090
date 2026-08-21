@@ -56,7 +56,7 @@ The only connector that handles this hybrid's opaque GDN state pages. On the V2 
 
 ```bash
 --max-num-batched-tokens 5727          # = 2·chunk − 1 (3231 with fp8 KV)
---gpu-memory-utilization 0.93 --max-model-len 200000 --max-num-seqs 8
+--gpu-memory-utilization 0.93 --max-model-len 262144 --max-num-seqs 8
 ```
 LMCache's MP connector requires batched tokens in [chunk, 2·chunk). The larger chunk of nvfp4 KV is why its prefill (12.8K t/s at 8K) beats the fp8 tier profile's (9.7K). Let vLLM profile the pool; `--kv-cache-memory` hints ignore warmup transients. The pool varies about ±6% boot to boot on this nightly; the launcher's band is 285–335K.
 

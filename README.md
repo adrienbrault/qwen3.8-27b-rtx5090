@@ -1,4 +1,4 @@
-# Qwen3.8-27B on a single RTX 5090: 309K-token KV pool, restart-proof cache tiers, 200K context
+# Qwen3.8-27B on a single RTX 5090: 312K-token KV pool, restart-proof cache tiers, 262K context
 
 This is a serving config for concurrent long-context coding agents on one 32 GB Blackwell card (`sm_120`): a W4A4 NVFP4 checkpoint, an NVFP4 KV cache, MTP speculative decoding, vision, and a DRAM/NVMe KV tier that survives restarts. Every number here was measured on this box on the date given; the raw results directory or FINDINGS round is named next to it.
 
@@ -9,7 +9,7 @@ This is a serving config for concurrent long-context coding agents on one 32 GB 
 | model | [sakamakismile/Qwen3.8-27B-MTP-NVFP4](https://huggingface.co/sakamakismile/Qwen3.8-27B-MTP-NVFP4) — W4A4 NVFP4 (ModelOpt recipe), MTP head, vision tower, 20.6 GB |
 | engine | vLLM nightly `ba07e4a48` (2026-08-21) on the V2 model runner, FlashInfer 0.6.17, two local patch stacks ([rc4](patches/rc4/) for the tiers, [nvfp4kv](patches-nvfp4kv/) for the KV cache) |
 | KV cache | `--kv-cache-dtype nvfp4` (E2M1 values + one FP8 scale per 16 elements, 0.5625 B/elt), unified hybrid block 2864 tokens |
-| hot pool | **309,090 tokens** at util 0.93, max-len 200K, 8 sequences (fp8 KV on the same engine: 208,450) |
+| hot pool | **312,189 tokens** at util 0.93, max-len 262,144 (the model's limit; 1.19× at full length), 8 sequences (fp8 KV on the same engine at 200K: 208,450). Depth needles cold + warm at 100K / 180K / 261.7K prompt tokens: all hit (2026-08-21, results/2026-08-21-r82-ladder). |
 | tiers | LMCache 0.5.4rc4: 24 GiB pinned DRAM + 200 GiB NVMe (`fs_native`), chunk 2864; the NVMe tier survives restarts |
 | spec decode | MTP `ns=4`, `--no-async-scheduling`, `--mamba-cache-mode align` |
 | decode | c1 141 / c4 339 / c8 353 t/s aggregate at pp8192; 142 t/s single-stream at 30K depth |
@@ -28,7 +28,7 @@ A few coding agents with 8K–100K+ contexts, interactive chat, the occasional i
 1. Correctness of the cache. An engine that answers fluently from corrupted KV is worse than a slower one. Nothing becomes the daily without the gauntlet in [Benchmarks](#benchmarks): depth needles cold and warm, a needle retrieved after a container restart, the same under concurrent load, a cold 8×24K burst, a vision burst, and a full tool-eval.
 2. Context capacity that passes rule 1. The NVFP4 KV cache is the first 4-bit KV format that did on this hybrid; the tiers add DRAM and NVMe below it.
 3. Latency in the agent regime: prefill (W4A4 on the FP4 tensor cores) and single-stream decode (MTP).
-4. Everything on at once: vision, 200K context, speculative decoding, reasoning, structured outputs, tool calling.
+4. Everything on at once: vision, 262K context, speculative decoding, reasoning, structured outputs, tool calling.
 
 Non-goals: maximum aggregate throughput for many shallow users, multi-GPU, minimum VRAM.
 
