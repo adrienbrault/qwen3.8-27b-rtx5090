@@ -35,7 +35,8 @@ BATCHED=$((2 * BLK - 1))             # LMCache MP requires batched tokens in [ch
 # L2 NVMe tier. 200 GB ~= 2.13M tokens, survives container restarts.
 # The cap is only real because of patch 0008 + the eviction block below — verify both.
 L2DIR=${L2DIR:-/srv/qwen5090/lmcache-l2-nvfp4-v2}   # FRESH namespace per stack generation (R81: nvfp4 pages)
-MAXLEN=${MAXLEN:-200000}   # model max is 262144; 200K was sized for the fp8 pool — see R82
+NS=${NS:-4}                 # MTP depth (R82 A/B: 3 vs 4)
+MAXLEN=${MAXLEN:-262144}   # R82: the model max; 200K was sized for the fp8 pool. Needles clean at 261.7K prompt tokens, pool 324K @0.93
 UTIL=${UTIL:-0.93}   # R81: 0.95 makes the FlashInfer autotuner OOM-fallback with the bigger V2 pool
 EXTRA_ENV=${EXTRA_ENV-"-e VLLM_USE_V2_MODEL_RUNNER=1"}   # R79: V2 model runner is the daily. `${VAR-default}` on purpose: an EXPLICIT empty EXTRA_ENV= reverts to V1 (`:-` would re-apply the default)
 L2CAP=${L2CAP:-200}
@@ -96,7 +97,7 @@ sudo docker run -d --name "$NAME" --restart unless-stopped \
       --limit-mm-per-prompt '{\"image\":4,\"video\":0}' \
       --mamba-cache-mode align --enable-prefix-caching --enable-chunked-prefill \
       --kv-transfer-config '{\"kv_connector\":\"LMCacheMPConnector\",\"kv_role\":\"kv_both\"}' \
-      --speculative-config '{\"method\":\"qwen3_5_mtp\",\"num_speculative_tokens\":4}' \
+      --speculative-config '{\"method\":\"qwen3_5_mtp\",\"num_speculative_tokens\":'$NS'}' \
       --default-chat-template-kwargs '{\"preserve_thinking\":true,\"reasoning_effort\":\"medium\"}' \
       --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_xml \\
       --override-generation-config '{\"temperature\":0.6,\"top_p\":0.95,\"top_k\":20}'
@@ -121,7 +122,7 @@ fi
 POOL=$(sudo docker logs "$NAME" 2>&1 | grep -a 'GPU KV cache size' | tail -1 | grep -oE 'cache size: [0-9,]+' | tr -dc 0-9)
 echo "daily up. KV pool: ${POOL} tokens"
 POOL_MIN=${POOL_MIN:-285000}   # R81: nvfp4 tier boots at 309,090 @0.93 (profiling varies ~6% boot to boot)
-POOL_MAX=${POOL_MAX:-335000}
+POOL_MAX=${POOL_MAX:-345000}
 if [ -z "$POOL" ] || [ "$POOL" -lt "$POOL_MIN" ] || [ "$POOL" -gt "$POOL_MAX" ]; then
   echo "FAILED: pool ${POOL:-<missing>} outside expected ${POOL_MIN}-${POOL_MAX} (util 0.95, seqs 8, mnbt 3231)."
   echo "  Pool alone can NOT prove the connector attached at these settings — see the positive check below."
