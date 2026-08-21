@@ -5,7 +5,7 @@
 FROM vllm/vllm-openai:nightly@sha256:f2ac337893360e23462249c3897e1c92dc8ba8a1ebbc3dd15c4ac931e957438e
 USER root
 
-LABEL org.opencontainers.image.source="https://github.com/adrienbrault/qwen3.6-27b-rtx5090" \
+LABEL org.opencontainers.image.source="https://github.com/adrienbrault/qwen3.8-27b-rtx5090" \
       org.opencontainers.image.licenses="MIT AND Apache-2.0" \
       org.opencontainers.image.base.name="vllm/vllm-openai:nightly" \
       org.opencontainers.image.base.digest="sha256:f2ac337893360e23462249c3897e1c92dc8ba8a1ebbc3dd15c4ac931e957438e" \

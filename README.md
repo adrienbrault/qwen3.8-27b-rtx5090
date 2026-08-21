@@ -1,7 +1,5 @@
 # Qwen3.8-27B on a single RTX 5090: 309K-token KV pool, restart-proof cache tiers, 200K context
 
-The repo name is historical (it started on Qwen3.6); the served model has been Qwen3.8-27B since 2026-08-14 and the engine below is the 2026-08-21 daily. Lineage, reversals and every previous generation are in [docs/HISTORY.md](docs/HISTORY.md).
-
 This is a serving config for concurrent long-context coding agents on one 32 GB Blackwell card (`sm_120`): a W4A4 NVFP4 checkpoint, an NVFP4 KV cache, MTP speculative decoding, vision, and a DRAM/NVMe KV tier that survives restarts. Every number here was measured on this box on the date given; the raw results directory or FINDINGS round is named next to it.
 
 ## The config at a glance (daily since 2026-08-21)
