@@ -1,0 +1,89 @@
+--- a/v1/attention/backends/flashinfer.py
++++ b/v1/attention/backends/flashinfer.py
+@@ -7,6 +7,7 @@
+ from functools import partial
+ from typing import ClassVar
+ 
++import functools
+ import numpy as np
+ import torch
+ from flashinfer import (
+@@ -2604,18 +2605,68 @@
+                 k_cache, v_cache = kv_cache.transpose(1, 2).split(
+                     self.head_size, dim=-1
+                 )
+-            torch.ops._C_cache_ops.reshape_and_cache_flash(
+-                key,
+-                value,
+-                k_cache,
+-                v_cache,
+-                slot_mapping,
+-                self.cache_dtype,
+-                layer._k_scale,
+-                layer._v_scale,
+-            )
++            if self.use_fa2_nvfp4_kv and _sm12x_nvfp4_linear_writer() is not None:
++                # NVFP4KV-SM120: the in-tree writer emits V block scales in the
++                # SM100 trtllm-gen 4-token swizzle; the FlashInfer FA2 reader on
++                # SM12x reads scales linearly (K already is). Route the store to
++                # the overlay op that writes linear V scales on major >= 12.
++                # Toggle: VLLM_SM12X_NVFP4_LINEAR_VSF=0 falls back to the
++                # in-tree (swizzled) writer -- diagnostic lever only.
++                _sm12x_nvfp4_linear_writer()(
++                    key,
++                    value,
++                    k_cache,
++                    v_cache,
++                    slot_mapping,
++                    self.cache_dtype,
++                    layer._k_scale,
++                    layer._v_scale,
++                )
++            else:
++                torch.ops._C_cache_ops.reshape_and_cache_flash(
++                    key,
++                    value,
++                    k_cache,
++                    v_cache,
++                    slot_mapping,
++                    self.cache_dtype,
++                    layer._k_scale,
++                    layer._v_scale,
++                )
+ 
+ 
++@functools.cache
++def _sm12x_nvfp4_linear_writer():
++    """Return the SM12x linear-V-scale NVFP4 store op, or None.
++
++    Provided by the vllm_sm12x_nvfp4kv overlay (patches-nvfp4kv/overlay).
++    Loaded lazily so the module imports on any platform; a missing overlay is
++    logged loudly ONCE because running FA2 NVFP4 with the swizzled writer is a
++    silent-quality failure (long-context recall), not a crash.
++    """
++    import os
++
++    if os.environ.get("VLLM_SM12X_NVFP4_LINEAR_VSF", "1") == "0":
++        logger.warning_once(
++            "VLLM_SM12X_NVFP4_LINEAR_VSF=0: NVFP4 KV stores use the in-tree "
++            "swizzled-V-scale writer (SM100 layout) on SM12x -- expect wrong "
++            "long-context recall; diagnostic mode only."
++        )
++        return None
++    try:
++        from vllm_sm12x_nvfp4kv import reshape_and_cache_nvfp4_linear
++    except Exception as e:  # noqa: BLE001
++        logger.warning_once(
++            "vllm_sm12x_nvfp4kv overlay NOT available (%r): NVFP4 KV stores on "
++            "SM12x fall back to the swizzled-V-scale writer -- long-context "
++            "recall WILL be wrong.",
++            e,
++        )
++        return None
++    logger.info_once("NVFP4KV-SM120: linear-V-scale store overlay ACTIVE")
++    return reshape_and_cache_nvfp4_linear
++
++
+ def fast_plan_decode(
+     self,  # decode wrapper
+     indptr_cpu: torch.Tensor,

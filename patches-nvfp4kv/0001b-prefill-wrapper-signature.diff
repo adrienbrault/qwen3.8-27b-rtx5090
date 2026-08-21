@@ -1,0 +1,11 @@
+--- a/v1/attention/backends/flashinfer.py
++++ b/v1/attention/backends/flashinfer.py
+@@ -1139,6 +1139,8 @@
+     def _get_prefill_wrapper(
+         self,
+         causal: bool = True,
++        batch_size: int = 0,
++        use_cudagraph: bool = False,
+     ) -> BatchPrefillWithPagedKVCacheWrapper | BatchDCPPrefillWrapper:
+         if not causal:
+             if self.use_dcp:

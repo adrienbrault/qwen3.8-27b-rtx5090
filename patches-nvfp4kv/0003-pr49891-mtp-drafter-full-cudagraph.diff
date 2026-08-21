@@ -1,0 +1,158 @@
+--- a/v1/spec_decode/dflash.py	2026-08-16 16:21:28
++++ b/v1/spec_decode/dflash.py	2026-08-16 16:30:49
+@@ -229,6 +229,7 @@
+         use_cudagraphs: bool = True,
+         is_graph_capturing: bool = False,
+         slot_mappings: dict[str, torch.Tensor] | None = None,
++        target_cudagraph_mode=None,
+     ) -> None:
+         """
+         Key differences to default dummy_run:
+--- a/v1/spec_decode/extract_hidden_states.py	2026-08-16 16:21:28
++++ b/v1/spec_decode/extract_hidden_states.py	2026-08-16 16:30:49
+@@ -263,6 +263,7 @@
+         use_cudagraphs: bool = True,
+         is_graph_capturing: bool = False,
+         slot_mappings: dict[str, torch.Tensor] | None = None,
++        target_cudagraph_mode=None,
+     ) -> None:
+         assert self.model is not None, "Model must be initialized before dummy_run"
+         cudagraph_runtime_mode, num_input_tokens, num_tokens_across_dp = (
+--- a/v1/spec_decode/llm_base_proposer.py	2026-08-16 16:21:09
++++ b/v1/spec_decode/llm_base_proposer.py	2026-08-16 16:30:49
+@@ -419,7 +419,10 @@
+     def initialize_cudagraph_keys(self, cudagraph_mode: CUDAGraphMode) -> None:
+         """Initialize cudagraph dispatcher keys for the drafter.
+ 
+-        Only supports PIECEWISE cudagraphs (via mixed_mode).
++        The drafter uses the same cudagraph mode as the target model.
++        Since the draft model always processes uniform decode batches
++        (1 token per request per pass), FULL cudagraphs are used for
++        decode and PIECEWISE for mixed batches.
+         This should be called after adjust_cudagraph_sizes_for_spec_decode.
+         """
+         if (
+@@ -427,7 +430,7 @@
+             and cudagraph_mode.mixed_mode()
+             in [CUDAGraphMode.PIECEWISE, CUDAGraphMode.FULL]
+         ):
+-            eagle_cudagraph_mode = CUDAGraphMode.PIECEWISE
++            eagle_cudagraph_mode = cudagraph_mode
+         else:
+             eagle_cudagraph_mode = CUDAGraphMode.NONE
+ 
+@@ -566,8 +569,11 @@
+             self.build_per_group_and_layer_attn_metadata(common_attn_metadata)
+         )
+ 
++        is_uniform_decode = common_attn_metadata.max_query_len == 1
+         cudagraph_runtime_mode, num_input_tokens, num_tokens_across_dp = (
+-            self._determine_batch_execution_and_padding(num_tokens)
++            self._determine_batch_execution_and_padding(
++                num_tokens, uniform_decode=is_uniform_decode
++            )
+         )
+ 
+         model_kwargs, slot_mapping_size = self.build_model_inputs_first_pass(
+@@ -665,7 +671,9 @@
+         draft_token_ids_list = [draft_token_ids]
+ 
+         cudagraph_runtime_mode, input_batch_size, batch_size_across_dp = (
+-            self._determine_batch_execution_and_padding(batch_size)
++            self._determine_batch_execution_and_padding(
++                batch_size, uniform_decode=True
++            )
+         )
+ 
+         common_attn_metadata.num_actual_tokens = batch_size
+@@ -1637,6 +1645,7 @@
+         use_cudagraphs: bool = True,
+         is_graph_capturing: bool = False,
+         slot_mappings: dict[str, torch.Tensor] | None = None,
++        target_cudagraph_mode: CUDAGraphMode | None = None,
+     ) -> None:
+         # FIXME: when using tree-based specdec, adjust number of forward-passes
+         # according to the depth of the tree.
+@@ -1645,11 +1654,20 @@
+             1 if only_one_forward_pass else self.num_speculative_tokens
+         ):
+             if fwd_idx <= 1:
+-                cudagraph_runtime_mode, num_input_tokens, num_tokens_across_dp = (
+-                    self._determine_batch_execution_and_padding(
+-                        num_tokens, use_cudagraphs=use_cudagraphs
++                if is_graph_capturing and target_cudagraph_mode is not None:
++                    cudagraph_runtime_mode, num_input_tokens, num_tokens_across_dp = (
++                        self._determine_batch_execution_and_padding(
++                            num_tokens,
++                            use_cudagraphs=use_cudagraphs,
++                            forced_cudagraph_mode=target_cudagraph_mode,
++                        )
+                     )
+-                )
++                else:
++                    cudagraph_runtime_mode, num_input_tokens, num_tokens_across_dp = (
++                        self._determine_batch_execution_and_padding(
++                            num_tokens, use_cudagraphs=use_cudagraphs
++                        )
++                    )
+ 
+             # Make sure to use EAGLE's own buffer during cudagraph capture.
+             if (
+@@ -1804,12 +1822,24 @@
+         self,
+         num_tokens: int,
+         use_cudagraphs: bool = True,
++        forced_cudagraph_mode: CUDAGraphMode | None = None,
++        uniform_decode: bool = False,
+     ) -> tuple[CUDAGraphMode, int, torch.Tensor | None]:
+-        cudagraph_mode, batch_desc = self.cudagraph_dispatcher.dispatch(
+-            num_tokens,
+-            valid_modes=({CUDAGraphMode.NONE} if not use_cudagraphs else None),
+-        )
+-        num_tokens_padded = batch_desc.num_tokens
++        if forced_cudagraph_mode is not None:
++            cudagraph_mode = forced_cudagraph_mode
++            batch_desc = self.cudagraph_dispatcher._create_padded_batch_descriptor(
++                num_tokens,
++                uniform_decode=(cudagraph_mode == CUDAGraphMode.FULL),
++                has_lora=False,
++            )
++            num_tokens_padded = batch_desc.num_tokens
++        else:
++            cudagraph_mode, batch_desc = self.cudagraph_dispatcher.dispatch(
++                num_tokens,
++                uniform_decode=uniform_decode,
++                valid_modes=({CUDAGraphMode.NONE} if not use_cudagraphs else None),
++            )
++            num_tokens_padded = batch_desc.num_tokens
+ 
+         # Extra coordination when running data-parallel since we need to
+         # coordinate across ranks
+--- a/v1/worker/gpu_model_runner.py	2026-08-16 16:21:25
++++ b/v1/worker/gpu_model_runner.py	2026-08-16 16:30:49
+@@ -6274,13 +6274,13 @@
+                     | Gemma4Proposer,
+                 )
+                 assert self.speculative_config is not None
+-                # Eagle currently only supports PIECEWISE cudagraphs.
+-                # Therefore only use cudagraphs if the main model uses PIECEWISE
+-                # NOTE(lucas): this is a hack, need to clean up.
++                # The draft model uses the same cudagraph mode as the target
++                # model: FULL for uniform decode, PIECEWISE for mixed batches.
+                 use_cudagraphs = (
+                     (
+                         is_graph_capturing
+-                        and cudagraph_runtime_mode == CUDAGraphMode.PIECEWISE
++                        and cudagraph_runtime_mode
++                        in (CUDAGraphMode.PIECEWISE, CUDAGraphMode.FULL)
+                     )
+                     or (
+                         not is_graph_capturing
+@@ -6303,6 +6303,7 @@
+                     use_cudagraphs=use_cudagraphs,
+                     is_graph_capturing=is_graph_capturing,
+                     slot_mappings=slot_mappings,
++                    target_cudagraph_mode=cudagraph_runtime_mode,
+                 )
+ 
+         # We register layerwise NVTX hooks here after the first dynamo tracing is

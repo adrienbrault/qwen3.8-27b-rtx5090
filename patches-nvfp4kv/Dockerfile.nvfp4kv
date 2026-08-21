@@ -1,0 +1,78 @@
+# Qwen3.8 NVFP4-KV image for the RTX 5090 (sm_120) — 2026-08-16.
+# FA2 NVFP4 KV cache on the SAME digest-pinned vLLM nightly as the daily
+# (0.27.2rc1.dev77+gac7509e2b, FlashInfer 0.6.16.post3 which already ships the
+# SM120 NVFP4 attention JIT path #3640/#3897). Nothing else changes: the fp8 daily
+# and the tier-rc4 A/B baseline keep their exact engine.
+#
+# Stack (patches-nvfp4kv/, see README.md):
+#   0001  vLLM PR #49891 (ch2lab) rebased: SM12x nvfp4 -> FlashInfer FA2 routing,
+#         HND cache for nvfp4 only, cudagraph prefill wrappers, JIT warmup.
+#   0002  csrc: writer emits LINEAR V block scales on major>=12 (FA2 reads SF
+#         linearly; in-tree writer swizzles V for SM100 trtllm-gen). Compiled as
+#         a torch overlay op (torch.ops.vllm_sm12x.reshape_and_cache_nvfp4).
+#   0002b vLLM: route NVFP4 stores to the overlay op when use_fa2_nvfp4_kv.
+#   0003  (OPTIONAL, WITH_0003=1) PR #49891's MTP drafter FULL-cudagraph routing.
+# Build (on flan):
+#   cd /srv/qwen5090/nvfp4kv-build && sudo docker build -f Dockerfile.nvfp4kv \
+#       --build-arg WITH_0003=0 -t vllm-qwen38:nvfp4kv .
+# Base digest + matching commit are build-args (the commit gate below verifies they agree):
+#   --build-arg VLLM_BASE=vllm/vllm-openai@sha256:<digest> --build-arg VLLM_COMMIT=<9-char sha>
+ARG VLLM_BASE=vllm/vllm-openai@sha256:c96082d33456ceeae7ec0d4faf2b5e47fb806a103decf94f9fbc9b35fd7d6b25
+FROM ${VLLM_BASE}
+
+ARG VLLM_COMMIT=ac7509e2b
+ARG WITH_0003=0
+ARG SM_ARCH=120a
+
+# 1) vLLM csrc at the image's exact commit (headers + the writer .cu), patched (0002)
+COPY 0002-nvfp4-writer-linear-vscale-sm12x.diff /tmp/0002.diff
+RUN set -eux; \
+    apt-get update -qq && apt-get install -y -qq git patch >/dev/null && rm -rf /var/lib/apt/lists/*; \
+    IMG_VER="$(python3 -c 'import vllm; print(vllm.__version__)')"; echo "image vllm $IMG_VER"; \
+    case "$IMG_VER" in *g${VLLM_COMMIT}*) ;; *) echo "FATAL: image vllm $IMG_VER != commit ${VLLM_COMMIT}"; exit 1;; esac; \
+    rm -rf /opt/vllm-src; \
+    git clone -q --filter=blob:none --no-checkout https://github.com/vllm-project/vllm /opt/vllm-src; \
+    git -C /opt/vllm-src checkout -q ${VLLM_COMMIT} -- csrc cmake/patches; \
+    test -f /opt/vllm-src/csrc/core/registration.h; \
+    TINC="$(python3 -c 'import torch, os; print(os.path.join(os.path.dirname(torch.__file__), "include"))')"; \
+    if grep -q "auto strptr = new std::string" "$TINC/torch/csrc/stable/stableivalue_conversions.h"; then \
+      mkdir -p /opt/vllm-sm12x/shadow-include/torch/csrc/stable; \
+      cp "$TINC/torch/csrc/stable/stableivalue_conversions.h" /opt/vllm-sm12x/shadow-include/torch/csrc/stable/; \
+      patch --batch --forward -p1 -d /opt/vllm-sm12x/shadow-include < /opt/vllm-src/cmake/patches/pytorch_stable_string.patch; \
+      echo "torch 2.13 stable-string leak hotfix: shadow header installed (same as vLLM CMake)"; \
+    fi; \
+    test -f /opt/vllm-src/csrc/libtorch_stable/nvfp4_kv_cache_kernels.cu; \
+    patch -p1 -d /opt/vllm-src -f < /tmp/0002.diff; \
+    grep -q swizzle_v_sf /opt/vllm-src/csrc/libtorch_stable/nvfp4_kv_cache_kernels.cu; \
+    rm -rf /opt/vllm-src/.git
+
+# 2) AOT-build the overlay op for sm_120a (no GPU needed at build)
+COPY overlay/ /opt/vllm-sm12x/
+ENV VLLM_SM12X_SHADOW_INC=/opt/vllm-sm12x/shadow-include \
+    VLLM_SM12X_CSRC=/opt/vllm-src/csrc \
+    VLLM_SM12X_BUILD=/opt/vllm-sm12x/build \
+    VLLM_SM12X_ARCH=${SM_ARCH} \
+    PYTHONPATH=/opt/vllm-sm12x:${PYTHONPATH:-}
+RUN set -eux; \
+    export TORCH_CUDA_ARCH_LIST="12.0a" MAX_JOBS=4; \
+    which nvcc || export PATH="/usr/local/cuda/bin:$PATH"; nvcc --version | tail -1; \
+    cd /opt/vllm-sm12x && python3 build_overlay.py; \
+    ls -la /opt/vllm-sm12x/build/*.so
+
+# 3) vLLM python patches (package-root-relative, same mechanism as patches-rc4)
+COPY 0001-sm120-nvfp4kv-fa2-routing.diff /tmp/0001.diff
+COPY 0001b-prefill-wrapper-signature.diff /tmp/0001b.diff
+COPY 0002b-flashinfer-route-nvfp4-store-to-overlay.diff /tmp/0002b.diff
+COPY 0003-pr49891-mtp-drafter-full-cudagraph.diff /tmp/0003.diff
+RUN set -eux; \
+    VROOT="$(python3 -c 'import os, vllm; print(os.path.dirname(vllm.__file__))')"; \
+    patch -p1 -d "$VROOT" -f < /tmp/0001.diff; \
+    patch -p1 -d "$VROOT" -f < /tmp/0001b.diff; \
+    grep -q "use_cudagraph: bool = False," "$VROOT/v1/attention/backends/flashinfer.py"; \
+    patch -p1 -d "$VROOT" -f < /tmp/0002b.diff; \
+    if [ "${WITH_0003}" = "1" ]; then patch -p1 -d "$VROOT" -f < /tmp/0003.diff; echo "0003 APPLIED"; else echo "0003 skipped"; fi; \
+    for f in v1/attention/backends/flashinfer.py v1/worker/gpu_worker.py v1/spec_decode/llm_base_proposer.py v1/worker/gpu_model_runner.py; do python3 -m py_compile "$VROOT/$f"; done; \
+    grep -q "use_fa2_nvfp4_kv" "$VROOT/v1/attention/backends/flashinfer.py"; \
+    grep -q "_sm12x_nvfp4_linear_writer" "$VROOT/v1/attention/backends/flashinfer.py"; \
+    python3 -c "import torch; torch.ops.load_library('/opt/vllm-sm12x/build/vllm_sm12x_nvfp4kv.so'); assert hasattr(torch.ops.vllm_sm12x, 'reshape_and_cache_nvfp4'); print('overlay op registered')"; \
+    echo "NVFP4KV IMAGE OK (WITH_0003=${WITH_0003})"
