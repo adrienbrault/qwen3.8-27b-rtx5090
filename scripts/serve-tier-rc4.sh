@@ -35,6 +35,7 @@ BATCHED=$((2 * BLK - 1))             # LMCache MP requires batched tokens in [ch
 # L2 NVMe tier. 200 GB ~= 2.13M tokens, survives container restarts.
 # The cap is only real because of patch 0008 + the eviction block below — verify both.
 L2DIR=${L2DIR:-/srv/qwen5090/lmcache-l2-nvfp4-v2}   # FRESH namespace per stack generation (R81: nvfp4 pages)
+MAXLEN=${MAXLEN:-200000}   # model max is 262144; 200K was sized for the fp8 pool — see R82
 UTIL=${UTIL:-0.93}   # R81: 0.95 makes the FlashInfer autotuner OOM-fallback with the bigger V2 pool
 EXTRA_ENV=${EXTRA_ENV-"-e VLLM_USE_V2_MODEL_RUNNER=1"}   # R79: V2 model runner is the daily. `${VAR-default}` on purpose: an EXPLICIT empty EXTRA_ENV= reverts to V1 (`:-` would re-apply the default)
 L2CAP=${L2CAP:-200}
@@ -90,7 +91,7 @@ sudo docker run -d --name "$NAME" --restart unless-stopped \
     exec python3 -m vllm.entrypoints.openai.api_server \
       --model /model --served-model-name $MODEL_NAME $MODEL_ALIAS --trust-remote-code \
       --kv-cache-dtype $KVDTYPE --no-async-scheduling \
-      --gpu-memory-utilization $UTIL --max-model-len 200000 \
+      --gpu-memory-utilization $UTIL --max-model-len $MAXLEN \
       --max-num-seqs 8 --max-num-batched-tokens $BATCHED \
       --limit-mm-per-prompt '{\"image\":4,\"video\":0}' \
       --mamba-cache-mode align --enable-prefix-caching --enable-chunked-prefill \
