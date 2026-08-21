@@ -1,6 +1,6 @@
 # DFlash2 instead of MTP — measured on the 5090 (2026-08-21)
 
-**Status: measured, not the daily.** [DFlash2](https://inco.ai/blog/dflash2/) (block-parallel drafter + candidate selector + local convolutions, vLLM [PR #52816](https://github.com/vllm-project/vllm/pull/52816), merged 2026-08-21) is the fastest single-stream decode ever measured on this box and lossless on tool-eval — and it costs two thirds of the context window on a 32 GB card. Full detail in the repo's FINDINGS R78.
+**Status: measured, rejected for this box.** [DFlash2](https://inco.ai/blog/dflash2/) (block-parallel drafter + candidate selector + local convolutions, vLLM [PR #52816](https://github.com/vllm-project/vllm/pull/52816), merged 2026-08-21) decodes at 164 t/s single-stream and is lossless on tool-eval — but so does MTP on the same runner (160 t/s), and DFlash2 pays for its 3% with two thirds of the context window and −30% at c4. The +34% headline against our served MTP was the V2 model runner / newer nightly, not the drafter. Full detail in the repo's FINDINGS R78.
 
 ## Stack
 
@@ -34,4 +34,6 @@
 
 It is an excellent *second profile* for a single user under 60K of context, and it becomes a daily candidate the day the drafter's KV is allocated by its sliding window.
 
-**On the +34%:** the MTP column is the MTP we actually serve (V1 runner, nightly `ac7509e2b`). The same-runner control — MTP on the V2 runner with this image — could not run: the `ba07e4a48` nightly's `_C_stable_libtorch.abi3.so` raises an undefined cutlass symbol (`GemmUniversalBase…enable_sm89_to_sm90`) on that path. The 2.25× over autoregressive is same-image, same-runner.
+**The same-runner control changes the story.** MTP ns=4 on the V2 runner with this very image (60K/0.96): **c1 160.4 t/s, c2 251, c4 380, deep-30K 156, pool 166,071**. So against the MTP we actually serve (V1 runner, older nightly: 123 t/s) DFlash2 looks +34% — but against MTP on the *same* runner it is **+3% single-stream (noise), +19% at c2, −30% at c4, with 40% of the KV pool**. The +30% was the V2 model runner and/or the 276 newer commits, not the drafter; MTP's own uplift over AR on V2 is 2.19× vs DFlash2's 2.25×. (First attempt at this control died on a flaky spawn-child `ImportError: undefined symbol …cutlass…GemmUniversalBase…` in the nightly's stable-ABI extension; the retry booted clean.)
+
+**What to pursue instead**: the tier daily (fp8 KV + LMCache tiers + MTP) on the V2 runner / newer nightly. That is where the 123 → 160 t/s lives, with the full 200K context.
