@@ -46,6 +46,8 @@ Non-goals: maximum batched throughput for many shallow users (this box peaks at 
 
 ## The graveyard
 
+**Promotion candidate, measured 2026-08-21:** the same tier daily on the 08-21 nightly with vLLM's **V2 model runner** — **+19% c1 / +16% c4 / +20% deep decode**, pool +4%, tiers, restart-proof L2 and needles all clean, tool-eval 91: [docs/V2RUNNER.md](docs/V2RUNNER.md).
+
 **Also measured 2026-08-21:** [DFlash2](docs/DFLASH2.md) instead of MTP — 164 t/s single-stream (2.25× AR), tool-eval parity, but MTP on the same V2 runner does 160 t/s with 2.5× the context and +40% at c4; the runner, not the drafter, was the win. Rejected; the V2-runner daily audition is the follow-up.
 
 **Experimental, measured 2026-08-21:** an NVFP4 KV cache via FlashInfer's merged FA2 sm120 path + vLLM PR #49891 + a V-scale-layout overlay — pool +37% (293K), retrieval clean, decode at or above fp8, one MTP-specific cliff open, not the daily: [docs/NVFP4KV.md](docs/NVFP4KV.md).
