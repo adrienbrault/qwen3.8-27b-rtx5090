@@ -36,6 +36,9 @@ BATCHED=$((2 * BLK - 1))             # LMCache MP requires batched tokens in [ch
 # The cap is only real because of patch 0008 + the eviction block below — verify both.
 L2DIR=${L2DIR:-/srv/qwen5090/lmcache-l2-nvfp4-v2}   # FRESH namespace per stack generation (R81: nvfp4 pages)
 NS=${NS:-4}                 # MTP depth (R82 A/B: 3 vs 4)
+SPEC_JSON=${SPEC_JSON:-}     # full --speculative-config JSON override (e.g. a DSpark drafter at /draft); empty = MTP ns=$NS
+EXTRA_MOUNT=${EXTRA_MOUNT:-}   # e.g. "-v /srv/qwen5090/models/<drafter>:/draft:ro"
+SPEC_FINAL=${SPEC_JSON:-"{\"method\":\"qwen3_5_mtp\",\"num_speculative_tokens\":$NS}"}
 MAXLEN=${MAXLEN:-262144}   # R82: the model max; 200K was sized for the fp8 pool. Needles clean at 261.7K prompt tokens, pool 324K @0.93
 UTIL=${UTIL:-0.93}   # R81: 0.95 makes the FlashInfer autotuner OOM-fallback with the bigger V2 pool
 EXTRA_ENV=${EXTRA_ENV-"-e VLLM_USE_V2_MODEL_RUNNER=1"}   # R79: V2 model runner is the daily. `${VAR-default}` on purpose: an EXPLICIT empty EXTRA_ENV= reverts to V1 (`:-` would re-apply the default)
@@ -81,7 +84,7 @@ sudo docker run -d --name "$NAME" --restart unless-stopped \
   -e VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE=134217728 \
   -e LMCACHE_MP_GPU_STAGING_BATCH_SIZE=1 -e CUDA_MODULE_LOADING=LAZY \
   -e TORCHINDUCTOR_COMPILE_THREADS=8 -e MAX_JOBS=4 -e FLASHINFER_NUM_COMPILE_JOBS=4 $EXTRA_ENV \
-  $CACHE -v "$L2DIR":/l2 -v "$MODEL_DIR":/model \
+  $CACHE -v "$L2DIR":/l2 -v "$MODEL_DIR":/model $EXTRA_MOUNT \
   "$IMAGE" -c "
     lmcache server --host 0.0.0.0 --port 5555 --chunk-size $BLK \
       --l1-size-gb 24 --l1-init-size-gb 2 --eviction-policy LRU \
@@ -97,7 +100,7 @@ sudo docker run -d --name "$NAME" --restart unless-stopped \
       --limit-mm-per-prompt '{\"image\":4,\"video\":0}' \
       --mamba-cache-mode align --enable-prefix-caching --enable-chunked-prefill \
       --kv-transfer-config '{\"kv_connector\":\"LMCacheMPConnector\",\"kv_role\":\"kv_both\"}' \
-      --speculative-config '{\"method\":\"qwen3_5_mtp\",\"num_speculative_tokens\":'$NS'}' \
+      --speculative-config '$SPEC_FINAL' \
       --default-chat-template-kwargs '{\"preserve_thinking\":true,\"reasoning_effort\":\"medium\"}' \
       --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_xml \\
       --override-generation-config '{\"temperature\":0.6,\"top_p\":0.95,\"top_k\":20}'
