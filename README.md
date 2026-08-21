@@ -46,6 +46,8 @@ Non-goals: maximum batched throughput for many shallow users (this box peaks at 
 
 ## The graveyard
 
+**Also measured 2026-08-21:** [DFlash2](docs/DFLASH2.md) instead of MTP — 2.25× AR / +34% over MTP single-stream (164 t/s, flat to 30K), tool-eval parity, but a ~62K context ceiling on 32 GB and worse c4/c8; not the daily.
+
 **Experimental, measured 2026-08-21:** an NVFP4 KV cache via FlashInfer's merged FA2 sm120 path + vLLM PR #49891 + a V-scale-layout overlay — pool +37% (293K), retrieval clean, decode at or above fp8, one MTP-specific cliff open, not the daily: [docs/NVFP4KV.md](docs/NVFP4KV.md).
 
 Several faster configs died on the way here: a +6% KV-pool setting, two 4-bit KV kernels, and a tiered-cache stack that passed every hit-counter check while restoring garbage. Every rejection is documented with the number that killed it in [docs/REJECTED.md](docs/REJECTED.md), and [docs/HISTORY.md](docs/HISTORY.md) keeps the full daily lineage, reversals included. Read them before "improving" the config; odds are it has been tried.
