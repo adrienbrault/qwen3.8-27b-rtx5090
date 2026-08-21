@@ -32,4 +32,6 @@
 2. **Concurrency.** c4 decode is 15% below MTP and concurrent prefill collapses (5.7K t/s at c4, 2.7K at c8) — this box serves parallel agents.
 3. **Untested surface**: LMCache tiers on the V2 runner, vision with a blind drafter, and a PR that is one day old.
 
-It is an excellent *second profile* for a single user under 60K of context, and it becomes a daily candidate the day the drafter's KV is allocated by its sliding window. Compare MTP on the V2 runner (`VLLM_USE_V2_MODEL_RUNNER=1`) before quoting the +34% as a drafter effect rather than a runner effect.
+It is an excellent *second profile* for a single user under 60K of context, and it becomes a daily candidate the day the drafter's KV is allocated by its sliding window.
+
+**On the +34%:** the MTP column is the MTP we actually serve (V1 runner, nightly `ac7509e2b`). The same-runner control — MTP on the V2 runner with this image — could not run: the `ba07e4a48` nightly's `_C_stable_libtorch.abi3.so` raises an undefined cutlass symbol (`GemmUniversalBase…enable_sm89_to_sm90`) on that path. The 2.25× over autoregressive is same-image, same-runner.
