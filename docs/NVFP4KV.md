@@ -1,6 +1,6 @@
 # NVFP4 KV cache on the 5090 — measured (2026-08-21)
 
-**Status: experimental candidate, not the daily.** It boots, retrieval is clean, decode is at or above the fp8 daily, and the pool is +37% — but one MTP-specific throughput cliff is open, tool-eval is ~1.5 pts under fp8, and it runs without LMCache (the tier patches are fp8-page-specific). Numbers below are from one afternoon on one box; treat them as a first measurement, not a record.
+**Status (2026-08-21 evening): promotion candidate — tiers now work on nvfp4 pages (below).** It boots, retrieval is clean, decode is at or above the fp8 daily, and the pool is +37% — but one MTP-specific throughput cliff is open, tool-eval is ~1.5 pts under fp8, and it runs without LMCache (the tier patches are fp8-page-specific). Numbers below are from one afternoon on one box; treat them as a first measurement, not a record.
 
 The trigger was [drowzeys' DGX-Spark repo](https://github.com/drowzeys/keys-vLLm.0.27-Qwen3.8-27B-ADay777Ablit-NVFP4-A4Q-NVFP4-KV-4M-KV-token-pool-MTP3-Single-DGX-Spark): "back-porting the upstream FA2 NVFP4-KV path to GB10 takes the KV pool to >4M tokens". 4M is a 121 GB box; on 32 GB the same path gives the numbers below.
 
@@ -43,10 +43,16 @@ The negative control (`VLLM_SM12X_NVFP4_LINEAR_VSF=0`, in-tree swizzled writer) 
 
 Re-run on the promoted daily's runner and nightly (`ba07e4a48`, `VLLM_USE_V2_MODEL_RUNNER=1`, image rebuilt with the same patches): **c8 × pp8192 = 355 t/s** (was 159), c8 × pp4096 431–447, the whole c4/c6/c8 bracket healthy; needles 10/10 + 10/10 to 100K for both `nvfp4` and `nvfp4_4over6`; pool **338,636 @0.95** (the FlashInfer autotuner OOM-falls-back at that utilization on V2 — use 0.93 → 300,000); tool-eval **89 ± 1.4** (`nvfp4_4over6`: 88.5 ± 0.7) vs the fp8 tier daily's 90.8 ± 0.5. So nvfp4 KV is now a clean plain-profile option — +44–63% pool for ~2 tool-eval points and no LMCache tiers. The remaining item to make it the daily is LMCache page regrouping for nvfp4 pages.
 
+## Update 2026-08-21 (evening): LMCache tiers on nvfp4 pages — it works, and needed no page code
+
+The expected blocker ("the rc4 page patches are fp8-specific") was not one: LMCache's rank-4 group edit classifies pages by exact byte accounting and moves logical pages byte-opaquely, so the nvfp4 page `[blocks, 2·heads, block, 144]` is just another fused page. The one real requirement is the hybrid's **unified block**: vLLM aligns the attention block to the Mamba page — 1616 tokens with fp8 KV, **2864 with nvfp4** — and the LMCache chunk must equal it (the launcher now derives `BLK` from the KV dtype; `mnbt = 2·BLK − 1 = 5727`). Image: the nvfp4kv Dockerfile built `FROM` the tier image.
+
+Measured (V2 runner, util 0.93, 200K, tiers ON, fresh L2): **pool 309,090** (fp8 tier daily: 208,450, **+48%**); needles 9K→100K cold+warm 10/10 + 10/10 with real retrieves (100K: 27 s → 1.2–2 s); **restart-proof** revisit after `docker restart` 40K 6.3 → 2.5 s, 60K 11.6 → 3.3 s, correct; sean gate under 4 loaders 15/15 + 15/15; decode c1 141 / c4 339 / c8 353 / deep-30K 142 t/s (fp8 tier: 152 / 360 / 367 / 143); prefill 12.8K @8K (the larger mnbt helps); **tool-eval 69×2 92 ± 1.4**. Held to the same bar as the V2 promotion (69×4, vision, SO, a short unattended L2 window) before it becomes the daily.
+
 ## Not done / next
 
 - ~~The c8-long-prefill cliff~~ — gone on `ba07e4a48` + V2 (above).
-- LMCache on nvfp4 pages (the tier patches `0001`/`0002` regroup fp8 pages; nvfp4 needs its own).
+- ~~LMCache on nvfp4 pages~~ — works as-is with chunk = 2864 (above).
 - `WITH_0003=1` (PR #49891's MTP drafter full-cudagraph) — built as an option, unmeasured.
 - A4Q (fp4 Q × fp4 K for QKᵀ, prefill-only, +8–10% TTFT on drowzeys' box) — not prepared.
 - Rebase on nightly `ba07e4a48` (Mamba state-copy race fix #50729, GDN spec-count #53077, FlashInfer 0.6.17): image built, all patches apply, unmeasured.

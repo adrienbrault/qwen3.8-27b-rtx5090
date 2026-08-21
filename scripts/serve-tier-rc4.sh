@@ -34,7 +34,12 @@ PORT=${PORT:-8029}   # gauntlet default = experiment port; promotion passes PORT
 BIND_ADDR=${BIND_ADDR:-127.0.0.1}    # loopback by default — the API has NO auth. Set 0.0.0.0
                                      # only behind a firewall/VPN or an authenticated proxy.
 NAME=${NAME:-vllm-exp}
-BLK=1616                             # unified block size with MTP ns=4 (1568 without). NOT 16.
+KVDTYPE=${KVDTYPE:-fp8_e4m3}   # R81 audition: nvfp4 (needs IMAGE=vllm-qwen38:tiers-nvfp4kv = tier image + patches-nvfp4kv)
+# Unified hybrid block (vLLM: "Setting attention block size to N tokens to ensure that attention page
+# size is >= mamba page size"): fp8 KV + MTP ns=4 -> 1616 (1568 without MTP); nvfp4 KV -> 2864 (0.5625 B/elt
+# inflates the attention block to cover the mamba page). LMCache chunk MUST equal this block (rc4 rule).
+case "$KVDTYPE" in nvfp4*) BLK_DEFAULT=2864 ;; *) BLK_DEFAULT=1616 ;; esac
+BLK=${BLK:-$BLK_DEFAULT}             # NOT 16. Override only after reading the engine's own line.
 BATCHED=$((2 * BLK - 1))             # LMCache MP requires batched tokens in [chunk, 2*chunk)
 
 # L2 NVMe tier. 200 GB ~= 2.13M tokens, survives container restarts.
@@ -94,7 +99,7 @@ sudo docker run -d --name "$NAME" --restart unless-stopped \
     sleep 8
     exec python3 -m vllm.entrypoints.openai.api_server \
       --model /model --served-model-name $MODEL_NAME $MODEL_ALIAS --trust-remote-code \
-      --kv-cache-dtype fp8_e4m3 --no-async-scheduling \
+      --kv-cache-dtype $KVDTYPE --no-async-scheduling \
       --gpu-memory-utilization $UTIL --max-model-len 200000 \
       --max-num-seqs 8 --max-num-batched-tokens $BATCHED \
       --limit-mm-per-prompt '{\"image\":4,\"video\":0}' \
