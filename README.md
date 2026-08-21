@@ -46,7 +46,7 @@ Non-goals: maximum batched throughput for many shallow users (this box peaks at 
 
 ## The graveyard
 
-**Promotion candidate, measured 2026-08-21:** the same tier daily on the 08-21 nightly with vLLM's **V2 model runner** — **+19% c1 / +16% c4 / +20% deep decode**, pool +4%, tiers, restart-proof L2 and needles all clean, tool-eval 91: [docs/V2RUNNER.md](docs/V2RUNNER.md).
+**Promoted 2026-08-21:** the tier daily now runs on the 08-21 nightly with vLLM's **V2 model runner** — **+19% c1 / +16% c4 / +20% deep decode**, pool +4%, tiers, restart-proof L2 and needles all clean, tool-eval 91: [docs/V2RUNNER.md](docs/V2RUNNER.md), launcher [`scripts/serve-tier-rc4.sh`](scripts/serve-tier-rc4.sh).
 
 **Also measured 2026-08-21:** [DFlash2](docs/DFLASH2.md) instead of MTP — 164 t/s single-stream (2.25× AR), tool-eval parity, but MTP on the same V2 runner does 160 t/s with 2.5× the context and +40% at c4; the runner, not the drafter, was the win. Rejected; the V2-runner daily audition is the follow-up.
 

@@ -1,6 +1,6 @@
 # The V2 model runner + the 2026-08-21 nightly: +16–20% decode on the tier daily (measured 2026-08-21)
 
-**Status: promotion candidate, measured, not yet the daily.** This came out of the DFlash2 audition ([docs/DFLASH2.md](DFLASH2.md)): the drafter's apparent +34% was the runner and the newer nightly. Re-measured with the daily's own stack — fp8 KV + LMCache tiers + MTP `ns=4` — on nightly `ba07e4a48` with `VLLM_USE_V2_MODEL_RUNNER=1`.
+**Status: PROMOTED 2026-08-21 — this is the daily.** This came out of the DFlash2 audition ([docs/DFLASH2.md](DFLASH2.md)): the drafter's apparent +34% was the runner and the newer nightly. Re-measured with the daily's own stack — fp8 KV + LMCache tiers + MTP `ns=4` — on nightly `ba07e4a48` with `VLLM_USE_V2_MODEL_RUNNER=1`.
 
 | tier stack (mnbt 3231, util 0.95, 200K, tiers ON) | current daily (V1, `ac7509e2b`) | V2 runner, `ba07e4a48` |
 |---|---|---|

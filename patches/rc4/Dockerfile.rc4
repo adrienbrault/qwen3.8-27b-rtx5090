@@ -2,7 +2,10 @@
 # + LMCache v0.5.4rc4 + rebased patch stack 0001/0002/0007/0008/0009 (LMCache) and
 # 0005/0010 (vLLM). 0003 retired (fixed upstream). The lmcache tree in rc4-work/ is
 # PRE-PATCHED and stack-verified locally; vLLM patches apply in-image.
-FROM vllm/vllm-openai@sha256:c96082d33456ceeae7ec0d4faf2b5e47fb806a103decf94f9fbc9b35fd7d6b25
+# Base is a build-arg so the same recipe rebases onto a newer nightly digest:
+#   docker build --build-arg VLLM_BASE=vllm/vllm-openai@sha256:<digest> -t vllm-qwen38:tiers-rc4-<tag> -f Dockerfile.rc4 .
+ARG VLLM_BASE=vllm/vllm-openai@sha256:4e9299fb10c93ba020fbbe3237f7b5998d96cfe9fae962319babc9d7796ea66e   # ba07e4a48 (2026-08-21), R79 daily; previous: sha256:c96082d3… (ac7509e2b)
+FROM ${VLLM_BASE}
 
 COPY rc4-work /opt/lmc-src
 RUN set -eux; \
