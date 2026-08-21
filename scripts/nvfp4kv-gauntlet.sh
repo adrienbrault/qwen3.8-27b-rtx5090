@@ -7,7 +7,8 @@
 #   tail -f /srv/qwen5090/results/2026-08-21-qwen38-nvfp4kv/gauntlet.log ; stop: sudo systemctl stop nvfp4kv-gauntlet
 set -uo pipefail
 export PATH="$HOME/.local/bin:$PATH"
-R=/srv/qwen5090/results/2026-08-21-qwen38-nvfp4kv; mkdir -p "$R"
+R=${R:-/srv/qwen5090/results/2026-08-21-qwen38-nvfp4kv}; mkdir -p "$R"   # R=... LAUNCHER=... reuse the driver for other :8029 auditions (dflash2)
+LAUNCHER=${LAUNCHER:-/srv/qwen5090/launch-qwen38-nvfp4kv.sh}
 URL=http://localhost:8029/v1; M=qwen3.8-27b
 P=/srv/qwen5090/probes/needle_depth.py
 log() { echo "$(date -Is) $*" | tee -a "$R/gauntlet.log"; }
@@ -17,9 +18,9 @@ sudo docker ps --format '{{.Names}}' | grep -qE '^(vllm-27b|vllm-lmcache)$' && {
 boot() { # $1=NS $2=LINEAR_VSF $3=tag
   log "### BOOT NS=$1 LINEAR_VSF=$2 ($3) ###"
   sudo docker rm -f vllm-eval vllm-exp >/dev/null 2>&1 || true
-  NS=$1 LINEAR_VSF=$2 bash /srv/qwen5090/launch-qwen38-nvfp4kv.sh > "$R/boot-$3.log" 2>&1
+  NS=$1 LINEAR_VSF=$2 bash "$LAUNCHER" > "$R/boot-$3.log" 2>&1
   rc=$?; sudo docker logs vllm-exp > "$R/vllm-$3.log" 2>&1
-  grep -aE "GPU KV cache size|Maximum concurrency|kv_cache_dtype|overlay|Using .* backend|block_size|num_speculative|swizzled" "$R/vllm-$3.log" | head -20 | tee -a "$R/gauntlet.log"
+  grep -aE "GPU KV cache size|Maximum concurrency|kv_cache_dtype|overlay|Using .* backend|block_size|num_speculative|swizzled|model runner|DFlash|dflash" "$R/vllm-$3.log" | grep -av "non-default args" | head -20 | tee -a "$R/gauntlet.log"
   return $rc
 }
 needles() { # $1=tag ; cold+warm, MTP-sensitive depths
@@ -153,7 +154,8 @@ benchy_c8() { # re-check of the c8 ladder point (first run: 162 t/s, TTFT 6.4s±
 if [ -n "${STAGES:-}" ]; then  # partial re-run on a fresh NS=4 engine, e.g. STAGES="killer vision tooleval"
   log "=== NVFP4KV GAUNTLET partial: $STAGES ==="
   boot "${REDO_NS:-4}" "${REDO_VSF:-1}" "ns${REDO_NS:-4}-vsf${REDO_VSF:-1}-redo" || { log "BOOT redo FAILED"; exit 1; }  # REDO_NS=0 native path; REDO_VSF=0 swizzled diagnostic
-  for st in $STAGES; do $st; done
+  TAG="ns${REDO_NS:-4}-vsf${REDO_VSF:-1}-${KVDTYPE:-nvfp4}-redo"
+  for st in $STAGES; do $st "$TAG"; done   # needles/seangate take the tag; other stages ignore it
   log "=== partial done; engine left up on :8029 ==="; exit 0
 fi
 

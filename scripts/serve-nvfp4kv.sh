@@ -25,6 +25,8 @@ UTIL=${UTIL:-0.95}
 MAXLEN=${MAXLEN:-200000}
 MNBT=${MNBT:-4096}
 LINEAR_VSF=${LINEAR_VSF:-1}
+KVDTYPE=${KVDTYPE:-nvfp4}        # or nvfp4_4over6 (scale search maps block max to 4, not 6)
+EXTRA_ENV=${EXTRA_ENV:-}         # e.g. "-e VLLM_USE_V2_MODEL_RUNNER=1" (the R79 daily runner)
 TEMPLATE_KWARGS_DEFAULT='{"preserve_thinking":true,"reasoning_effort":"medium"}'
 TEMPLATE_KWARGS=${TEMPLATE_KWARGS:-$TEMPLATE_KWARGS_DEFAULT}
 
@@ -60,12 +62,12 @@ sudo docker image inspect "$IMAGE" >/dev/null 2>&1 || { echo "FATAL: image $IMAG
 sudo docker run -d --name "$NAME" --entrypoint python3 --runtime nvidia --gpus all --ipc=host \
   -p 0.0.0.0:${PORT}:8000 --shm-size 16g \
   -e TORCHINDUCTOR_COMPILE_THREADS=8 -e MAX_JOBS=4 -e FLASHINFER_NUM_COMPILE_JOBS=4 \
-  -e VLLM_SM12X_NVFP4_LINEAR_VSF="$LINEAR_VSF" \
+  -e VLLM_SM12X_NVFP4_LINEAR_VSF="$LINEAR_VSF" $EXTRA_ENV \
   -v "$MODEL_DIR":/model $CACHE \
   "$IMAGE" \
   -m vllm.entrypoints.openai.api_server \
   --model /model --served-model-name qwen3.8-27b qwen3.6-27b --trust-remote-code \
-  --kv-cache-dtype nvfp4 --attention-backend FLASHINFER \
+  --kv-cache-dtype "$KVDTYPE" --attention-backend FLASHINFER \
   --no-async-scheduling \
   --gpu-memory-utilization "$UTIL" --max-model-len "$MAXLEN" \
   --max-num-seqs 8 --max-num-batched-tokens "$MNBT" \
@@ -76,7 +78,7 @@ sudo docker run -d --name "$NAME" --entrypoint python3 --runtime nvidia --gpus a
   --override-generation-config '{"temperature":0.6,"top_p":0.95,"top_k":20}' \
   --default-chat-template-kwargs "$TEMPLATE_KWARGS"
 
-echo "nvfp4kv audition (NS=$NS util=$UTIL maxlen=$MAXLEN mnbt=$MNBT linear_vsf=$LINEAR_VSF) on :$PORT ..."
+echo "nvfp4kv audition (NS=$NS util=$UTIL maxlen=$MAXLEN mnbt=$MNBT linear_vsf=$LINEAR_VSF kv=$KVDTYPE extra_env=[$EXTRA_ENV] image=$IMAGE) on :$PORT ..."
 echo "(first boot JIT-compiles the FA2 NVFP4 sm120 kernels: allow ~15 min; cached in /srv/qwen5090/cache/flashinfer)"
 for i in $(seq 1 240); do
   curl -sf http://localhost:${PORT}/health >/dev/null 2>&1 && { echo HEALTHY; break; }

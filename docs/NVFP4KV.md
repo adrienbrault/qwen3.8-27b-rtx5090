@@ -39,9 +39,13 @@ Serving: [`scripts/serve-nvfp4kv.sh`](../scripts/serve-nvfp4kv.sh) — the plain
 
 The negative control (`VLLM_SM12X_NVFP4_LINEAR_VSF=0`, in-tree swizzled writer) **passed every behavioural probe** — needles, sean gate, and tool-eval 89.5 ± 2.1. Behavioural probes are blind to this bug. [`overlay/diag_vsf_layout.py`](../patches-nvfp4kv/overlay/diag_vsf_layout.py) pushes the same random K/V through both writers and runs the FA2 paged prefill against an fp32 reference: V-scale bytes differ in 30,091/32,768 positions (K scales and V data identical), and the FA2 output error is **2.7× worse with the in-tree writer on flat-magnitude V, 10× worse with group-structured V** (rel-L2 0.335–1.30 vs 0.124 for the overlay, identical at block 16 and 64). The in-tree writer is wrong for the FA2 reader on sm120; the model merely tolerates a 0.3–0.5 relative error on a quarter of its layers. Keep the overlay; the fix belongs upstream alongside #49891.
 
+## Update 2026-08-21 (later): on the V2 runner the cliff is gone
+
+Re-run on the promoted daily's runner and nightly (`ba07e4a48`, `VLLM_USE_V2_MODEL_RUNNER=1`, image rebuilt with the same patches): **c8 × pp8192 = 355 t/s** (was 159), c8 × pp4096 431–447, the whole c4/c6/c8 bracket healthy; needles 10/10 + 10/10 to 100K for both `nvfp4` and `nvfp4_4over6`; pool **338,636 @0.95** (the FlashInfer autotuner OOM-falls-back at that utilization on V2 — use 0.93 → 300,000); tool-eval **89 ± 1.4** (`nvfp4_4over6`: 88.5 ± 0.7) vs the fp8 tier daily's 90.8 ± 0.5. So nvfp4 KV is now a clean plain-profile option — +44–63% pool for ~2 tool-eval points and no LMCache tiers. The remaining item to make it the daily is LMCache page regrouping for nvfp4 pages.
+
 ## Not done / next
 
-- The c8-long-prefill cliff: re-measure `benchy_c8` on the `ba07e4a48` build (#52216), then `WITH_0003=1`.
+- ~~The c8-long-prefill cliff~~ — gone on `ba07e4a48` + V2 (above).
 - LMCache on nvfp4 pages (the tier patches `0001`/`0002` regroup fp8 pages; nvfp4 needs its own).
 - `WITH_0003=1` (PR #49891's MTP drafter full-cudagraph) — built as an option, unmeasured.
 - A4Q (fp4 Q × fp4 K for QKᵀ, prefill-only, +8–10% TTFT on drowzeys' box) — not prepared.

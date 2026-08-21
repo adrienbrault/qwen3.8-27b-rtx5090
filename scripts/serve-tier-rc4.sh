@@ -41,7 +41,7 @@ BATCHED=$((2 * BLK - 1))             # LMCache MP requires batched tokens in [ch
 # The cap is only real because of patch 0008 + the eviction block below — verify both.
 L2DIR=${L2DIR:-/srv/qwen5090/lmcache-l2-rc4-v2}   # FRESH namespace per stack generation (R79: V2 + new nightly)
 UTIL=${UTIL:-0.95}
-EXTRA_ENV=${EXTRA_ENV:-"-e VLLM_USE_V2_MODEL_RUNNER=1"}   # R79: the V2 model runner is the daily; EXTRA_ENV= reverts to V1
+EXTRA_ENV=${EXTRA_ENV-"-e VLLM_USE_V2_MODEL_RUNNER=1"}   # R79: V2 model runner is the daily. `${VAR-default}` on purpose: an EXPLICIT empty EXTRA_ENV= reverts to V1 (`:-` would re-apply the default)
 L2CAP=${L2CAP:-200}
 sudo mkdir -p "$L2DIR"
 # Orphaned temp files from a crashed sidecar count against the L2 cap (patch 0008's
