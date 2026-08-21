@@ -33,13 +33,15 @@ Serving: [`scripts/serve-nvfp4kv.sh`](../scripts/serve-nvfp4kv.sh) — the plain
 
 **The open cliff:** with MTP on and ≳50–57K prompt tokens in flight across ≥4 requests (c8@8192, c7@8192, c8@8000, c4@16384), aggregate decode halves and TTFT serializes (6–15 s ± 8 s); ≤49K in flight is fine (c8@6144 = 296 t/s, c6@8192 = 288, c4@12288 = 208), and **with MTP off the same shape is fine (c8@8192 = 344.6)**. fp8 KV has no such cliff. Not a 2^16 boundary. If your workload is many concurrent long prefills with MTP, this stack is slower today; single-stream and ≤4-way deep work is faster than fp8.
 
+**Mechanism (engine `/metrics` around one c8×8K run): 23 preemptions for 8 requests, 35 s of summed queue time, KV usage near 0% at the end** — the scheduler evicts and re-admits at well under a quarter of the pool, so it's allocator/block-granularity pressure, not compute. The hybrid's `align` mode unifies the block across attention and GDN groups: with nvfp4 attention bytes at 0.56× fp8, the shared block inflates from 1616 to ≈2870 tokens (drowzeys saw 2848 on GB10), per-block GDN state snapshots get scarcer per request, and MTP's lookahead slots tip it over. First suspects: nightly `ba07e4a48`'s [#52216](https://github.com/vllm-project/vllm/pull/52216) (`prefix_cache_retention_interval` default 0 for SSM/hybrid models — exactly this pressure; image built, unmeasured), then PR #49891's own `0003` MTP-drafter cudagraph piece (excluded from this build).
+
 ## The swizzle question — measured, not argued
 
 The negative control (`VLLM_SM12X_NVFP4_LINEAR_VSF=0`, in-tree swizzled writer) **passed every behavioural probe** — needles, sean gate, and tool-eval 89.5 ± 2.1. Behavioural probes are blind to this bug. [`overlay/diag_vsf_layout.py`](../patches-nvfp4kv/overlay/diag_vsf_layout.py) pushes the same random K/V through both writers and runs the FA2 paged prefill against an fp32 reference: V-scale bytes differ in 30,091/32,768 positions (K scales and V data identical), and the FA2 output error is **2.7× worse with the in-tree writer on flat-magnitude V, 10× worse with group-structured V** (rel-L2 0.335–1.30 vs 0.124 for the overlay, identical at block 16 and 64). The in-tree writer is wrong for the FA2 reader on sm120; the model merely tolerates a 0.3–0.5 relative error on a quarter of its layers. Keep the overlay; the fix belongs upstream alongside #49891.
 
 ## Not done / next
 
-- The c8-long-prefill cliff (engine-side metrics, then the drafter's prefill path or the spec-capped `max_num_scheduled_tokens=4096`).
+- The c8-long-prefill cliff: re-measure `benchy_c8` on the `ba07e4a48` build (#52216), then `WITH_0003=1`.
 - LMCache on nvfp4 pages (the tier patches `0001`/`0002` regroup fp8 pages; nvfp4 needs its own).
 - `WITH_0003=1` (PR #49891's MTP drafter full-cudagraph) — built as an option, unmeasured.
 - A4Q (fp4 Q × fp4 K for QKᵀ, prefill-only, +8–10% TTFT on drowzeys' box) — not prepared.

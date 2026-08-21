@@ -89,8 +89,9 @@ PY
 tooleval() {
   log "--- tool-eval 69x2 @T0.6 effort=medium (fp8 band: plain 91, tier-rc4 92.5) ---"
   cd "$HOME"  # tool-eval-bench writes ./data/benchmarks.sqlite + ./runs/ relative to cwd (systemd cwd is /)
-  tool-eval-bench --base-url $URL --model $M --temperature 0.6 --top-p 0.95 --top-k 20 --trials 2 --parallel 8 --json-file "$R/tooleval-69x2.json" > "$R/tooleval-69x2.log" 2>&1
-  grep -aiE "final_score|mean|Quality" "$R/tooleval-69x2.log" | tail -5 | tee -a "$R/gauntlet.log"
+  local TS; TS=$(date +%H%M)  # per-run files: a fixed name destroyed the overlay run's json once (R77)
+  tool-eval-bench --base-url $URL --model $M --temperature 0.6 --top-p 0.95 --top-k 20 --trials 2 --parallel 8 --json-file "$R/tooleval-69x2-$TS.json" > "$R/tooleval-69x2-$TS.log" 2>&1
+  grep -aiE "final_score|mean|Quality" "$R/tooleval-69x2-$TS.log" | tail -5 | tee -a "$R/gauntlet.log"
 }
 benchy() {
   log "--- benchy: ladder pp8192 c1/2/4/8, deep pp30K c1 AND c8, prefill 8K/32K/100K ---"
@@ -110,7 +111,8 @@ diag() { # negative control: in-tree swizzled-V-scale writer + FA2 linear reader
 }
 cliff_metrics() { # engine-side view of the >=50K-tokens-in-flight cliff (NS=4): preemptions / spec counters / queue
   log "--- cliff metrics: /metrics snapshot around c8 pp8192 tg128 ---"
-  snap() { curl -s http://localhost:8029/metrics | grep -aE "^vllm:(num_preemptions_total|num_requests_(running|waiting)|spec_decode_num_(drafts|accepted_tokens|draft_tokens)_total|kv_cache_usage_perc|prefix_cache_(hits|queries)_total|request_prefill_time_seconds_sum|request_decode_time_seconds_sum|request_queue_time_seconds_sum) " ; }
+  snap() { curl -s http://localhost:8029/metrics | grep -aE "^vllm:(num_preemptions_total|num_requests_(running|waiting)|spec_decode_num_(drafts|accepted_tokens|draft_tokens)_total|kv_cache_usage_perc|prefix_cache_(hits|queries)_total|request_(prefill|decode|queue)_time_seconds_sum)[{ ]" ; }  # labels follow the name with '{'
+
   snap > "$R/metrics-before.txt"
   llama-benchy --base-url $URL --model $M --pp 8192 --tg 128 --concurrency 8 --runs 1 > "$R/benchy-cliff-metrics.log" 2>&1
   snap > "$R/metrics-after.txt"
