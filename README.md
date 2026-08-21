@@ -10,7 +10,7 @@ This is a serving config for concurrent long-context coding agents on one 32 GB 
 | engine | vLLM nightly `ba07e4a48` (2026-08-21) on the V2 model runner, FlashInfer 0.6.17, two local patch stacks ([rc4](patches/rc4/) for the tiers, [nvfp4kv](patches-nvfp4kv/) for the KV cache) |
 | KV cache | `--kv-cache-dtype nvfp4` (E2M1 values + one FP8 scale per 16 elements, 0.5625 B/elt), unified hybrid block 2864 tokens |
 | hot pool | **312,189 tokens** at util 0.93, max-len 262,144 (the model's limit; 1.19× at full length), 8 sequences (fp8 KV on the same engine at 200K: 208,450). Depth needles cold + warm at 100K / 180K / 261.7K prompt tokens: all hit (2026-08-21, results/2026-08-21-r82-ladder). |
-| tiers | LMCache 0.5.4rc4: 24 GiB pinned DRAM + 200 GiB NVMe (`fs_native`), chunk 2864; the NVMe tier survives restarts |
+| tiers | LMCache 0.5.4rc4: 24 GiB pinned DRAM + 200 GiB NVMe (`fs_native`), chunk 2864; the NVMe tier survives restarts. Measured density on nvfp4 pages: ~73 KB/token incl. the GDN state, so 200 GB holds ~2.7M tokens (about 9× the hot pool); LRU eviction at the 80% watermark is silent and keeps the tier bounded (2026-08-21 soak, results/2026-08-21-soak-nvfp4-l2) |
 | spec decode | MTP `ns=4`, `--no-async-scheduling`, `--mamba-cache-mode align` |
 | decode | c1 141 / c4 339 / c8 353 t/s aggregate at pp8192; 142 t/s single-stream at 30K depth |
 | prefill | 12.8K t/s at 8K, 9.3K at 30K, single stream (the prefill lane is shared; per-request divides by N) |
