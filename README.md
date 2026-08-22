@@ -6,7 +6,7 @@ This is a serving config for concurrent long-context coding agents on one 32 GB 
 
 | | |
 |---|---|
-| model | [sakamakismile/Qwen3.8-27B-MTP-NVFP4](https://huggingface.co/sakamakismile/Qwen3.8-27B-MTP-NVFP4) — W4A4 NVFP4 (ModelOpt recipe), MTP head, vision tower, 20.6 GB |
+| model | [gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090](https://huggingface.co/gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090) — NVFP4 everywhere incl. the GDN projections (ModelOpt), MTP head, vision tower, 18.8 GB; served with the stock Qwen3.8 chat template (its bundled one breaks `qwen3_xml` tool parsing). Daily since 2026-08-22; previous: [sakamakismile/Qwen3.8-27B-MTP-NVFP4](https://huggingface.co/sakamakismile/Qwen3.8-27B-MTP-NVFP4) (GDN in bf16, 20.6 GB) |
 | engine | vLLM nightly `ba07e4a48` (2026-08-21) on the V2 model runner, FlashInfer 0.6.17, two local patch stacks ([rc4](patches/rc4/) for the tiers, [nvfp4kv](patches-nvfp4kv/) for the KV cache) |
 | KV cache | `--kv-cache-dtype nvfp4` (E2M1 values + one FP8 scale per 16 elements, 0.5625 B/elt), unified hybrid block 2864 tokens |
 | hot pool | **312,189 tokens** at util 0.93, max-len 262,144 (the model's limit; 1.19× at full length), 8 sequences (fp8 KV on the same engine at 200K: 208,450). Depth needles cold + warm at 100K / 180K / 261.7K prompt tokens: all hit (2026-08-21, results/2026-08-21-r82-ladder). |
@@ -38,7 +38,7 @@ The session started from a 5-day outage (self-inflicted: procps `kill -TERM -<pg
 
 ## Benchmarks
 
-**Checkpoint candidates (2026-08-22):** two newer NVFP4 checkpoints that also quantize the GDN projections ([gittensor `-RTX5090`](https://huggingface.co/gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090), [Mantrah `-GDN`](https://huggingface.co/Mantrah/Qwen3.8-27B-NVFP4-GDN)) measure +20–25% decode and +17–27% pool on this engine at prefill parity, with a small Context & State dip on tool-eval; the same-tasks SWE-Bench comparison decides. Table in [bench/RESULTS.md](bench/RESULTS.md#checkpoint-ab-on-the-daily-engine-2026-082122-results2026-08-21-radixark-ab-results2026-08-22-sweep-ab).
+**Checkpoint switch (2026-08-22):** the daily moved from saka to [gittensor `-RTX5090`](https://huggingface.co/gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090), which also quantizes the GDN projections: KV pool 388K vs ~310K at 262K, +20–25% decode at every concurrency, prefill parity; cost: tool-eval 69×4 89.8 ± 1.3 vs saka's 92 ± 1.4, SWE-Bench parity on a same-tasks 50-task slice (22/30 vs 37/50 pace). [Mantrah `-GDN`](https://huggingface.co/Mantrah/Qwen3.8-27B-NVFP4-GDN) measured the same quality (89.5, 25/34) with a smaller pool (348K). Table in [bench/RESULTS.md](bench/RESULTS.md#checkpoint-ab-on-the-daily-engine-2026-082122-results2026-08-21-radixark-ab-results2026-08-22-sweep-ab).
 
 Tool: [llama-benchy](https://github.com/eugr/llama-benchy) 0.3.8 unless stated. Memory-overclocked card (+4500 MHz VRAM, about 15% more bandwidth than stock); decode is bandwidth-bound, so expect up to ~15% lower decode at stock clocks. Full tables: [bench/RESULTS.md](bench/RESULTS.md).
 

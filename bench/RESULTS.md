@@ -44,7 +44,7 @@ V1 runner: pool 221,126, c1 131.6, c4 367.7, deep c1 128.5 (the 2026-08-15 night
 
 Same engine and flags as the daily (tiers + nvfp4 KV + V2 runner, 262K, util 0.93, LMCache chunk 2864); only `MODEL_DIR` changes. The daily checkpoint keeps the 48 GDN layers' projections in bf16 (about 11 GB read every decode step); the two newer checkpoints quantize them.
 
-| | saka (daily) | RadixArk (FP8 attention + GDN) | gittensor `-RTX5090` (GDN NVFP4) | Mantrah `-GDN` (GDN NVFP4) |
+| | saka (daily until 2026-08-22) | RadixArk (FP8 attention + GDN) | gittensor `-RTX5090` (GDN NVFP4) | Mantrah `-GDN` (GDN NVFP4) |
 |---|---|---|---|---|
 | KV pool @262K | 312,189 | cannot boot at 262K; 231,818 @200K | **397,982** | 364,618 |
 | decode c1 / c4 / deep-30K c1 (t/s) | 143–150 / 339–363 / 142 | 171 / 332 / 156 (@200K) | **178 / 405 / 175** | 177 / 407 / 172 |
@@ -52,6 +52,9 @@ Same engine and flags as the daily (tiers + nvfp4 KV + V2 runner, 262K, util 0.9
 | needles cold + warm to 261.7K | all hit | 3/3 (@200K) | 4/4 | 4/4 |
 | killer / vision / structured output | 8/8 / 8/8 / 4/4 | 8/8 / 8/8 / 4/4 | 8/8 / 8/8 / 4/4 | 8/8 / 8/8 / 4/4 |
 | tool-eval 69×2 (Context & State) | 92 ± 1.4 (17–18/20); 69×4 90.0 ± 2.0 | 90.5 ± 0.7 (14/20) | 89.5 ± 2.1 (14/20) with the Qwen3.8 XML template | 89.5 ± 2.1 (16/20) |
+| tool-eval 69×4 (decisive, 2026-08-22) | 90.0 ± 2.0 | — | **89.8 ± 1.3** | 89.5 ± 1.3 |
+| SWE-Bench Verified, first 50 tasks, same harness (R2E-solved; pull-limit drops shrink the denominators) | 37/50 (74%) | — | 22/30 (73%) | 25/34 (74%) |
+| KV pool on the daily config, decisive boot | ~310K | — | **388,449** | 347,936 |
 
 Notes: gittensor ships a chat template whose tool-call format the `qwen3_xml` parser does not read (tool calls come back with empty arguments, tool-eval 0) — serve it with the stock Qwen3.8 template. Its DSpark NVFP4 drafter does not load under vLLM's `dspark` path (head-dim mismatch; the card's numbers are SGLang). The GDN-NVFP4 checkpoints buy +20–25% decode and +17–27% pool at prefill parity; the quality cost shows as a small Context & State dip at n=2. The daily stays on saka until the same-tasks SWE-Bench comparison (first 50 tasks) is in.
 
