@@ -56,6 +56,8 @@ Same engine and flags as the daily (tiers + nvfp4 KV + V2 runner, 262K, util 0.9
 | SWE-Bench Verified, first 50 tasks, same harness (R2E-solved; pull-limit drops shrink the denominators) | 37/50 (74%) | — | 22/30 (73%) | 25/34 (74%) |
 | KV pool on the daily config, decisive boot | ~310K | — | **388,449** | 347,936 |
 
+**gittensor as the daily, measured on the serving port after promotion (2026-08-22 17:54 UTC, `results/2026-08-22-r90-gittensor-daily/`):** decode c1 170 / c2 272 / c4 451 / c8 487 t/s aggregate (142 and 97 per stream at c4/c8); 187 t/s at 30K depth and 193 at 100K; prefill 13.2K / 9.4K / 4.9K t/s at 8K / 30K / 100K (TTFT 0.57 / 2.9 / 18.4 s); MTP acceptance 0.56 per draft token; depth needles 40K/100K/200K ×2 all hit cold and warm (cold 223K-token prompt: 91 s); tool-eval 69×2 89 ± 1.4.
+
 Notes: gittensor ships a chat template whose tool-call format the `qwen3_xml` parser does not read (tool calls come back with empty arguments, tool-eval 0) — serve it with the stock Qwen3.8 template. Its DSpark NVFP4 drafter does not load under vLLM's `dspark` path (head-dim mismatch; the card's numbers are SGLang). The GDN-NVFP4 checkpoints buy +20–25% decode and +17–27% pool at prefill parity; the quality cost shows as a small Context & State dip at n=2. The daily stays on saka until the same-tasks SWE-Bench comparison (first 50 tasks) is in.
 
 ## Archive — Qwen3.6 era (2026-07) and the 2026-08-15 re-platform
