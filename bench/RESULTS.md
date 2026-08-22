@@ -60,6 +60,14 @@ Same engine and flags as the daily (tiers + nvfp4 KV + V2 runner, 262K, util 0.9
 
 Notes: gittensor ships a chat template whose tool-call format the `qwen3_xml` parser does not read (tool calls come back with empty arguments, tool-eval 0) — serve it with the stock Qwen3.8 template. Its DSpark NVFP4 drafter does not load under vLLM's `dspark` path (head-dim mismatch; the card's numbers are SGLang). The GDN-NVFP4 checkpoints buy +20–25% decode and +17–27% pool at prefill parity; the quality cost shows as a small Context & State dip at n=2. The daily stays on saka until the same-tasks SWE-Bench comparison (first 50 tasks) is in.
 
+## Agentic benchmarks on the Qwen3.8 daily (2026-08-21/22)
+
+**SWE-Bench Verified: 331/500 = 66.2%** (official `swebench` harness, single attempt; 1 instance still unscored → ceiling 332). Engine: the 2026-08-21 daily (saka W4A4 checkpoint, NVFP4 KV, LMCache tiers, V2 runner, 262K, util 0.93, MTP ns=4), 4 tasks in parallel, external prefix-cache hit rate 79.8% over the campaign. Scaffold: R2E-Gym `runagent_multiple`, function calling, T=0.6, `max_steps 40` soft / 100 hard — identical to the Qwen3.6-27B run that scored 69.4% (347/500). R2E reward vs official verdict: 332 vs 331, 7 R2E-only / 6 official-only.
+
+Two harness problems had to be fixed to get an honest number, both documented in `patches-r2e/` of the private repo: (1) assistant turns with `content: null` (tool-call-only or reasoning-only turns, which Qwen3.8 produces far more often than 3.6) are rejected by vLLM with HTTP 400 when resent — 32 tasks aborted that way and were re-run after the fix; (2) anonymous Docker Hub pulls (100 per 6 h) cause the scorer to mark instances as errors — the first official pass showed 27/500; the number above is after three scoring passes.
+
+Why 3.8 trails 3.6 here: 3.8 obeys the scaffold's soft budget ("Steps Remaining: N … submit NOW" after 40 steps) — 133/500 trajectories ran past 41 steps vs 316/500 for 3.6, and 27 of the 52 tasks lost relative to 3.6 ended on a step-budget exit. An A/B with the soft budget raised to 80 on the first 100 tasks (baseline 67/100 at 40) is in progress; its result will be added here with the budget stated — the 66.2% above stays the apples-to-apples number.
+
 ## Archive — Qwen3.6 era (2026-07) and the 2026-08-15 re-platform
 
 Everything below was measured on the previous model (Qwen3.6-27B) or on the 2026-08-15 Qwen3.8 plain re-platform, on the V1 runner. Kept as data; the agentic benchmarks (SWE-Bench-Verified 69.4%, Terminal-Bench 2.1 48.3%) have not been re-run on the current daily.
