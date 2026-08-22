@@ -1,0 +1,56 @@
+Quantized DFlash/DFlash2 drafters (compressed-tensors W4A16 / W8A16 pack-quantized).
+
+Upstream #52816 already threads get_draft_quant_config() into the drafter's layers, so a
+compressed-tensors drafter builds fine — but DFlashQwen3Model._build_context_kv_buffers reads
+`qkv_proj.weight[q_size:]` as a dense matrix to precompute context KV in one fused GEMM. On a
+pack-quantized qkv_proj that attribute is `weight_packed` + `weight_scale`
+('QKVParallelLinear' object has no attribute 'weight'). Port of syv-ai/qwen38-27b-rtx3090
+patches/dflash2-backport.patch `_dense_kv_rows`: the buffers are built at the end of
+load_weights, i.e. BEFORE process_weights_after_loading's Marlin repack, so the packed
+tensors are still in checkpoint layout and can be dequantized (symmetric, group strategy).
+The target lm_head stays unquantized on our checkpoints, so the backport's quantized-lm_head
+compute_candidates hunk is not ported.
+
+--- a/vllm/model_executor/models/qwen3_dflash.py
++++ b/vllm/model_executor/models/qwen3_dflash.py
+@@ -479,6 +479,31 @@
+             embeds = torch.where(is_mask, self.mask_embedding.to(embeds.dtype), embeds)
+         return embeds
+ 
++    @staticmethod
++    def _dense_kv_rows(attn: nn.Module) -> torch.Tensor:
++        """Rows [q_size:] of qkv_proj as a dense matrix. For a compressed-tensors
++        pack-quantized (W4A16 / W8A16, symmetric, group) qkv_proj this runs from
++        load_weights, before the Marlin repack, so weight_packed/weight_scale are still
++        in plain checkpoint layout and can be dequantized here."""
++        qkv = attn.qkv_proj
++        w = getattr(qkv, "weight", None)
++        if w is not None and w.dim() == 2:
++            return w[attn.q_size :]
++        packed, scale = qkv.weight_packed, qkv.weight_scale
++        # (weight_shape holds only the last-loaded shard of the fused qkv; use the tensors.)
++        out_f, in_f = int(packed.shape[0]), int(qkv.input_size)
++        bits = 32 * packed.shape[1] // in_f
++        from compressed_tensors.compressors.pack_quantized.base import unpack_from_int32
++
++        q = unpack_from_int32(packed.data, bits, torch.Size([out_f, in_f]), packed_dim=1)
++        group = in_f // scale.shape[1]
++        dense = (
++            q.to(torch.float32).reshape(out_f, in_f // group, group)
++            * scale.to(torch.float32)[..., None]
++        ).reshape(out_f, in_f)
++        out_dtype = scale.dtype if scale.dtype.is_floating_point else torch.bfloat16
++        return dense.to(out_dtype)[attn.q_size :]
++
+     def _build_context_kv_buffers(
+         self,
+         layers_attn: list[nn.Module],
+@@ -487,7 +512,7 @@
+         self._hidden_norm_weight = self.hidden_norm.weight.data
+ 
+         # KV projection weights: [num_layers * 2 * kv_size, hidden_size]
+-        kv_weights = [a.qkv_proj.weight[a.q_size :] for a in layers_attn]
++        kv_weights = [self._dense_kv_rows(a) for a in layers_attn]
+         self._fused_kv_weight = torch.cat(kv_weights, dim=0)
+         if has_bias:
+             kv_biases = [a.qkv_proj.bias[a.q_size :] for a in layers_attn]

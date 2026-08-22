@@ -8,12 +8,16 @@ ARG VLLM_BASE=vllm/vllm-openai@sha256:4e9299fb10c93ba020fbbe3237f7b5998d96cfe9fa
 FROM ${VLLM_BASE}
 ARG VLLM_COMMIT=ba07e4a48
 COPY 0001-pr52816-dflash2.diff /tmp/0001.diff
+COPY 0002-quantized-drafter-kv-precompute.diff /tmp/0002.diff
 RUN set -eux; \
     IMG_VER="$(python3 -c 'import vllm; print(vllm.__version__)')"; \
     case "$IMG_VER" in *g${VLLM_COMMIT}*) ;; *) echo "FATAL: image vllm $IMG_VER != commit ${VLLM_COMMIT}"; exit 1;; esac; \
     SP="$(python3 -c 'import os, vllm; print(os.path.dirname(os.path.dirname(vllm.__file__)))')"; \
     patch -p1 -d "$SP" -f < /tmp/0001.diff; \
+    patch -p1 -d "$SP" -f < /tmp/0002.diff; \
+    grep -q "_dense_kv_rows" "$SP/vllm/model_executor/models/qwen3_dflash.py"; \
+    python3 -m py_compile "$SP/vllm/model_executor/models/qwen3_dflash.py"; \
     python3 -m py_compile "$SP/vllm/model_executor/models/qwen3_dflash2.py" "$SP/vllm/v1/worker/gpu/spec_decode/dflash2/speculator.py" "$SP/vllm/config/vllm.py"; \
     grep -q "DFlash2DraftModel" "$SP/vllm/model_executor/models/registry.py"; \
     grep -q "_is_dflash2_draft" "$SP/vllm/config/vllm.py"; \
-    echo "DFLASH2 IMAGE OK ($IMG_VER + PR#52816)"
+    echo "DFLASH2 IMAGE OK ($IMG_VER + PR#52816 + quantized-drafter 0002)"
