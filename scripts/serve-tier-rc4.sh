@@ -113,6 +113,8 @@ HEALTHY=0
 for i in $(seq 1 150); do
   curl -sf http://${BIND_ADDR}:${PORT}/health >/dev/null 2>&1 && { echo "HEALTHY"; HEALTHY=1; break; }
   sudo docker ps --filter name="$NAME" --format x | grep -q x || { echo "FAILED: container died — see: sudo docker logs $NAME"; sudo docker logs "$NAME" 2>&1 | tail -20; exit 1; }
+  # --restart unless-stopped turns an engine-init crash into a silent 25-min loop (R83/R84): fail fast on the first restart
+  [ "$(sudo docker inspect "$NAME" --format '{{.RestartCount}}' 2>/dev/null || echo 0)" -gt 0 ] && { echo "FAILED: container restarted (engine-init crash loop)"; sudo docker logs "$NAME" 2>&1 | grep -aE "Error|error|raise" | tail -12; sudo docker rm -f "$NAME" >/dev/null 2>&1; exit 1; }
   sleep 10
 done
 if [ "$HEALTHY" != 1 ]; then
