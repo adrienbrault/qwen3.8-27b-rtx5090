@@ -39,6 +39,22 @@ No tiers, util 0.93, mnbt 4096: pool 300,000 (338,636 at 0.95, where the FlashIn
 
 V1 runner: pool 221,126, c1 131.6, c4 367.7, deep c1 128.5 (the 2026-08-15 nightly read 207,042 / 123.1 / 314.6 / 122.9). V2 runner: pool 235,211, then OOM inside the `fp4_gemm` autotuner on the first request at util 0.98.
 
+
+## Checkpoint A/B on the daily engine (2026-08-21/22, results/2026-08-21-radixark-ab, results/2026-08-22-sweep-ab)
+
+Same engine and flags as the daily (tiers + nvfp4 KV + V2 runner, 262K, util 0.93, LMCache chunk 2864); only `MODEL_DIR` changes. The daily checkpoint keeps the 48 GDN layers' projections in bf16 (about 11 GB read every decode step); the two newer checkpoints quantize them.
+
+| | saka (daily) | RadixArk (FP8 attention + GDN) | gittensor `-RTX5090` (GDN NVFP4) | Mantrah `-GDN` (GDN NVFP4) |
+|---|---|---|---|---|
+| KV pool @262K | 312,189 | cannot boot at 262K; 231,818 @200K | **397,982** | 364,618 |
+| decode c1 / c4 / deep-30K c1 (t/s) | 143–150 / 339–363 / 142 | 171 / 332 / 156 (@200K) | **178 / 405 / 175** | 177 / 407 / 172 |
+| prefill 8K / 30K (t/s) | 12.8K / 9.3K | 9.6K / 8.1K | 12.3–12.8K / 9.45K | 12.4K / 9.2K |
+| needles cold + warm to 261.7K | all hit | 3/3 (@200K) | 4/4 | 4/4 |
+| killer / vision / structured output | 8/8 / 8/8 / 4/4 | 8/8 / 8/8 / 4/4 | 8/8 / 8/8 / 4/4 | 8/8 / 8/8 / 4/4 |
+| tool-eval 69×2 (Context & State) | 92 ± 1.4 (17–18/20); 69×4 90.0 ± 2.0 | 90.5 ± 0.7 (14/20) | 89.5 ± 2.1 (14/20) with the Qwen3.8 XML template | 89.5 ± 2.1 (16/20) |
+
+Notes: gittensor ships a chat template whose tool-call format the `qwen3_xml` parser does not read (tool calls come back with empty arguments, tool-eval 0) — serve it with the stock Qwen3.8 template. Its DSpark NVFP4 drafter does not load under vLLM's `dspark` path (head-dim mismatch; the card's numbers are SGLang). The GDN-NVFP4 checkpoints buy +20–25% decode and +17–27% pool at prefill parity; the quality cost shows as a small Context & State dip at n=2. The daily stays on saka until the same-tasks SWE-Bench comparison (first 50 tasks) is in.
+
 ## Archive — Qwen3.6 era (2026-07) and the 2026-08-15 re-platform
 
 Everything below was measured on the previous model (Qwen3.6-27B) or on the 2026-08-15 Qwen3.8 plain re-platform, on the V1 runner. Kept as data; the agentic benchmarks (SWE-Bench-Verified 69.4%, Terminal-Bench 2.1 48.3%) have not been re-run on the current daily.

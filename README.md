@@ -38,6 +38,8 @@ The session started from a 5-day outage (self-inflicted: procps `kill -TERM -<pg
 
 ## Benchmarks
 
+**Checkpoint candidates (2026-08-22):** two newer NVFP4 checkpoints that also quantize the GDN projections ([gittensor `-RTX5090`](https://huggingface.co/gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090), [Mantrah `-GDN`](https://huggingface.co/Mantrah/Qwen3.8-27B-NVFP4-GDN)) measure +20–25% decode and +17–27% pool on this engine at prefill parity, with a small Context & State dip on tool-eval; the same-tasks SWE-Bench comparison decides. Table in [bench/RESULTS.md](bench/RESULTS.md#checkpoint-ab-on-the-daily-engine-2026-082122-results2026-08-21-radixark-ab-results2026-08-22-sweep-ab).
+
 Tool: [llama-benchy](https://github.com/eugr/llama-benchy) 0.3.8 unless stated. Memory-overclocked card (+4500 MHz VRAM, about 15% more bandwidth than stock); decode is bandwidth-bound, so expect up to ~15% lower decode at stock clocks. Full tables: [bench/RESULTS.md](bench/RESULTS.md).
 
 **Decode, tiers on (2026-08-21, pp8192 tg512, aggregate t/s):**
