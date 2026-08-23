@@ -12,7 +12,7 @@ This is a serving config for concurrent long-context coding agents on one 32 GB 
 | hot pool | **312,189 tokens** at util 0.93, max-len 262,144 (the model's limit; 1.19× at full length), 8 sequences (fp8 KV on the same engine at 200K: 208,450). Depth needles cold + warm at 100K / 180K / 261.7K prompt tokens: all hit (2026-08-21, results/2026-08-21-r82-ladder). |
 | tiers | LMCache 0.5.4rc4: 24 GiB pinned DRAM + 200 GiB NVMe (`fs_native`), chunk 2864; the NVMe tier survives restarts. Measured density on nvfp4 pages: ~73 KB/token incl. the GDN state, so 200 GB holds ~2.7M tokens (about 9× the hot pool); LRU eviction at the 80% watermark is silent and keeps the tier bounded (2026-08-21 soak, results/2026-08-21-soak-nvfp4-l2) |
 | spec decode | MTP `ns=4`, `--no-async-scheduling`, `--mamba-cache-mode align` |
-| decode | c1 141 / c4 339 / c8 353 t/s aggregate at pp8192; 142 t/s single-stream at 30K depth |
+| decode (steady state, prose / code) | c1 124 / 183 t/s; c4 511 / 639 aggregate; c8 891 aggregate (prose); 103 t/s single-stream at 100K context |
 | prefill | 12.8K t/s at 8K, 9.3K at 30K, single stream (the prefill lane is shared; per-request divides by N) |
 | quality | tool-eval-bench 69×2 **92 ± 1.4**; fp8-tier control 69×4 90.8 ± 0.5 |
 | retrieval | needles 9K→100K cold + warm 10/10 + 10/10; restart-proof L2 revisit 40K 6.3 → 2.5 s, 60K 11.6 → 3.3 s; 15/15 + 15/15 under 4 concurrent loaders |
@@ -42,15 +42,19 @@ The session started from a 5-day outage (self-inflicted: procps `kill -TERM -<pg
 
 Tool: [llama-benchy](https://github.com/eugr/llama-benchy) 0.3.8 unless stated. Memory-overclocked card (+4500 MHz VRAM, about 15% more bandwidth than stock); decode is bandwidth-bound, so expect up to ~15% lower decode at stock clocks. Full tables: [bench/RESULTS.md](bench/RESULTS.md).
 
-**Decode, tiers on (2026-08-21, pp8192 tg512, aggregate t/s):**
+**Decode, steady state (2026-08-23, gittensor daily, `scripts/decode_ss.py`: throughput from vLLM's own counters over the window where all streams are decoding, `min_tokens` = 1024, median of 3 runs, run spread 3–6%):**
 
-| | c1 | c2 | c4 | c8 | c1 at pp30000 |
-|---|---|---|---|---|---|
-| nvfp4 KV tiers (daily, R81) | 141 | — | 339 | 353 | 142 |
-| fp8 KV tiers, V2 runner (R79) | 152 | 249 | 360 | 367 | 143 |
-| fp8 KV tiers, V1 runner (previous daily, same hour) | 128 | — | 309 | — | 119 |
+| | c1 | c2 | c4 | c8 | c1 at 30K context | c1 at 100K context |
+|---|---|---|---|---|---|---|
+| prose (long essay), aggregate t/s | 124 | 270 | **511** | **891** | 115 | 103 |
+| prose, per stream | 124 | 135 | 128 | 111 | 115 | 103 |
+| prose, MTP accepted per draft token | 0.32 | 0.38 | 0.38 | 0.37 | 0.31 | 0.32 |
+| code (implement a small library), aggregate | 183 | — | **639** | — | — | — |
+| `vllm bench serve`, random 1024→512 tokens, closed loop | — | — | 602 (median TPOT 5.1 ms, TTFT 221 ms) | — | — | — |
 
-**Why the aggregate plateaus past c4.** The mean above divides generated tokens by the whole request time, and benchy sends cold prompts: eight 8K prefills go through one chunked prefill lane (about 7 s serialized), so requests start decoding in a stagger and barely overlap at tg512. The peak column tells the other half: peak aggregate decode on the fp8 V2 run was 181 / 349 / 643 / 1033 t/s at c1 / c2 / c4 / c8, near-linear. Agents with cached contexts run near the peak; cold concurrent prefill runs near the mean. The remaining per-request loss at c8 is physical: 48 of 64 layers are GDN, whose decode cost is per sequence, not amortized across the batch.
+Two things this table makes explicit that the earlier ones hid. **Content sets single-stream decode** through MTP acceptance: the same engine does 124 t/s on prose (0.32 accepted per draft token) and 183 on code (0.61); llama-benchy's synthetic prompts land at ~170. **Concurrency scales near-linearly to eight streams** — 891 t/s aggregate at 111 per stream. Depth costs about 17% at 100K on prose.
+
+**Why the earlier concurrent numbers were wrong.** Until 2026-08-23 the tables here quoted llama-benchy's "t/s (total)" at c4/c8 (339–451 and 353–487 for this class of stack). That figure divides generated tokens by the whole window, and with `tg512` the window is mostly the staggered prefill ramp-up and the ramp-down, during which fewer than c streams are decoding — the same stack read anywhere from 297 to 463 at c4 from one run to the next. benchy's *peak* column (instantaneous rate with every stream live) was always close to the steady state. Prefill and TTFT from benchy are single-shot timings and stand. `vllm bench serve` agrees with the probe (602 vs 511–639 depending on content) when pointed at the raw `/v1/completions` endpoint; against the chat endpoint with a reasoning parser it counts only `content` tokens, so the thinking phase shows up as 25 s of "TTFT" and a 70 t/s throughput — do not use it that way.
 
 **Prefill, single stream (R81, mnbt 5727):** 12.8K t/s at 8K, 9.3K at 30K. The fp8 tier profile (mnbt 3231) reads 9.7K / 8.9K on the same engine; the plain profile at mnbt 4096 reads 13.0K / 9.7K.
 

@@ -40,6 +40,21 @@ No tiers, util 0.93, mnbt 4096: pool 300,000 (338,636 at 0.95, where the FlashIn
 V1 runner: pool 221,126, c1 131.6, c4 367.7, deep c1 128.5 (the 2026-08-15 nightly read 207,042 / 123.1 / 314.6 / 122.9). V2 runner: pool 235,211, then OOM inside the `fp4_gemm` autotuner on the first request at util 0.98.
 
 
+## Steady-state decode of the gittensor daily (2026-08-23, `results/2026-08-23-r92-daily-perf`)
+
+Method: `scripts/decode_ss.py` — c concurrent generations with `min_tokens = max_tokens = 1024` and short prompts, vLLM `/metrics` sampled every 0.5 s, throughput taken only over samples where `num_requests_running == c`; MTP acceptance from the same counters; median of 3 runs (min–max in brackets). Cross-check: `vllm bench serve --backend vllm --endpoint /v1/completions --dataset-name random --random-input-len 1024 --random-output-len 512 --num-prompts 48 --max-concurrency 4 --ignore-eos`.
+
+| | c1 | c2 | c4 | c8 | c1 @30K | c1 @100K |
+|---|---|---|---|---|---|---|
+| prose, aggregate t/s | 124 (123–149) | 270 (265–281) | 511 (505–538) | 891 (888–913) | 115 (109–120) | 103 (102–105) |
+| prose, accept / draft token | 0.32 | 0.38 | 0.38 | 0.37 | 0.31 | 0.32 |
+| code, aggregate t/s | 183 (155–197) | — | 639 (628–655) | — | — | — |
+| code, accept / draft token | 0.61 | — | 0.54 | — | — | — |
+| vllm bench serve (random tokens) | — | — | 602; TPOT 5.1 ms median / 11.6 ms p99; TTFT 221 ms | — | — | — |
+| llama-benchy pp8192 tg512 (R90), mean / peak | 170 / 194 | 272 / 368 | 451 / 737 | 487 / 1198 | 187 | 193 |
+
+Every benchy "aggregate" row elsewhere in this file is a wall-clock mean over a window dominated by the prefill ramp and under-reads concurrent decode by 10–45%; its peak column is the steady state. The 187/193 "decode rises with depth" in the R90 row is MTP acceptance on benchy's repetitive filler, not a property of the engine — on prose, depth costs ~17% at 100K.
+
 ## Checkpoint A/B on the daily engine (2026-08-21/22, results/2026-08-21-radixark-ab, results/2026-08-22-sweep-ab)
 
 Same engine and flags as the daily (tiers + nvfp4 KV + V2 runner, 262K, util 0.93, LMCache chunk 2864); only `MODEL_DIR` changes. The daily checkpoint keeps the 48 GDN layers' projections in bf16 (about 11 GB read every decode step); the two newer checkpoints quantize them.
