@@ -55,6 +55,12 @@ Method: `scripts/decode_ss.py` — c concurrent generations with `min_tokens = m
 
 Every benchy "aggregate" row elsewhere in this file is a wall-clock mean over a window dominated by the prefill ramp and under-reads concurrent decode by 10–45%; its peak column is the steady state. The 187/193 "decode rises with depth" in the R90 row is MTP acceptance on benchy's repetitive filler, not a property of the engine — on prose, depth costs ~17% at 100K.
 
+## Terminal-Bench 2.1 on the gittensor daily (2026-08-23, `results/2026-08-23-tb21`)
+
+Leaderboard-legal: Harbor 0.18.0 + terminus-2 (reference agent) + official `terminal-bench/terminal-bench-2-1` (89 tasks), k=1, default per-task timeouts, `timeout_multiplier` 1.0, n-concurrent 3, subject = a daily-identical engine (gittensor, NVFP4 KV + tiers + V2, pool 388K, reasoning effort medium — verified by rendering the chat template through the live engine; terminus-2 passes no `chat_template_kwargs`, so the engine default applies and medium adds no steering text).
+
+**50 PASS / 18 FAIL / 19 agent-timeout / 2 env-error = 56.2%**, vs 48.3% (43/89) for Qwen3.6 on this rig (2026-07-21, c2). Timeouts 27 → 19: Terminal-Bench's binding constraint on a single consumer card is wall-clock, and +30% per-stream decode converts former timeouts into completed attempts. Flips vs the 3.6 run: 12 newly passing (6 former timeouts, 6 former fails), 5 regressions, 4 timeout↔fail laterals; `qemu-alpine-ssh` and `qemu-startup` error in the harness environment in both runs. k=1, so single-task flips carry coin-flip variance; the aggregate +7 net does not. Contrast with SWE-Bench Verified, where the same 3.8 stack trails 3.6 by ~3 pts on persistence/early-submit behaviour: which model "is better" depends on whether the benchmark binds on speed or on tenacity.
+
 ## The four NVFP4 checkpoints on one ruler (2026-08-23, `results/2026-08-23-nvfp4-quant-sweep`, `results/2026-08-23-fidelity`)
 
 All four Qwen3.8-27B NVFP4 checkpoints on disk, booted back to back on the identical daily engine (tiers + NVFP4 KV + V2 runner, 262K, util 0.93, MTP ns=4) and measured with the same probes. unsloth (22 GB, GDN in bf16) refuses 262K on this config (kelnei-class) and was taken at 180K.
