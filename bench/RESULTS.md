@@ -87,6 +87,17 @@ MTP acceptance is identical across the four (0.43/draft), so the decode spread i
 
 Quantizing the GDN projections costs ~1 point of top-1 agreement (gittensor/Mantrah vs unsloth); gittensor and Mantrah are twins to 0.3% in every column. saka is the least faithful and is *shifted*, not better: 18% lower NLL than the unquantized model on agent-trajectory text is impossible for a faithful quant — its calibration sharpened it toward tool-output/agentic text, which is where its tool-eval edge (92 vs 89–90) comes from, at +3–5% NLL on plain code and prose.
 
+**Confidence-bucketed flip profile** (bucket = reference's top-1 probability; flip = argmax disagreement — the confident bucket is mostly literal copies and syntax, where flips are the dangerous kind):
+
+| vs FP8 ref | p≥0.9 (255K toks) | 0.6–0.9 | 0.3–0.6 | p<0.3 |
+|---|---|---|---|---|
+| unsloth | **0.82%** | 5.1% | 15.7% | 28.2% |
+| Mantrah | 1.13% | 7.4% | 20.8% | 36.2% |
+| gittensor | 1.15% | 8.0% | 23.3% | 40.1% |
+| saka | 1.73% | 11.4% | 26.5% | 43.8% |
+
+Every quant flips mostly at uncertain positions (expected); saka also overrides the reference's *confident* predictions at 2.1× the best quant's rate — its calibration shift is not confined to positions where any answer goes.
+
 **Task level, with resolution** (lm-eval 0.4.12 over `/v1/chat/completions`, c16, T=0.6, effort medium; GSM8K rescored with `scripts/gsm8k_rescore.py` because lm-eval's flexible-extract misses `**18**` / `70,000` / trailing-context numbers and reads 85–88 raw for every checkpoint):
 
 | checkpoint | GSM8K (n=1319) | IFEval prompt-loose / strict (n=541) | tool-eval 69×N | SWE-Bench (50-slice) |
