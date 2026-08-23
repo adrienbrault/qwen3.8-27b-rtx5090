@@ -16,7 +16,7 @@
 set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"   # llama-benchy (pre-warm) commonly lives here
 
-MODEL_DIR=${MODEL_DIR:-/srv/qwen5090/models/saka-qwen3.8-27b-mtp-nvfp4}  # sakamakismile/Qwen3.8-27B-MTP-NVFP4
+MODEL_DIR=${MODEL_DIR:-/srv/qwen5090/models/qwen3.8-27b-nvfp4-rtx5090}  # gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090 (GDN in NVFP4; ships with saka's Qwen3.8 XML chat template, its own is .orig) — PROMOTED 2026-08-22 (R90); previous: /srv/qwen5090/models/saka-qwen3.8-27b-mtp-nvfp4
 MODEL_NAME=${MODEL_NAME:-qwen3.8-27b}
 MODEL_ALIAS=${MODEL_ALIAS:-qwen3.6-27b}   # alias for clients configured before the 2026-08-14 model change
 IMAGE=${IMAGE:-vllm-qwen38:tiers-nvfp4kv}   # patches-nvfp4kv/Dockerfile.nvfp4kv --build-arg VLLM_BASE=vllm-qwen38:tiers-rc4-ba07e4a (R81)
@@ -34,7 +34,7 @@ BATCHED=$((2 * BLK - 1))             # LMCache MP requires batched tokens in [ch
 
 # L2 NVMe tier. 200 GB ~= 2.13M tokens, survives container restarts.
 # The cap is only real because of patch 0008 + the eviction block below — verify both.
-L2DIR=${L2DIR:-/srv/qwen5090/lmcache-l2-nvfp4-v2}   # FRESH namespace per stack generation (R81: nvfp4 pages)
+L2DIR=${L2DIR:-/srv/qwen5090/lmcache-l2-gittensor-v2}   # FRESH namespace per stack generation (R90: gittensor checkpoint; R81 saka pages in lmcache-l2-nvfp4-v2)
 NS=${NS:-4}                 # MTP depth (R82 A/B: 3 vs 4)
 SPEC_JSON=${SPEC_JSON:-}     # full --speculative-config JSON override (e.g. a DSpark drafter at /draft); empty = MTP ns=$NS
 EXTRA_MOUNT=${EXTRA_MOUNT:-}   # e.g. "-v /srv/qwen5090/models/<drafter>:/draft:ro"
@@ -114,7 +114,7 @@ for i in $(seq 1 150); do
   curl -sf http://${BIND_ADDR}:${PORT}/health >/dev/null 2>&1 && { echo "HEALTHY"; HEALTHY=1; break; }
   sudo docker ps --filter name="$NAME" --format x | grep -q x || { echo "FAILED: container died — see: sudo docker logs $NAME"; sudo docker logs "$NAME" 2>&1 | tail -20; exit 1; }
   # --restart unless-stopped turns an engine-init crash into a silent 25-min loop (R83/R84): fail fast on the first restart
-  [ "$(sudo docker inspect "$NAME" --format '{{.RestartCount}}' 2>/dev/null || echo 0)" -gt 0 ] && { echo "FAILED: container restarted (engine-init crash loop)"; sudo docker logs "$NAME" 2>&1 | grep -aE "Error|error|raise" | tail -12; sudo docker rm -f "$NAME" >/dev/null 2>&1; exit 1; }
+  [ "$(sudo docker inspect "$NAME" --format '{{.RestartCount}}' 2>/dev/null || echo 0)" -gt 0 ] && { echo "FAILED: container restarted (engine-init crash loop); full log: /tmp/$NAME-crash.log"; sudo docker logs "$NAME" > "/tmp/$NAME-crash.log" 2>&1; grep -aoE "Setting attention block size to [0-9]+ tokens" "/tmp/$NAME-crash.log" | tail -1; grep -aE "Error|error|raise" "/tmp/$NAME-crash.log" | grep -av "Qwen3VLVideo" | tail -8; sudo docker rm -f "$NAME" >/dev/null 2>&1; exit 1; }
   sleep 10
 done
 if [ "$HEALTHY" != 1 ]; then
@@ -126,8 +126,8 @@ fi
 # cache. 165K/185K/205K = stale util. Fail closed instead of printing a warning nobody reads.
 POOL=$(sudo docker logs "$NAME" 2>&1 | grep -a 'GPU KV cache size' | tail -1 | grep -oE 'cache size: [0-9,]+' | tr -dc 0-9)
 echo "daily up. KV pool: ${POOL} tokens"
-POOL_MIN=${POOL_MIN:-285000}   # R81: nvfp4 tier boots at 309,090 @0.93 (profiling varies ~6% boot to boot)
-POOL_MAX=${POOL_MAX:-345000}
+POOL_MIN=${POOL_MIN:-360000}   # R90: gittensor tier boots at 388–398K @0.93 (saka was 309K, band 285–345K; profiling varies ~6% boot to boot)
+POOL_MAX=${POOL_MAX:-430000}
 if [ -z "$POOL" ] || [ "$POOL" -lt "$POOL_MIN" ] || [ "$POOL" -gt "$POOL_MAX" ]; then
   echo "FAILED: pool ${POOL:-<missing>} outside expected ${POOL_MIN}-${POOL_MAX} (util 0.95, seqs 8, mnbt 3231)."
   echo "  Pool alone can NOT prove the connector attached at these settings — see the positive check below."
