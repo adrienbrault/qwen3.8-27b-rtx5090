@@ -98,6 +98,8 @@ Quantizing the GDN projections costs ~1 point of top-1 agreement (gittensor/Mant
 
 Every quant flips mostly at uncertain positions (expected); saka also overrides the reference's *confident* predictions at 2.1× the best quant's rate — its calibration shift is not confined to positions where any answer goes.
 
+The same screen applied to an abliterated finetune ([mlabonne-style heretic-v2 NVFP4 export](https://huggingface.co/) on the saka recipe) shows what a damaged checkpoint looks like on this instrument: ΔNLL +29% overall (+65% on agent-trajectory text), top-1 agreement 0.785, and 6.5% flips at confident positions — 8× the best quant, squarely in the "corrupts literal copies" tier. The fidelity pass + flip profile is a 3-minute vet for any third-party checkpoint before it touches agent workloads.
+
 **Task level, with resolution** (lm-eval 0.4.12 over `/v1/chat/completions`, c16, T=0.6, effort medium; GSM8K rescored with `scripts/gsm8k_rescore.py` because lm-eval's flexible-extract misses `**18**` / `70,000` / trailing-context numbers and reads 85–88 raw for every checkpoint):
 
 | checkpoint | GSM8K (n=1319) | IFEval prompt-loose / strict (n=541) | tool-eval 69×N | SWE-Bench (50-slice) |
