@@ -121,6 +121,21 @@ One instrument caveat, learned the hard way: the screen is only meaningful again
 
 GSM8K tracks fidelity exactly; IFEval inverts it (saka +3.7, ~1.9σ) in the same direction as its tool-eval edge. IFEval absolute levels are low for Qwen3.8 (thinking-mode formatting under effort medium; identical setup for all four — relative only). Decision: gittensor stays the daily — best pool and decode, fidelity and math within noise of the best, IFEval within 1σ of the cluster.
 
+## The lm_head question: a controlled A/B (2026-08-25, `results/2026-08-25-lmhead-ab`)
+
+RadixArk published a BF16-lm_head variant of their Qwen3.8-27B NVFP4 checkpoint (byte-identical otherwise), advertising a significant accuracy improvement — a perfectly controlled single-variable experiment for the "never quantize lm_head" rule. Both booted on the identical engine config (65K, NVFP4 KV + tiers + V2) and screened on the fidelity ruler vs the FP8 reference:
+
+| | NVFP4 lm_head | BF16 lm_head |
+|---|---|---|
+| top-1 agreement | 0.9013 | 0.9147 |
+| confident flips (ref p>=0.9, 255K toks) | 0.93% | 0.92% |
+| flips at p 0.3-0.6 | 20.5% | 17.5% |
+| KV pool @65K | 167,836 | 115,087 |
+| decode c1 prose / code (t/s) | 121 / 164 | 98 / 121 |
+| prefill pp8K (t/s) | 8.9K | 8.6K |
+
+The fidelity gain is real (+1.3 pts agreement) but lives entirely in low-confidence tokens — **where the reference is confident, the quantized head flips nothing the bf16 head doesn't also flip** (0.93% vs 0.92%). The price is 20-26% of decode (the bf16 head is ~1.5 GB read per step, and it dents MTP acceptance on code) plus ~53K tokens of KV pool; prefill is untouched since the head doesn't run there. For temperature-sampled agentic serving, the "never quantize lm_head" rule is falsified on this stack: an NVFP4 lm_head is close to free where it matters. Greedy-decode evals are maximally sensitive to exactly the low-confidence tie-breaks that do move, which is presumably where "significant improvement" claims come from.
+
 ## Checkpoint A/B on the daily engine (2026-08-21/22, results/2026-08-21-radixark-ab, results/2026-08-22-sweep-ab)
 
 Same engine and flags as the daily (tiers + nvfp4 KV + V2 runner, 262K, util 0.93, LMCache chunk 2864); only `MODEL_DIR` changes. The daily checkpoint keeps the 48 GDN layers' projections in bf16 (about 11 GB read every decode step); the two newer checkpoints quantize them.
