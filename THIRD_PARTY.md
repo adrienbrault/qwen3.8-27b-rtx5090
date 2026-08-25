@@ -25,6 +25,14 @@ Upstream: https://github.com/LMCache/LMCache — [Apache-2.0](https://github.com
 |---|---|
 | `patches/lmcache/0001-fix-fused-hybrid-subpage-view.diff`, `0002-strided-fp8-regroup.diff`, `0007-sidecar-vram-staging-batch.diff`, `0008-fs-native-cap-enforcement.diff` | Original fixes (offered upstream under Apache-2.0), expressed as diffs against LMCache source (Python and `csrc`) — context lines are LMCache code and the patched build is Apache-2.0-derived. |
 
+### Patch stacks added after 2026-07-22
+
+| files | provenance |
+|---|---|
+| `patches/rc4/` (8 diffs + `rc4-stack.diff`) | Original fixes and the combined tier-rc4 stack, expressed as diffs against LMCache 0.5.4rc4 and vLLM source — context lines are Apache-2.0 code; offered upstream under Apache-2.0. |
+| `patches-nvfp4kv/` | `upstream-pr49891-original.diff` is a verbatim redistribution of ch2lab's vLLM PR [#49891](https://github.com/vllm-project/vllm/pull/49891) (Apache-2.0, credited in the directory README's lineage section); the remaining diffs and the `overlay/` package are rebases/derivatives of that PR and of vLLM/FlashInfer code, Apache-2.0. |
+| `patches-dflash2/` | Derived from vLLM PR [#52816](https://github.com/vllm-project/vllm/pull/52816) and syv-ai's backport (Apache-2.0, linked in the directory README). |
+
 ## Base images
 
 - `vllm/vllm-openai:nightly` (pinned by digest in `patches/Dockerfile`) — Apache-2.0. This repo ships no vLLM binaries; the Dockerfiles pull the official image and patch it locally.
