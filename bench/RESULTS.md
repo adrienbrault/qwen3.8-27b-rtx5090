@@ -121,6 +121,10 @@ One instrument caveat, learned the hard way: the screen is only meaningful again
 
 GSM8K tracks fidelity exactly; IFEval inverts it (saka +3.7, ~1.9σ) in the same direction as its tool-eval edge. IFEval absolute levels are low for Qwen3.8 (thinking-mode formatting under effort medium; identical setup for all four — relative only). Decision: gittensor stays the daily — best pool and decode, fidelity and math within noise of the best, IFEval within 1σ of the cluster.
 
+## Tool-call parser A/B: qwen3_xml vs qwen3_coder (2026-08-26, `results/2026-08-26-parser-ab`)
+
+Community Qwen3.8/5090 stacks commonly ship `--tool-call-parser qwen3_coder`; this stack ships `qwen3_xml`. Paired same-session tool-eval 69x2 on the identical engine (pool 388,449 both boots): **qwen3_xml 91 +- 1.4 vs qwen3_coder 91.5 +- 0.7** — a statistical tie with identical per-category losses. Both parsers handle this checkpoint's XML chat-template output; pick either. The `TOOLPARSER` env knob in `scripts/serve-tier-rc4.sh` selects it.
+
 ## The lm_head question: a controlled A/B (2026-08-25, `results/2026-08-25-lmhead-ab`)
 
 RadixArk published a BF16-lm_head variant of their Qwen3.8-27B NVFP4 checkpoint (byte-identical otherwise), advertising a significant accuracy improvement — a perfectly controlled single-variable experiment for the "never quantize lm_head" rule. Both booted on the identical engine config (65K, NVFP4 KV + tiers + V2) and screened on the fidelity ruler vs the FP8 reference:
