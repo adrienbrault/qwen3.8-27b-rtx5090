@@ -123,7 +123,9 @@ GSM8K tracks fidelity exactly; IFEval inverts it (saka +3.7, ~1.9σ) in the same
 
 ## Tool-call parser A/B: qwen3_xml vs qwen3_coder (2026-08-26, `results/2026-08-26-parser-ab`)
 
-Community Qwen3.8/5090 stacks commonly ship `--tool-call-parser qwen3_coder`; this stack ships `qwen3_xml`. Paired same-session tool-eval 69x2 on the identical engine (pool 388,449 both boots): **qwen3_xml 91 +- 1.4 vs qwen3_coder 91.5 +- 0.7** — a statistical tie with identical per-category losses. Both parsers handle this checkpoint's XML chat-template output; pick either. The `TOOLPARSER` env knob in `scripts/serve-tier-rc4.sh` selects it.
+Community Qwen3.8/5090 stacks commonly ship `--tool-call-parser qwen3_coder`; this stack ships `qwen3_xml`. Paired same-session tool-eval 69x2 read 91 +- 1.4 vs 91.5 +- 0.7 — and the follow-up found why it must be a tie: **both names are registry aliases for the same class** (`qwen3_engine_tool_parser.Qwen3EngineToolParser`, verified in-image and at v0.27.1). Historically separate parsers, unified upstream; pick either name.
+
+The 69x4 rerun (xml 88.5 +- 1.7, coder 89.8 +- 2.1) therefore doubles as a same-config repeatability measurement: **12 same-day trials of the identical engine span 118–127/137 points (mean 90.5, single-trial sigma ~2.0)**. Practical rule for this eval: differences under ~2 points at 2 trials (~1.5 at 4) are noise. The `TOOLPARSER` env knob in `scripts/serve-tier-rc4.sh` remains for future non-aliased parsers.
 
 ## The lm_head question: a controlled A/B (2026-08-25, `results/2026-08-25-lmhead-ab`)
 
