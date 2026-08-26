@@ -35,7 +35,8 @@ BATCHED=$((2 * BLK - 1))             # LMCache MP requires batched tokens in [ch
 # L2 NVMe tier. 200 GB ~= 2.13M tokens, survives container restarts.
 # The cap is only real because of patch 0008 + the eviction block below — verify both.
 L2DIR=${L2DIR:-/srv/qwen5090/lmcache-l2-gittensor-v2}   # FRESH namespace per stack generation (R90: gittensor checkpoint; R81 saka pages in lmcache-l2-nvfp4-v2)
-NS=${NS:-4}                 # MTP depth (R82 A/B: 3 vs 4)
+NS=${NS:-4}
+TOOLPARSER=${TOOLPARSER:-qwen3_xml}  # daily default; qwen3_coder seen in community 5090 stacks (parser A/B 2026-08-26)                 # MTP depth (R82 A/B: 3 vs 4)
 SPEC_JSON=${SPEC_JSON:-}     # full --speculative-config JSON override (e.g. a DSpark drafter at /draft); empty = MTP ns=$NS
 EXTRA_MOUNT=${EXTRA_MOUNT:-}   # e.g. "-v /srv/qwen5090/models/<drafter>:/draft:ro"
 SPEC_FINAL=${SPEC_JSON:-"{\"method\":\"qwen3_5_mtp\",\"num_speculative_tokens\":$NS}"}
@@ -103,7 +104,7 @@ sudo docker run -d --name "$NAME" --restart unless-stopped \
       --kv-transfer-config '{\"kv_connector\":\"LMCacheMPConnector\",\"kv_role\":\"kv_both\"}' \
       $SPEC_LINE \
       --default-chat-template-kwargs '{\"preserve_thinking\":true,\"reasoning_effort\":\"medium\"}' \
-      --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_xml \\
+      --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser $TOOLPARSER \\
       --override-generation-config '{\"temperature\":0.6,\"top_p\":0.95,\"top_k\":20}'
       # T=0.6 override RESTORED after the 2026-08-14 battery: tier 69x4 = 90.5+-2.1 @T0.6 vs 87.8+-1.3 @T1.0
       # (model-default T=1.0 costs ~2.7pt and doubles trial variance; per-request temperature still wins).
