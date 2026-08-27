@@ -121,6 +121,12 @@ One instrument caveat, learned the hard way: the screen is only meaningful again
 
 GSM8K tracks fidelity exactly; IFEval inverts it (saka +3.7, ~1.9σ) in the same direction as its tool-eval edge. IFEval absolute levels are low for Qwen3.8 (thinking-mode formatting under effort medium; identical setup for all four — relative only). Decision: gittensor stays the daily — best pool and decode, fidelity and math within noise of the best, IFEval within 1σ of the cluster.
 
+## Recommended sampling (T=1.0) vs the T=0.6 override (2026-08-27, `results/2026-08-27-recsettings`)
+
+Every Qwen3.8 checkpoint's generation_config recommends T=1.0 / top_p 0.95 / top_k 20; this stack overrides temperature to 0.6 on evidence inherited from the Qwen3.6 era. Retested on 3.8 with a pre-registered decision rule: new T=1.0 arm for GSM8K (rescored) + IFEval on four NVFP4 checkpoints vs the existing T=0.6 baselines, plus paired same-session tool-eval 69x4 at both temperatures (cross-day tool-eval cannot resolve <3 pts — see the noise-floor section above).
+
+Result: **GSM8K ties everywhere** (max delta -0.8 ~ 1.2 sigma; truncation counters ruled out artifacts). **Paired tool-evals all tie**, with signs flipping per checkpoint (-1.3 / +1.2 / +1.5) — the 3.6-era "T=0.6 wins tools by ~3" does not reproduce on 3.8. The one sign-stable effect: **IFEval drops at T=1.0 in all 8 readings** (inst- and prompt-level, four checkpoints; mean ~ -3, e.g. gittensor inst-loose 69.4 -> 65.4). T=1.0 buys nothing measured here and costs instruction adherence, so the serve scripts keep the T=0.6 override — now on same-generation, noise-floor-aware evidence.
+
 ## Tool-call parser A/B: qwen3_xml vs qwen3_coder (2026-08-26, `results/2026-08-26-parser-ab`)
 
 Community Qwen3.8/5090 stacks commonly ship `--tool-call-parser qwen3_coder`; this stack ships `qwen3_xml`. Paired same-session tool-eval 69x2 read 91 +- 1.4 vs 91.5 +- 0.7 — and the follow-up found why it must be a tie: **both names are registry aliases for the same class** (`qwen3_engine_tool_parser.Qwen3EngineToolParser`, verified in-image and at v0.27.1). Historically separate parsers, unified upstream; pick either name.
