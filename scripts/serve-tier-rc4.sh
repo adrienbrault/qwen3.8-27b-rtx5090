@@ -131,7 +131,7 @@ echo "daily up. KV pool: ${POOL} tokens"
 POOL_MIN=${POOL_MIN:-360000}   # R90: gittensor tier boots at 388–398K @0.93 (saka was 309K, band 285–345K; profiling varies ~6% boot to boot)
 POOL_MAX=${POOL_MAX:-430000}
 if [ -z "$POOL" ] || [ "$POOL" -lt "$POOL_MIN" ] || [ "$POOL" -gt "$POOL_MAX" ]; then
-  echo "FAILED: pool ${POOL:-<missing>} outside expected ${POOL_MIN}-${POOL_MAX} (util 0.95, seqs 8, mnbt 3231)."
+  echo "FAILED: pool ${POOL:-<missing>} outside expected ${POOL_MIN}-${POOL_MAX} (util $UTIL, seqs 8, mnbt $BATCHED)."
   echo "  Pool alone can NOT prove the connector attached at these settings — see the positive check below."
   exit 1
 fi
