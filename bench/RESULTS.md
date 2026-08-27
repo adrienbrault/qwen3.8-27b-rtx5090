@@ -121,6 +121,12 @@ One instrument caveat, learned the hard way: the screen is only meaningful again
 
 GSM8K tracks fidelity exactly; IFEval inverts it (saka +3.7, ~1.9σ) in the same direction as its tool-eval edge. IFEval absolute levels are low for Qwen3.8 (thinking-mode formatting under effort medium; identical setup for all four — relative only). Decision: gittensor stays the daily — best pool and decode, fidelity and math within noise of the best, IFEval within 1σ of the cluster.
 
+## Spec-decode depth: the ladder is closed (2026-08-27, `results/2026-08-27-ns-ladder`)
+
+Prompted by lucebox's draft-horizon widening on the R9700 (+55% on code from doubling a block-diffusion drafter's width): the same lever does **not** transfer to recursive MTP. Same-day probes on the identical engine: ns=6 loses every workload (code c1 179.6 -> 148.4; per-draft acceptance .58 -> .36 — each extra token is another sequential head forward and acceptance compounds), and ns=8 dies on its first request (verify GEMM shape outside the FlashInfer fp4_gemm autotune buckets; the Cutlass fallback OOMs). ns=4 is the optimum. The ns-dependent hybrid attention block is 2784/2864/2896/2928 for ns 0/4/6/8 — LMCache chunk must match.
+
+Same ruler, DFlash2 rematch (quantized syvai W4A16 drafter, fp8 KV, 131K): prose c1 132.7 / code c1 **208.0** / deep-30K 126.2 / c4 524.6 vs the MTP daily's 123 / 179.6 / 115.9 / 521 — the 2026-08-21 c4 collapse is gone; DFlash2 now wins or ties everything. It still costs 55% of the KV pool (173,709 vs 388,449), the 262K context, and the LMCache tiers, so the daily stays MTP — but as a dedicated <=131K interactive profile it is now the fastest configuration this card has served.
+
 ## Recommended sampling (T=1.0) vs the T=0.6 override (2026-08-27, `results/2026-08-27-recsettings`)
 
 Every Qwen3.8 checkpoint's generation_config recommends T=1.0 / top_p 0.95 / top_k 20; this stack overrides temperature to 0.6 on evidence inherited from the Qwen3.6 era. Retested on 3.8 with a pre-registered decision rule: new T=1.0 arm for GSM8K (rescored) + IFEval on four NVFP4 checkpoints vs the existing T=0.6 baselines, plus paired same-session tool-eval 69x4 at both temperatures (cross-day tool-eval cannot resolve <3 pts — see the noise-floor section above).
