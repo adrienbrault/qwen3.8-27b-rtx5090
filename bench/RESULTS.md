@@ -121,6 +121,19 @@ One instrument caveat, learned the hard way: the screen is only meaningful again
 
 GSM8K tracks fidelity exactly; IFEval inverts it (saka +3.7, ~1.9σ) in the same direction as its tool-eval edge. IFEval absolute levels are low for Qwen3.8 (thinking-mode formatting under effort medium; identical setup for all four — relative only). Decision: gittensor stays the daily — best pool and decode, fidelity and math within noise of the best, IFEval within 1σ of the cluster.
 
+## Cross-engine: SGLang on the same card, and adaptive speculative length measured (2026-08-27, `results/2026-08-27-sglang-adaptive`)
+
+SGLang ships the acceptance-adaptive draft length that vLLM lacks (`--speculative-adaptive`; vLLM's "dynamic SD" is a static batch-size table, and its true adaptive-verification track is unmerged and blocked on GDN ragged-K kernels). Measured on the same 5090 with SGLang's own RadixArk NVFP4 checkpoint and the official cookbook recipe (fp8 KV; note `mem-fraction-static` CONTAINS the hybrid GDN state cache — inverted semantics vs vLLM):
+
+| SGLang arm | prose c1 | code c1 |
+|---|---|---|
+| MTP ns3/draft4 fixed | 124.1 | 138.1 |
+| MTP ns7/draft8 fixed | 112.5 | 139.6 |
+| MTP + adaptive (ladder [1,3,7], oscillation verified live) | 122.8 | 136.1 |
+| DFlash2 draft8 fixed (nightly image) | 139.1 | 174.7 |
+
+The adaptive controller **equals the best static point and recovers the mistuned one** (+9% over static ns7 on prose) — it picks the right spot on the depth curve rather than exceeding it, consistent with the depth-sweep frontier above. DFlash2+adaptive is refused ("only EAGLE/EAGLE3"). Cross-engine, confounded by checkpoint recipe (~8%) and cache systems: SGLang matches vLLM on prose, trails ~20% on code, and its capacity on this recipe (~12K-token KV pool, hard 2-concurrent GDN-state cap) is not in the same class as the vLLM daily's 388K + tiered cache. Two upstream sharp edges: `--speculative-adaptive` crashes at boot unless `speculative-num-draft-tokens` covers the candidate ladder's max ("shared logits buffer holds N rows but caller needs 2N"), and the flag silently no-ops for non-EAGLE algorithms.
+
 ## Spec-decode depth: the ladder is closed (2026-08-27, `results/2026-08-27-ns-ladder`)
 
 Prompted by lucebox's draft-horizon widening on the R9700 (+55% on code from doubling a block-diffusion drafter's width): the same lever does **not** transfer to recursive MTP. Same-day probes on the identical engine: ns=6 loses every workload (code c1 179.6 -> 148.4; per-draft acceptance .58 -> .36 — each extra token is another sequential head forward and acceptance compounds), and ns=8 dies on its first request (verify GEMM shape outside the FlashInfer fp4_gemm autotune buckets; the Cutlass fallback OOMs). ns=4 is the optimum. The ns-dependent hybrid attention block is 2784/2864/2896/2928 for ns 0/4/6/8 — LMCache chunk must match.
