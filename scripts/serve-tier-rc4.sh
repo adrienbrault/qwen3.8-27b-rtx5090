@@ -78,6 +78,19 @@ CACHE="-v ${CACHE_DIR}/torch_compile_qwen38_nightly:/root/.cache/vllm/torch_comp
 sudo docker rm -f "$NAME" vllm-27b vllm-exp vllm-eval sglang-exp >/dev/null 2>&1 || true
 sync && echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null   # the 24 GB L1 is PINNED RAM
 
+# Engine-swap memory gate (2026-08-28 incident, FINDINGS R104): `docker rm -f` returns before
+# the old engine's 30G+ anon/shm is actually reaped; booting the next engine (+24G pinned L1)
+# into that window global-OOMed the host at 02:07:46 and wedged the box for 4h (OOM killer only
+# reaps high-adj k3s pods, never the low-adj engines). Wait for the RAM to really come back.
+AVAIL_KB=0
+for i in $(seq 1 60); do
+  AVAIL_KB=$(awk '/MemAvailable/{print $2}' /proc/meminfo)
+  [ "$AVAIL_KB" -gt 41943040 ] && break
+  [ "$i" = 1 ] && echo "memory gate: waiting for MemAvailable > 40G (now $((AVAIL_KB/1048576))G)..."
+  sleep 5
+done
+[ "$AVAIL_KB" -le 41943040 ] && echo "WARNING: memory gate timed out at $((AVAIL_KB/1048576))G after 5 min — proceeding, watch for host OOM"
+
 sudo docker run -d --name "$NAME" --restart unless-stopped \
   --entrypoint bash --runtime nvidia --gpus all --ipc=host \
   -p ${BIND_ADDR}:${PORT}:8000 --shm-size 8g --memory 52g --memory-swap 52g \
