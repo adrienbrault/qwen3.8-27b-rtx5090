@@ -141,16 +141,20 @@ v0.28.0 (released 08-26) ships native disk KV offloading (PR #49644 line), hybri
 
 Offload metrics confirm real tier traffic: 15.6 GB stored, exactly the prompt's 1.56 GB loaded back on each hit, fresh load counter after the restart. This natively reproduces what previously required LMCache + local patches (DRAM+NVMe tiers, restart-proof revisits). Not verified: fs-tier capacity-cap enforcement — bound it and watch `du` before unattended use.
 
-**Drop `--no-async-scheduling` on ≥0.28.** The flag was a workaround for the 0.26-era async×spec bug; PR #24799 made async default-compatible with spec decode, so carrying the flag now disables a default optimization. Decode A/B, MTP ns=4, fp8 KV (steady-state aggregate t/s; patched-0.26 stack shown for scale):
+**Drop `--no-async-scheduling` on ≥0.28.** The flag was a workaround for the 0.26-era async×spec bug; PR #24799 made async default-compatible with spec decode, so carrying the flag now disables a default optimization. All numbers below are the steady-state probe (same tool both stacks — an earlier revision of this section compared against llama-benchy means, whose prefill-ramp shadow understated the 0.26 baselines; corrected here). MTP ns=4, fp8 KV, aggregate t/s; the patched-0.26 nvfp4 daily measured with the same probe:
 
-| | async OFF | async ON | 0.26 stack |
+| | v0.28 async OFF | v0.28 async ON | 0.26 daily (same probe) |
 |---|---|---|---|
-| prose c1 | 108.8 | 131.7 | 152 |
-| prose c4 | 415 | **578.6** | 360 |
-| code c1 | 151.2 | **195.8** | ~180 |
-| code c4 | 589.7 | **675.4** | 549 (best-ever, DFlash2) |
+| prose c1 | 108.8 | **131.7** | 123 |
+| prose c4 | 415 | **578.6** | — |
+| code c1 | 151.2 | **195.8** | 180 |
+| code c4 | 589.7 | **675.4** | — (best prior c4 on card: 549, DFlash2 ns5) |
+| prose c8 | — | **980.2** | 916.4 |
+| code c8 | — | **1253.1** | 1115.3 |
 
-Async ON beats the patched 0.26 stack in 3 of 4 cells; c4 code 675 is +23% over the previous all-config record on this card. The one remaining deficit (prose c1) is an acceptance drop (0.33 vs ~0.55 per-draft on prose; code acceptance normal at 0.62) — cause unknown, not scheduling. Near-flat per-stream scaling c1→c4 throughout ("GPU↔CPU sync elimination" is real).
+Async ON beats the patched daily on **every** same-probe cell — a uniform +7–12% for MTP — with near-flat per-stream scaling c1→c8 (122.5–156.6 per stream at c8; the "GPU↔CPU sync elimination" is real). Prose speculative acceptance (~0.27–0.38 per draft vs ~0.47–0.62 on code) is the model's normal workload split, visible on both stacks — not a 0.28 regression.
+
+**DFlash2 draft (syvai W4A16, via a small loader patch for quantized drafts): the code specialist, capped at 4 streams.** ns7 code c1 **221.7** (+23% over the daily's 180; prior record 206–208) and c4 **693.5**; ns5 prose trails MTP (123.1/520.8) — same workload split as on 0.26, sharper. With a separate dflash draft the engine admits at most 4 concurrent requests (live `num_requests_running` never exceeds 4; MTP runs all 8) — so DFlash2 is the ≤4-stream interactive code profile, MTP the fleet profile. ns7 also inflates the hybrid block: 131K max-len does not fit (max ~123.6K); ns5 fits 131K.
 
 **DFlash2 upstream** (`method:"dflash"`, auto-detected): works with the bf16 draft at 65K — prose ns5 124.5 c1 / 541 c4 (async off; ties the 549 record), code ns7 186.5 c1. Two sharp edges: the loader breaks on quantized drafts (`'QKVParallelLinear' object has no attribute 'weight'` on W4A16), and the 3.6 GB bf16 draft shrinks free KV below what 131K needs. Also: `prompt_logprobs` requests materialize ~1.45 GiB of full-vocab logits each **outside the util budget** — parallel logprob probes OOM-kill the engine; run them serially.
 
