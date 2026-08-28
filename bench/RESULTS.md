@@ -121,6 +121,39 @@ One instrument caveat, learned the hard way: the screen is only meaningful again
 
 GSM8K tracks fidelity exactly; IFEval inverts it (saka +3.7, ~1.9σ) in the same direction as its tool-eval edge. IFEval absolute levels are low for Qwen3.8 (thinking-mode formatting under effort medium; identical setup for all four — relative only). Decision: gittensor stays the daily — best pool and decode, fidelity and math within noise of the best, IFEval within 1σ of the cluster.
 
+## vLLM v0.28.0 audited: native disk KV offload works on the hybrid, async+spec is a free win, nvfp4 KV still SM100-gated (2026-08-28, `results/2026-08-28-r104-native-offload`)
+
+v0.28.0 (released 08-26) ships native disk KV offloading (PR #49644 line), hybrid prefix caching by default, and async-scheduling×spec-decode compatibility (PR #24799). Audited stock on this card — gittensor checkpoint, `fp8_e4m3` KV, no local patches.
+
+**nvfp4 KV cannot boot stock on a 5090.** `nvfp4` is an accepted dtype but FlashInfer's `supports_kv_cache_dtype` gates it to `is_device_capability_family(100)` + trtllm attention — SM120 consumer Blackwell falls through and every backend rejects the boot. The kernels exist (FlashInfer XQA decode is SM120-exclusive, FA2 prefill handles nvfp4); vLLM just isn't wired to them — see vllm#49011 (working 5090 prototype, 245K-token pool) and the community patch sets (hikarioyama/vllm-nvfp4-kv-sm120, lna-lab/blackwell-geforce-nvfp4-gemm). Until that lands, a stock v0.28.0 boot means fp8 KV: pool 225K @200K max-len vs 388K @262K on the patched nvfp4-KV stack (262K does not fit fp8 at util 0.93 — needs 9.48 GiB, 8.43 free).
+
+**Fidelity is clean.** Prefill-logprob ruler vs the FP8 reference (200 chunks × 2048 tok): stock v0.28.0 top-1 agreement 0.8906 / ΔNLL 2.13% / KL 0.161 vs the patched-0.26 stack's 0.8889 / 2.18% / 0.165 — within ruler noise, marginally better on every bucket.
+
+**Native OffloadingConnector + fs disk tier works on the hybrid GDN model** — with MTP and a pinned pool, first boot (`--kv-cache-memory-bytes 8.59GB` → pool 214,084; the flag works). 43.7K-token prompt, evicted by 5×49K distinct floods through the pinned pool:
+
+| step | TTFT |
+|---|---|
+| cold prefill | 5.54 s |
+| GPU-cache revisit | 0.40 s |
+| revisit after eviction (disk-tier hit) | **2.25 s** |
+| shared-prefix + new 400-tok tail | 0.46 s (no align-mode cliff, vllm#45238 not hit) |
+| revisit after `docker restart` | **1.45 s** (fs tier persists; `PYTHONHASHSEED=0` required) |
+
+Offload metrics confirm real tier traffic: 15.6 GB stored, exactly the prompt's 1.56 GB loaded back on each hit, fresh load counter after the restart. This natively reproduces what previously required LMCache + local patches (DRAM+NVMe tiers, restart-proof revisits). Not verified: fs-tier capacity-cap enforcement — bound it and watch `du` before unattended use.
+
+**Drop `--no-async-scheduling` on ≥0.28.** The flag was a workaround for the 0.26-era async×spec bug; PR #24799 made async default-compatible with spec decode, so carrying the flag now disables a default optimization. Decode A/B, MTP ns=4, fp8 KV (steady-state aggregate t/s; patched-0.26 stack shown for scale):
+
+| | async OFF | async ON | 0.26 stack |
+|---|---|---|---|
+| prose c1 | 108.8 | 131.7 | 152 |
+| prose c4 | 415 | **578.6** | 360 |
+| code c1 | 151.2 | **195.8** | ~180 |
+| code c4 | 589.7 | **675.4** | 549 (best-ever, DFlash2) |
+
+Async ON beats the patched 0.26 stack in 3 of 4 cells; c4 code 675 is +23% over the previous all-config record on this card. The one remaining deficit (prose c1) is an acceptance drop (0.33 vs ~0.55 per-draft on prose; code acceptance normal at 0.62) — cause unknown, not scheduling. Near-flat per-stream scaling c1→c4 throughout ("GPU↔CPU sync elimination" is real).
+
+**DFlash2 upstream** (`method:"dflash"`, auto-detected): works with the bf16 draft at 65K — prose ns5 124.5 c1 / 541 c4 (async off; ties the 549 record), code ns7 186.5 c1. Two sharp edges: the loader breaks on quantized drafts (`'QKVParallelLinear' object has no attribute 'weight'` on W4A16), and the 3.6 GB bf16 draft shrinks free KV below what 131K needs. Also: `prompt_logprobs` requests materialize ~1.45 GiB of full-vocab logits each **outside the util budget** — parallel logprob probes OOM-kill the engine; run them serially.
+
 ## Cross-engine: SGLang on the same card, and adaptive speculative length measured (2026-08-27, `results/2026-08-27-sglang-adaptive`)
 
 SGLang ships the acceptance-adaptive draft length that vLLM lacks (`--speculative-adaptive`; vLLM's "dynamic SD" is a static batch-size table, and its true adaptive-verification track is unmerged and blocked on GDN ragged-K kernels). Measured on the same 5090 with SGLang's own RadixArk NVFP4 checkpoint and the official cookbook recipe (fp8 KV; note `mem-fraction-static` CONTAINS the hybrid GDN state cache — inverted semantics vs vLLM):
