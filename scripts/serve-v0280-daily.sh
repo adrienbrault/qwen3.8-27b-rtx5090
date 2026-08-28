@@ -16,16 +16,21 @@ PORT=${PORT:-8029}
 BIND_ADDR=${BIND_ADDR:-127.0.0.1}
 NAME=${NAME:-vllm-exp}
 NS=${NS:-4}
+SPEC_JSON=${SPEC_JSON:-}   # full --speculative-config override (R113 suffix arm); empty = MTP ns=$NS
 MAXLEN=${MAXLEN:-262144}
-UTIL=${UTIL:-0.93}
+UTIL=${UTIL:-0.955}   # R113 U-arm: pool 381,300 (+36K vs 0.93; the cudagraph-profiling equivalence), burst needles + margin green
+MNBT=${MNBT:-8192}
+SEQS=${SEQS:-8}
 L2MNT=${L2MNT:-/srv/qwen5090/native-l2}   # hard-capped loopback fs — cap by construction (R69 lesson)
 CACHE_DIR=${CACHE_DIR:-/srv/qwen5090/cache}
-POOL_MIN=${POOL_MIN:-300000}   # R107 measured 345,553 with MTP+XQA (no connector); band provisional until soak
+POOL_MIN=${POOL_MIN:-340000}   # R113 @0.955: 381,300 expected
 POOL_MAX=${POOL_MAX:-420000}
 KVT='{"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":4294967296,"secondary_tiers":[{"type":"fs","root_dir":"/l2","n_read_threads":16,"n_write_threads":8}]}}'
 KVT_LINE="--kv-transfer-config '$KVT'"
 NO_TIER=${NO_TIER:-0}   # NO_TIER=1: plain engine (diagnostics only — the daily contract includes the tier)
 [ "$NO_TIER" = 1 ] && KVT_LINE=""
+
+SPEC_FINAL=${SPEC_JSON:-"{\"method\":\"qwen3_5_mtp\",\"num_speculative_tokens\":$NS}"}
 
 mountpoint -q "$L2MNT" || { echo "FAILED: $L2MNT not mounted (run setup-native-l2.sh) — refusing an uncapped tier"; exit 1; }
 
@@ -82,10 +87,10 @@ sudo docker run -d --name "$NAME" --restart unless-stopped \
     --model /model --served-model-name qwen3.8-27b qwen3.6-27b --trust-remote-code \
     --kv-cache-dtype nvfp4 \
     --gpu-memory-utilization $UTIL --max-model-len $MAXLEN \
-    --max-num-seqs 8 --max-num-batched-tokens 8192 \
+    --max-num-seqs $SEQS --max-num-batched-tokens $MNBT \
     --limit-mm-per-prompt '{\"image\":4,\"video\":0}' \
     --mamba-cache-mode align --enable-prefix-caching \
-    --speculative-config '{\"method\":\"qwen3_5_mtp\",\"num_speculative_tokens\":$NS}' \
+    --speculative-config '$SPEC_FINAL' \
     $KVT_LINE \
     --default-chat-template-kwargs '{\"preserve_thinking\":true,\"reasoning_effort\":\"medium\"}' \
     --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_xml \

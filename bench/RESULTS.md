@@ -121,6 +121,10 @@ One instrument caveat, learned the hard way: the screen is only meaningful again
 
 GSM8K tracks fidelity exactly; IFEval inverts it (saka +3.7, ~1.9σ) in the same direction as its tool-eval edge. IFEval absolute levels are low for Qwen3.8 (thinking-mode formatting under effort medium; identical setup for all four — relative only). Decision: gittensor stays the daily — best pool and decode, fidelity and math within noise of the best, IFEval within 1σ of the cluster.
 
+## Same-night tuning: the disk tier's quality cost eliminated, pool restored (2026-08-29, `results/2026-08-29-r113-tuning`)
+
+Two flag changes, both promoted into the daily the same night: **`offload_prompt_only: true` + 4 write threads** brings tool-eval back to 90.0 ± 1.4 (×4) — the tier's −1.8-point cost was decode-block write traffic, and prefix reuse only ever hits prompt blocks, so skipping decode KV costs nothing. **Util 0.93 → 0.955** recovers the CUDA-graph-profiling reserve the boot log itself points out: pool 345K → **381,300** (98% of the LMCache generation's), burst-eviction needles green. Also measured: the MTP depth curve still peaks at ns=4 on this engine (ns5 ties, ns6 loses despite higher raw acceptance); `max-num-batched-tokens` 16384 misses the 262K KV budget by 0.06 GiB at util 0.93 (smaller prefill chunks genuinely buy KV headroom via activation workspace); and decode c1 numbers on this stack swing ±10% boot-to-boot tracking speculative acceptance (0.43–0.69 on identical prompts) — compare decode within one boot or normalize by acceptance.
+
 ## PROMOTED: the daily is now the v0.28 generation (2026-08-28, `results/2026-08-28-r108-promote`)
 
 `serve` for this stack is now vLLM v0.28.0 + `patches-v0280/` — nvfp4 KV + XQA decode + MTP ns=4 + async scheduling + the native OffloadingConnector disk tier, replacing the 0.26-nightly + LMCache generation. The tier's backing store is a **fixed-size 200G loopback ext4 image**: after LMCache's unenforced-cap incident (876G disk-fill, July), the cap is enforced by construction rather than trusted to eviction code.
