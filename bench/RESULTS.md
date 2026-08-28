@@ -121,6 +121,17 @@ One instrument caveat, learned the hard way: the screen is only meaningful again
 
 GSM8K tracks fidelity exactly; IFEval inverts it (saka +3.7, ~1.9σ) in the same direction as its tool-eval edge. IFEval absolute levels are low for Qwen3.8 (thinking-mode formatting under effort medium; identical setup for all four — relative only). Decision: gittensor stays the daily — best pool and decode, fidelity and math within noise of the best, IFEval within 1σ of the cluster.
 
+## NVFP4 KV cache unlocked on v0.28.0 / sm120 — patch set validated, V-scale falsification measured (2026-08-28, `results/2026-08-28-r106-nvfp4kv`, `patches-v0280/`)
+
+Stock v0.28.0 gates `--kv-cache-dtype nvfp4` to SM100 datacenter Blackwell. `patches-v0280/` (a rebase of the still-open vLLM PR #49891 plus the linear-V-scale writer fix, produced against the image's own FlashInfer 0.6.16.post3) lifts it for sm120. Validation on the 5090, all gates green:
+
+- **Pool: 352,702 tokens @262K max-len, util 0.93** (fp8 on the same engine: 225K @200K). Part of the remaining gap to the 0.26 stack's 388K is v0.28's CUDA-graph memory profiling reserving ~1 GiB — a util-tuning knob.
+- **fp8 purity control**: the patched image's fp8 boot is byte-identical to stock (same pool to the token, decode within noise) — every change is gated on sm12x+nvfp4.
+- **Fidelity (prefill-logprob ruler vs the FP8 reference)**: top-1 0.8895 / ΔNLL 2.25% / KL 0.166 — statistical parity with both fp8-on-0.28 and the patched-0.26 nvfp4 stack. 90K-depth needles clean.
+- **The falsification run** (same boot, overlay disabled so the stock V-swizzled writer serves): top-1 drops to 0.8552, ΔNLL 8.82% (13.1% on agent text), KL +50% — **with zero behavioral symptoms**. This is the direct measurement of the scale-layout bug class: an engine can look perfectly healthy while serving badly corrupted attention. Gate on a numerical ruler, never on needles alone, and fail closed if the overlay-ACTIVE line is missing.
+
+Decode (async ON, aggregate t/s): nvfp4 prose 109.9 c1 / 447.8 c4, code 142.8 / 565.4 — i.e. −16–27% vs fp8 on the same engine. The boot logs pinpoint why: v0.28 gives sm120 **fp8** the dedicated XQA decode kernel (`decode_backend=xqa`) while this nvfp4 route still decodes through generic FA2 (`decode_backend=flashinfer-native`). FlashInfer 0.6.16.post3 ships an sm120-exclusive **XQA-NVFP4** decode kernel (linear scale-factor layout, i.e. compatible with the fixed writer) that vLLM does not wire; doing so — plus the drafter-cudagraph patch this rebase omitted — is the identified path to nvfp4 decode at ~fp8 speed with the 1.57× pool. DFlash drafts on nvfp4 KV currently hit vLLM's non-causal guard; the per-layer `--kv-cache-dtype-skip-layers` fallback and a guard-relaxation A/B diff are both included in the patch set.
+
 ## vLLM v0.28.0 audited: native disk KV offload works on the hybrid, async+spec is a free win, nvfp4 KV still SM100-gated (2026-08-28, `results/2026-08-28-r104-native-offload`)
 
 v0.28.0 (released 08-26) ships native disk KV offloading (PR #49644 line), hybrid prefix caching by default, and async-scheduling×spec-decode compatibility (PR #24799). Audited stock on this card — gittensor checkpoint, `fp8_e4m3` KV, no local patches.
