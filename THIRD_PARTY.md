@@ -46,7 +46,7 @@ Upstream: https://github.com/LMCache/LMCache — [Apache-2.0](https://github.com
 - [`syv-ai/DFlash2-Qwen3.8-27B-W4A16`](https://huggingface.co/syv-ai) — the DFlash2 draft used in speculative-decoding experiments; [`incoai/Qwen3.8-27B-DFlash2`](https://huggingface.co/incoai/Qwen3.8-27B-DFlash2) is the original bf16 draft.
 - [`sakamakismile/Qwen3.8-27B-MTP-NVFP4`](https://huggingface.co/sakamakismile/Qwen3.8-27B-MTP-NVFP4) — the previous daily; its Qwen3.8 XML chat template is what the current daily serves with.
 - [`natfii/Qwen3.6-27B-VLM-NVFP4-MTP`](https://huggingface.co/natfii/Qwen3.6-27B-VLM-NVFP4-MTP) — the Qwen3.6-era daily (validated snapshot revision `2e46c0ed7606f35e357bc5674d20c710fc51b178`). Qwen3.6 base license (Apache-2.0).
-- [`Lorbus/Qwen3.6-27B-int4-AutoRound`](https://huggingface.co/Lorbus/Qwen3.6-27B-int4-AutoRound) — the previous daily, still the W4A16 reference.
+- [`Lorbus/Qwen3.6-27B-int4-AutoRound`](https://huggingface.co/Lorbus/Qwen3.6-27B-int4-AutoRound) — an earlier (Qwen3.6-era) daily, still the W4A16 reference.
 - [`unsloth/Qwen3.6-27B-NVFP4`](https://huggingface.co/unsloth/Qwen3.6-27B-NVFP4) — earlier daily (TurboQuant era).
 
 ## Benchmarks and tools (not redistributed here)
