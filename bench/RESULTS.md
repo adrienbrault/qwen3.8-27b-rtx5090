@@ -121,6 +121,14 @@ One instrument caveat, learned the hard way: the screen is only meaningful again
 
 GSM8K tracks fidelity exactly; IFEval inverts it (saka +3.7, ~1.9σ) in the same direction as its tool-eval edge. IFEval absolute levels are low for Qwen3.8 (thinking-mode formatting under effort medium; identical setup for all four — relative only). Decision: gittensor stays the daily — best pool and decode, fidelity and math within noise of the best, IFEval within 1σ of the cluster.
 
+## PROMOTED: the daily is now the v0.28 generation (2026-08-28, `results/2026-08-28-r108-promote`)
+
+`serve` for this stack is now vLLM v0.28.0 + `patches-v0280/` — nvfp4 KV + XQA decode + MTP ns=4 + async scheduling + the native OffloadingConnector disk tier, replacing the 0.26-nightly + LMCache generation. The tier's backing store is a **fixed-size 200G loopback ext4 image**: after LMCache's unenforced-cap incident (876G disk-fill, July), the cap is enforced by construction rather than trusted to eviction code.
+
+Promotion evidence (tool-eval, ×4 trials each, same day, same harness): previous daily 90.0 ± 1.2, new engine **without** tier 90.0 ± 1.8 (quality parity), with tier 88.2 ± 1.0 — the ~1.8-point delta is attributable entirely to the disk tier's write traffic during agentic bursts (responsiveness subscore 63 vs 80; wall-clock-flavored, not fidelity), with tier tuning open. Final gauntlet on the promoted config: needles correct through cold / 8-flood eviction / divergent-suffix / container restart (fs tier persists), decode code c1 205.9 / c8 1103 aggregate, tier at 41G/200G.
+
+Operational finds worth stealing: the OffloadingConnector's 4G CPU-staging mmap (`/dev/shm/vllm_offload_*.mmap`) **leaks past `docker rm -f`** — four engine swaps quietly ate 16G of host RAM until a fuser-guarded sweep went into the launcher; and boot asserts that grep engine logs must not use `grep -q` under `set -o pipefail` (early-exit SIGPIPE fails the pipeline on a *successful* match). The launcher fails closed on: overlay-ACTIVE, `decode_backend=xqa`, connector init, pool band, and a MemAvailable gate before every engine swap.
+
 ## XQA-NVFP4 decode wired: the nvfp4 speed penalty is gone, and the decode path is now instrumented (2026-08-28, `results/2026-08-28-r107*`, `patches-v0280/0103+0104`)
 
 FlashInfer 0.6.16.post3 ships an SM120-exclusive XQA decode kernel that reads NVFP4 KV (linear scale-factor layout — compatible with the fixed writer); vLLM never wired it. `0103` routes sm120 nvfp4 q_len=1 decode to it (runtime fallback: `VLLM_SM12X_NVFP4_XQA=0` → FA2); `0104` rebases the MTP-drafter FULL-cudagraph routing v0.28 never absorbed. Result (async ON, MTP ns=4, aggregate t/s):

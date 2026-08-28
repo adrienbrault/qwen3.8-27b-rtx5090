@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# DAILY launcher, v0.28 generation (R108 promotion, user "promote" 2026-08-28). Stack:
+#   image vllm-qwen38:v0280-nvfp4kv = vLLM v0.28.0 + patches-v0280 (0101 sm120-nvfp4 FA2 routing,
+#   0102 linear-V-scale writer overlay, 0103 XQA-NVFP4 decode, 0104 drafter full-cudagraph)
+#   nvfp4 KV + XQA decode + MTP ns4 + async scheduling (v0.28 default — NEVER add
+#   --no-async-scheduling here; it costs 20-40%, R104e) + native OffloadingConnector disk tier
+#   on the hard-capped loopback fs (setup-native-l2.sh; replaces LMCache: no sidecar, no 24G
+#   pinned DRAM, no chunk=block ceiling). Provenance: FINDINGS R104-R107; public repo
+#   bench/RESULTS.md + patches-v0280/. Rollback: launch-daily-legacy-0826.sh (tiers image + L2 intact).
+#   Promotion: PORT=8020 NAME=vllm-27b bash launch-daily-v0280.sh   (default = :8029 experiment)
+set -euo pipefail
+export PATH="$HOME/.local/bin:$PATH"
+MODEL_DIR=${MODEL_DIR:-/srv/qwen5090/models/qwen3.8-27b-nvfp4-rtx5090}  # ≡ HF gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090-LMHead4 (R105)
+IMAGE=${IMAGE:-vllm-qwen38:v0280-nvfp4kv}
+PORT=${PORT:-8029}
+BIND_ADDR=${BIND_ADDR:-127.0.0.1}
+NAME=${NAME:-vllm-exp}
+NS=${NS:-4}
+MAXLEN=${MAXLEN:-262144}
+UTIL=${UTIL:-0.93}
+L2MNT=${L2MNT:-/srv/qwen5090/native-l2}   # hard-capped loopback fs — cap by construction (R69 lesson)
+CACHE_DIR=${CACHE_DIR:-/srv/qwen5090/cache}
+POOL_MIN=${POOL_MIN:-300000}   # R107 measured 345,553 with MTP+XQA (no connector); band provisional until soak
+POOL_MAX=${POOL_MAX:-420000}
+KVT='{"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":4294967296,"secondary_tiers":[{"type":"fs","root_dir":"/l2","n_read_threads":16,"n_write_threads":8}]}}'
+KVT_LINE="--kv-transfer-config '$KVT'"
+NO_TIER=${NO_TIER:-0}   # NO_TIER=1: plain engine (diagnostics only — the daily contract includes the tier)
+[ "$NO_TIER" = 1 ] && KVT_LINE=""
+
+mountpoint -q "$L2MNT" || { echo "FAILED: $L2MNT not mounted (run setup-native-l2.sh) — refusing an uncapped tier"; exit 1; }
+
+# tokenizer truncation guard (gotcha #9, checkpoint-side — survives across engine generations)
+python3 - <<PYEOF
+import json
+p = "$MODEL_DIR/tokenizer.json"
+t = json.load(open(p))
+if t.get("truncation") is not None:
+    import shutil; shutil.copy(p, p + ".orig")
+    t["truncation"] = None
+    json.dump(t, open(p, "w"), ensure_ascii=False)
+    print("tokenizer guard: TRUNCATION BUG FIXED (re-download detected)")
+else:
+    print("tokenizer guard: clean")
+PYEOF
+
+CACHE="-v ${CACHE_DIR}/torch_compile_qwen38_v0280nv:/root/.cache/vllm/torch_compile_cache \
+       -v ${CACHE_DIR}/triton:/root/.triton/cache \
+       -v ${CACHE_DIR}/inductor:/root/.cache/inductor \
+       -v ${CACHE_DIR}/flashinfer:/root/.cache/flashinfer"
+
+timeout 60 sudo docker rm -f "$NAME" vllm-27b vllm-exp vllm-eval >/dev/null 2>&1 || true
+sync
+
+# OffloadingConnector shm-leak sweep (upstream bug, found 2026-08-28): the connector's 4G CPU
+# staging mmap in /dev/shm survives `docker rm -f` — 4 leaked boots ate 16G and starved the
+# memory gate (and contributed to the 02:07 OOM). Delete only orphans (fuser: no holder).
+for f in /dev/shm/vllm_offload_*.mmap; do [ -e "$f" ] || continue; sudo fuser -s "$f" 2>/dev/null || sudo rm -f "$f"; done
+
+# engine-swap memory gate (2026-08-28 OOM incident): wait for the old engine's RAM to be reaped
+# threshold 28G: this stack has NO 24G pinned L1 (that was the legacy tiers daily) — engine
+# needs ~25G host-side; 40G was the legacy calibration and false-refused a healthy 32G boot.
+GATE_KB=${GATE_KB:-29360128}
+AVAIL_KB=0
+for i in $(seq 1 60); do
+  AVAIL_KB=$(awk '/MemAvailable/{print $2}' /proc/meminfo)
+  [ "$AVAIL_KB" -gt "$GATE_KB" ] && break
+  [ "$i" = 1 ] && echo "memory gate: waiting for MemAvailable > $((GATE_KB/1048576))G (now $((AVAIL_KB/1048576))G)..."
+  sleep 5
+done
+[ "$AVAIL_KB" -le "$GATE_KB" ] && { echo "FAILED: memory gate timed out at $((AVAIL_KB/1048576))G — refusing to boot into an OOM window"; exit 1; }
+
+sudo docker run -d --name "$NAME" --restart unless-stopped \
+  --entrypoint bash --runtime nvidia --gpus all --ipc=host \
+  -p ${BIND_ADDR}:${PORT}:8000 --shm-size 8g --memory 52g --memory-swap 52g \
+  -e VLLM_ATTENTION_BACKEND=FLASHINFER \
+  -e VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE=134217728 \
+  -e CUDA_MODULE_LOADING=LAZY \
+  -e TORCHINDUCTOR_COMPILE_THREADS=8 -e MAX_JOBS=4 -e FLASHINFER_NUM_COMPILE_JOBS=4 \
+  -e PYTHONHASHSEED=0 \
+  $CACHE -v "$L2MNT":/l2 -v "$MODEL_DIR":/model \
+  "$IMAGE" -c "exec python3 -m vllm.entrypoints.openai.api_server \
+    --model /model --served-model-name qwen3.8-27b qwen3.6-27b --trust-remote-code \
+    --kv-cache-dtype nvfp4 \
+    --gpu-memory-utilization $UTIL --max-model-len $MAXLEN \
+    --max-num-seqs 8 --max-num-batched-tokens 8192 \
+    --limit-mm-per-prompt '{\"image\":4,\"video\":0}' \
+    --mamba-cache-mode align --enable-prefix-caching \
+    --speculative-config '{\"method\":\"qwen3_5_mtp\",\"num_speculative_tokens\":$NS}' \
+    $KVT_LINE \
+    --default-chat-template-kwargs '{\"preserve_thinking\":true,\"reasoning_effort\":\"medium\"}' \
+    --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_xml \
+    --override-generation-config '{\"temperature\":0.6,\"top_p\":0.95,\"top_k\":20}'"
+
+echo "launching $NAME (v0.28 nvfp4+XQA+MTP+native-offload) on ${BIND_ADDR}:$PORT ..."
+HEALTHY=0
+for i in $(seq 1 150); do
+  curl -sf -m 5 http://${BIND_ADDR}:${PORT}/health >/dev/null 2>&1 && { echo "HEALTHY"; HEALTHY=1; break; }
+  timeout 15 sudo docker ps --filter name="$NAME" --format x 2>/dev/null | grep -q x || { echo "FAILED: container died"; sudo docker logs "$NAME" 2>&1 | tail -20; exit 1; }
+  [ "$(timeout 15 sudo docker inspect "$NAME" --format '{{.RestartCount}}' 2>/dev/null || echo 0)" -gt 0 ] && { echo "FAILED: engine-init crash loop; log: /tmp/$NAME-crash.log"; sudo docker logs "$NAME" > "/tmp/$NAME-crash.log" 2>&1; grep -aE "Error|raise" "/tmp/$NAME-crash.log" | grep -av Qwen3VLVideo | tail -8; timeout 60 sudo docker rm -f "$NAME" >/dev/null 2>&1; exit 1; }
+  sleep 10
+done
+[ "$HEALTHY" = 1 ] || { echo "FAILED: /health never came up in 25 min"; sudo docker logs "$NAME" 2>&1 | tail -20; exit 1; }
+
+BOOTLOG=$(sudo docker logs "$NAME" 2>&1)
+# fail-closed asserts: every piece of the stack must positively identify itself.
+# grep -c, NOT grep -q: with pipefail, -q's early exit SIGPIPEs the echo and fails the
+# pipeline on a SUCCESSFUL match (the documented launch-tier-rc4 gotcha; refired here 2026-08-28).
+[ "$(echo "$BOOTLOG" | grep -ac "linear-V-scale store overlay ACTIVE")" -ge 1 ] || { echo "FAILED: overlay ACTIVE line missing — swizzled writer would serve silently-wrong KV (R106 D: ΔNLL 8.8%)"; exit 1; }
+[ "$(echo "$BOOTLOG" | grep -ac "decode_backend=xqa")" -ge 1 ] || { echo "FAILED: decode_backend is not xqa — 0103 route did not engage (R107: −28% code decode)"; exit 1; }
+if [ "$NO_TIER" != 1 ]; then [ "$(echo "$BOOTLOG" | grep -ac "OffloadingConnector")" -ge 1 ] || { echo "FAILED: OffloadingConnector did not initialize — no disk tier"; exit 1; }; fi
+POOL=$(echo "$BOOTLOG" | grep -a 'GPU KV cache size' | tail -1 | grep -oE 'cache size: [0-9,]+' | tr -dc 0-9)
+echo "daily up. KV pool: ${POOL} tokens"
+if [ -z "$POOL" ] || [ "$POOL" -lt "$POOL_MIN" ] || [ "$POOL" -gt "$POOL_MAX" ]; then
+  echo "FAILED: pool ${POOL:-<missing>} outside ${POOL_MIN}-${POOL_MAX}"; exit 1
+fi
+
+# autotune pre-warm (gotcha #8)
+if command -v llama-benchy >/dev/null 2>&1; then
+  echo "pre-warming autotune shapes (pp8192 c8)..."
+  llama-benchy --base-url http://${BIND_ADDR}:${PORT}/v1 --model qwen3.8-27b \
+    --pp 8192 --tg 16 --concurrency 8 --runs 1 >/dev/null 2>&1 || { echo "FAILED: pre-warm errored"; [ "${ALLOW_NO_PREWARM:-0}" = 1 ] || exit 1; }
+  echo "pre-warm done. free VRAM: $(nvidia-smi --query-gpu=memory.free --format=csv,noheader)"
+else
+  [ "${ALLOW_NO_PREWARM:-0}" = 1 ] || { echo "FAILED: llama-benchy not found (ALLOW_NO_PREWARM=1 to accept)"; exit 1; }
+fi
+
+sudo docker restart owui-proxy >/dev/null 2>&1 || true
+echo "DAILY UP (v0.28 gen: nvfp4 KV + XQA decode + MTP ns$NS + native disk tier @ $L2MNT, image $IMAGE). Pool $POOL. R104-R107 gauntlet 2026-08-28."
