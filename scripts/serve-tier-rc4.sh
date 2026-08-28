@@ -16,7 +16,7 @@
 set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"   # llama-benchy (pre-warm) commonly lives here
 
-MODEL_DIR=${MODEL_DIR:-/srv/qwen5090/models/qwen3.8-27b-nvfp4-rtx5090}  # gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090 (GDN in NVFP4; ships with saka's Qwen3.8 XML chat template, its own is .orig) — PROMOTED 2026-08-22 (R90); previous: /srv/qwen5090/models/saka-qwen3.8-27b-mtp-nvfp4
+MODEL_DIR=${MODEL_DIR:-/srv/qwen5090/models/qwen3.8-27b-nvfp4-rtx5090}  # gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090-LMHead4 (upstream republished the recipe under this name after swapping the parent repo's lm_head to BF16 — R105; GDN in NVFP4; ships with saka's Qwen3.8 XML chat template, its own is .orig) — PROMOTED 2026-08-22 (R90); previous: /srv/qwen5090/models/saka-qwen3.8-27b-mtp-nvfp4
 MODEL_NAME=${MODEL_NAME:-qwen3.8-27b}
 MODEL_ALIAS=${MODEL_ALIAS:-qwen3.6-27b}   # alias for clients configured before the 2026-08-14 model change
 IMAGE=${IMAGE:-vllm-qwen38:tiers-nvfp4kv}   # patches-nvfp4kv/Dockerfile.nvfp4kv --build-arg VLLM_BASE=vllm-qwen38:tiers-rc4-ba07e4a (R81)
