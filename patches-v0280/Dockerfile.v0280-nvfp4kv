@@ -1,0 +1,68 @@
+# Qwen3.8 NVFP4-KV image on vLLM v0.28.0 for the RTX 5090 (sm_120) — 2026-08-28 (R106).
+# Rebase of patches-nvfp4kv (the 0.27 production overlay) by codex; per-hunk rationale in
+# README-sm120-nvfp4.md. Stack:
+#   0101  PR #49891 re-rebased onto v0.28.0: SM12x nvfp4 -> FlashInfer FA2 routing (new
+#         supports_kv_cache_dtype gate widened; HND for nvfp4-on-sm12x only; cudagraph
+#         prefill wrappers for uniform 1+ns spec batches; JIT warmup before profiling;
+#         NVFP4 stores routed to the overlay op). fp8/auto on sm120 byte-identical to stock.
+#   0102  csrc writer: LINEAR V block scales on major>=12 (v0.28 writer still swizzles V
+#         unconditionally — verdict + line evidence in 0102-vscale-writer-verdict-v0280.md).
+#         Compiled as the torch overlay op (torch.ops.vllm_sm12x.reshape_and_cache_nvfp4).
+#   0101a (OPTIONAL, WITH_DFLASH_NC=1) on-GPU A/B: allow nvfp4 KV for DFlash non-causal
+#         attention. Default OFF — primary DFlash path is --kv-cache-dtype-skip-layers.
+# Build (on flan):
+#   cd /srv/qwen5090/patches-v0280 && sudo docker build -f Dockerfile.v0280-nvfp4kv \
+#       -t vllm-qwen38:v0280-nvfp4kv .
+ARG VLLM_BASE=vllm/vllm-openai:v0.28.0
+FROM ${VLLM_BASE}
+
+ARG VLLM_REF=v0.28.0
+ARG WITH_DFLASH_NC=0
+ARG SM_ARCH=120a
+
+# 1) vLLM csrc at the release tag (headers + the writer .cu), patched (0102)
+COPY 0102-nvfp4-writer-linear-vscale-sm12x-v0280.diff /tmp/0102.diff
+RUN set -eux; \
+    apt-get update -qq && apt-get install -y -qq git patch >/dev/null && rm -rf /var/lib/apt/lists/*; \
+    IMG_VER="$(python3 -c 'import vllm; print(vllm.__version__)')"; echo "image vllm $IMG_VER"; \
+    case "$IMG_VER" in 0.28.0*) ;; *) echo "FATAL: image vllm $IMG_VER != 0.28.0"; exit 1;; esac; \
+    rm -rf /opt/vllm-src; \
+    git clone -q --filter=blob:none --no-checkout https://github.com/vllm-project/vllm /opt/vllm-src; \
+    git -C /opt/vllm-src checkout -q ${VLLM_REF} -- csrc cmake/patches; \
+    test -f /opt/vllm-src/csrc/core/registration.h; \
+    TINC="$(python3 -c 'import torch, os; print(os.path.join(os.path.dirname(torch.__file__), "include"))')"; \
+    if grep -q "auto strptr = new std::string" "$TINC/torch/csrc/stable/stableivalue_conversions.h"; then \
+      mkdir -p /opt/vllm-sm12x/shadow-include/torch/csrc/stable; \
+      cp "$TINC/torch/csrc/stable/stableivalue_conversions.h" /opt/vllm-sm12x/shadow-include/torch/csrc/stable/; \
+      patch --batch --forward -p1 -d /opt/vllm-sm12x/shadow-include < /opt/vllm-src/cmake/patches/pytorch_stable_string.patch; \
+      echo "torch stable-string leak hotfix: shadow header installed"; \
+    fi; \
+    test -f /opt/vllm-src/csrc/libtorch_stable/nvfp4_kv_cache_kernels.cu; \
+    patch --batch --forward -p1 -d /opt/vllm-src < /tmp/0102.diff; \
+    grep -q swizzle_v_sf /opt/vllm-src/csrc/libtorch_stable/nvfp4_kv_cache_kernels.cu; \
+    rm -rf /opt/vllm-src/.git
+
+# 2) AOT-build the overlay op for sm_120a (no GPU needed at build)
+COPY overlay/ /opt/vllm-sm12x/
+ENV VLLM_SM12X_SHADOW_INC=/opt/vllm-sm12x/shadow-include \
+    VLLM_SM12X_CSRC=/opt/vllm-src/csrc \
+    VLLM_SM12X_BUILD=/opt/vllm-sm12x/build \
+    VLLM_SM12X_ARCH=${SM_ARCH} \
+    PYTHONPATH=/opt/vllm-sm12x:${PYTHONPATH:-}
+RUN set -eux; \
+    export TORCH_CUDA_ARCH_LIST="12.0a" MAX_JOBS=4; \
+    which nvcc || export PATH="/usr/local/cuda/bin:$PATH"; nvcc --version | tail -1; \
+    cd /opt/vllm-sm12x && python3 build_overlay.py; \
+    ls -la /opt/vllm-sm12x/build/*.so
+
+# 3) vLLM python patch (package-root-relative)
+COPY 0101-sm120-nvfp4kv-fa2-routing-v0280.diff /tmp/0101.diff
+COPY 0101a-ALTERNATIVE-dflash-noncausal-nvfp4-fa2-v0280.diff /tmp/0101a.diff
+RUN set -eux; \
+    VROOT="$(python3 -c 'import os, vllm; print(os.path.dirname(vllm.__file__))')"; \
+    patch --batch --forward -p1 -d "$VROOT" < /tmp/0101.diff; \
+    if [ "${WITH_DFLASH_NC}" = "1" ]; then patch --batch --forward -p1 -d "$VROOT" < /tmp/0101a.diff; echo "0101a APPLIED (DFlash non-causal nvfp4 A/B)"; else echo "0101a skipped (primary: skip-layers)"; fi; \
+    for f in v1/attention/backends/flashinfer.py v1/worker/gpu_worker.py; do python3 -m py_compile "$VROOT/$f"; done; \
+    grep -q "use_fa2_nvfp4_kv" "$VROOT/v1/attention/backends/flashinfer.py"; \
+    python3 -c "import torch; torch.ops.load_library('/opt/vllm-sm12x/build/vllm_sm12x_nvfp4kv.so'); assert hasattr(torch.ops.vllm_sm12x, 'reshape_and_cache_nvfp4'); print('overlay op registered')"; \
+    echo "V0280-NVFP4KV IMAGE OK (WITH_DFLASH_NC=${WITH_DFLASH_NC})"
