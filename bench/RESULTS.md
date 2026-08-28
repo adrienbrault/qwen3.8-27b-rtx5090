@@ -121,6 +121,19 @@ One instrument caveat, learned the hard way: the screen is only meaningful again
 
 GSM8K tracks fidelity exactly; IFEval inverts it (saka +3.7, ~1.9σ) in the same direction as its tool-eval edge. IFEval absolute levels are low for Qwen3.8 (thinking-mode formatting under effort medium; identical setup for all four — relative only). Decision: gittensor stays the daily — best pool and decode, fidelity and math within noise of the best, IFEval within 1σ of the cluster.
 
+## XQA-NVFP4 decode wired: the nvfp4 speed penalty is gone, and the decode path is now instrumented (2026-08-28, `results/2026-08-28-r107*`, `patches-v0280/0103+0104`)
+
+FlashInfer 0.6.16.post3 ships an SM120-exclusive XQA decode kernel that reads NVFP4 KV (linear scale-factor layout — compatible with the fixed writer); vLLM never wired it. `0103` routes sm120 nvfp4 q_len=1 decode to it (runtime fallback: `VLLM_SM12X_NVFP4_XQA=0` → FA2); `0104` rebases the MTP-drafter FULL-cudagraph routing v0.28 never absorbed. Result (async ON, MTP ns=4, aggregate t/s):
+
+| | nvfp4 FA2 (prev) | **nvfp4 XQA** | fp8 XQA |
+|---|---|---|---|
+| prose c1 / c4 | 109.9 / 447.8 | **127.4 / 549.2** | 131.7 / 578.6 |
+| code c1 / c4 | 142.8 / 565.4 | **192.6 / 645.4** | 195.8 / 675.4 |
+
+nvfp4 now decodes at **95–98% of fp8 with a 1.53× KV pool** (345,553 @262K with MTP; 478K at ns=0). Decomposition via the env knob: drafter cudagraphs +6%, XQA kernel +28%.
+
+**Correctness, instrumented rather than assumed.** The prefill-logprob ruler is provably blind to decode-only kernels (XQA and FA2 arms produce bit-identical prefill fidelity tables — `prompt_logprobs` never executes a decode step). A new decode-path probe (`scripts/decode_fidelity.py`: T=0 greedy, per-token logprobs, ns=0 so every step exercises the kernel) shows XQA-vs-FA2 divergence is real kernel signal — the FA2 kernel is bit-self-consistent across boots (20/20 chunks identical), XQA diverges on 16/20 — but with a benign signature: deltas only at high-entropy positions, sign in both directions, median |Δlogprob| 4e-4, no positional clustering. The task-accuracy discriminator settles it: GSM8K cot-zeroshot at T=0, 250 problems, **0.876 ± 0.021 on both kernels — identical**. Different-but-valid numerics over 4-bit KV, not misreads.
+
 ## NVFP4 KV cache unlocked on v0.28.0 / sm120 — patch set validated, V-scale falsification measured (2026-08-28, `results/2026-08-28-r106-nvfp4kv`, `patches-v0280/`)
 
 Stock v0.28.0 gates `--kv-cache-dtype nvfp4` to SM100 datacenter Blackwell. `patches-v0280/` (a rebase of the still-open vLLM PR #49891 plus the linear-V-scale writer fix, produced against the image's own FlashInfer 0.6.16.post3) lifts it for sm120. Validation on the 5090, all gates green:
