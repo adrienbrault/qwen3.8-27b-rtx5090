@@ -288,3 +288,7 @@ writer is not quality-correct for this FA2 route.
 
 No other BRIEF requirement was skipped. The only incomplete work is the
 GPU/nvcc-dependent validation explicitly listed above.
+
+## Credits
+
+See the repository-level [THIRD_PARTY.md](../THIRD_PARTY.md) for full provenance: PR #49891 (ch2lab), the linear-V-scale fix lineage (drowzeys), the XQA+FA2 architecture (vllm#49011), FA2 SF-stride prior art (hikarioyama), and the non-causal draft route reference (seanyourhighness/vllm-sm12x-nvfp4-dflash2).

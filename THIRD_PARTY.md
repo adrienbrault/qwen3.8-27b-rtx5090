@@ -32,15 +32,20 @@ Upstream: https://github.com/LMCache/LMCache — [Apache-2.0](https://github.com
 | `patches/rc4/` (8 diffs + `rc4-stack.diff`) | Original fixes and the combined tier-rc4 stack, expressed as diffs against LMCache 0.5.4rc4 and vLLM source — context lines are Apache-2.0 code; offered upstream under Apache-2.0. |
 | `patches-nvfp4kv/` | `upstream-pr49891-original.diff` is a verbatim redistribution of ch2lab's vLLM PR [#49891](https://github.com/vllm-project/vllm/pull/49891) (Apache-2.0, credited in the directory README's lineage section); the remaining diffs and the `overlay/` package are rebases/derivatives of that PR and of vLLM/FlashInfer code, Apache-2.0. |
 | `patches-dflash2/` | Derived from vLLM PR [#52816](https://github.com/vllm-project/vllm/pull/52816) and syv-ai's backport (Apache-2.0, linked in the directory README). |
+| `patches-v0280/` (the v0.28.0 daily generation, 2026-08-28) | `0101` is a re-rebase of **ch2lab's** vLLM PR [#49891](https://github.com/vllm-project/vllm/pull/49891) (sm12x NVFP4→FA2 routing) onto v0.28.0. `0102` carries **drowzeys'** linear-V-scale writer fix (first shipped in their [DGX Spark repo](https://github.com/drowzeys/keys-vLLm.0.27-Qwen3.8-27B-ADay777Ablit-NVFP4-A4Q-NVFP4-KV-4M-KV-token-pool-MTP3-Single-DGX-Spark)). `0103` (XQA-NVFP4 decode) implements the architecture demonstrated by the author of vLLM issue [#49011](https://github.com/vllm-project/vllm/issues/49011) (XQA decode + FA2 prefill on sm120); **hikarioyama's** [vllm-nvfp4-kv-sm120](https://github.com/hikarioyama/vllm-nvfp4-kv-sm120) (FA2 explicit-SF-stride) was prior art consulted for the gate/kernel mechanics. `0104` re-rebases the drafter FULL-cudagraph routing from PR #49891. The in-progress DFlash2-draft-on-NVFP4 route (`0105`) ports the non-causal `backend="fa2"` wrapper approach from **seanyourhighness's** [vllm-sm12x-nvfp4-dflash2](https://github.com/seanyourhighness/vllm-sm12x-nvfp4-dflash2) overlay (Apache-2.0), whose repo also validated the `--kv-cache-memory-bytes` pool pinning we use and whose DFlash2 selector-walk sampling rewrite informs our acceptance investigation. The dropped-async-flag doctrine follows **Ronald1995's** vLLM PR [#24799](https://github.com/vllm-project/vllm/pull/24799) (async scheduling × spec decode). All diffs are against Apache-2.0 vLLM/FlashInfer source; the patched images are Apache-2.0-derived. |
 
 ## Base images
 
-- `vllm/vllm-openai:nightly` (pinned by digest in `patches/Dockerfile`) — Apache-2.0. This repo ships no vLLM binaries; the Dockerfiles pull the official image and patch it locally.
+- `vllm/vllm-openai:v0.28.0` (the current daily generation's base, `patches-v0280/Dockerfile.v0280-nvfp4kv`) — Apache-2.0.
+- `vllm/vllm-openai:nightly` (pinned by digest in `patches/Dockerfile`, earlier generations) — Apache-2.0. This repo ships no vLLM binaries; the Dockerfiles pull the official image and patch it locally.
 - `lmcache/vllm-openai:*` (historical, docs only) — Apache-2.0.
 
 ## Models (not redistributed here)
 
-- [`natfii/Qwen3.6-27B-VLM-NVFP4-MTP`](https://huggingface.co/natfii/Qwen3.6-27B-VLM-NVFP4-MTP) — **the current daily's weights** (validated snapshot revision `2e46c0ed7606f35e357bc5674d20c710fc51b178`). Qwen3.6 base license (Apache-2.0).
+- [`gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090-LMHead4`](https://huggingface.co/gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090-LMHead4) — **the current daily's weights** (see the README provenance note: bit-identical to our 2026-08-22 download of the parent repo). Qwen3.8 base license.
+- [`syv-ai/DFlash2-Qwen3.8-27B-W4A16`](https://huggingface.co/syv-ai) — the DFlash2 draft used in speculative-decoding experiments; [`incoai/Qwen3.8-27B-DFlash2`](https://huggingface.co/incoai/Qwen3.8-27B-DFlash2) is the original bf16 draft.
+- [`sakamakismile/Qwen3.8-27B-MTP-NVFP4`](https://huggingface.co/sakamakismile/Qwen3.8-27B-MTP-NVFP4) — the previous daily; its Qwen3.8 XML chat template is what the current daily serves with.
+- [`natfii/Qwen3.6-27B-VLM-NVFP4-MTP`](https://huggingface.co/natfii/Qwen3.6-27B-VLM-NVFP4-MTP) — the Qwen3.6-era daily (validated snapshot revision `2e46c0ed7606f35e357bc5674d20c710fc51b178`). Qwen3.6 base license (Apache-2.0).
 - [`Lorbus/Qwen3.6-27B-int4-AutoRound`](https://huggingface.co/Lorbus/Qwen3.6-27B-int4-AutoRound) — the previous daily, still the W4A16 reference.
 - [`unsloth/Qwen3.6-27B-NVFP4`](https://huggingface.co/unsloth/Qwen3.6-27B-NVFP4) — earlier daily (TurboQuant era).
 
