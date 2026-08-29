@@ -1,0 +1,81 @@
+--- a/v1/worker/gpu/spec_decode/dflash2/speculator.py
++++ b/v1/worker/gpu/spec_decode/dflash2/speculator.py
+@@ -7,8 +7,8 @@
+ 
+ from vllm.config import VllmConfig
+ from vllm.config.compilation import CUDAGraphMode
+-from vllm.triton_utils import tl, triton
+-from vllm.v1.worker.gpu.sample.gumbel import gumbel_noised_argmax
++from vllm.triton_utils import tl, tldevice, triton
++from vllm.v1.worker.gpu.sample.gumbel import tl_rand32, tl_rand64
+ from vllm.v1.worker.gpu.spec_decode.dflash.speculator import DFlashSpeculator
+ 
+ 
+@@ -25,7 +25,6 @@ def _selector_walk_kernel(
+     num_steps: tl.constexpr,
+     top_k: tl.constexpr,
+     BLOCK_K: tl.constexpr,
+-    SAMPLE_PROBABILISTIC: tl.constexpr,
+     USE_FP64: tl.constexpr,
+ ):
+     row = tl.program_id(0)
+@@ -43,7 +42,7 @@ def _selector_walk_kernel(
+             scores_ptr + score_base + offsets,
+             mask=mask & valid,
+             other=float("-inf"),
+-        ).to(tl.float64 if USE_FP64 else tl.float32)
++        ).to(tl.float32)
+         candidate_base = flat * top_k
+         candidates = tl.load(
+             candidate_ptr + candidate_base + offsets,
+@@ -51,17 +50,31 @@ def _selector_walk_kernel(
+             other=0,
+         )
+ 
+-        # Candidate ids key the noise, matching the target's own sampling.
+-        position = tl.load(sample_pos_ptr + flat) - 1
+-        _, index = gumbel_noised_argmax(
+-            scores,
+-            candidates,
+-            mask & valid,
+-            seed,
+-            position,
+-            temperature if SAMPLE_PROBABILISTIC else 0.0,
+-            USE_FP64=USE_FP64,
+-        )
++        if temperature == 0.0:
++            best = tl.max(scores, axis=0)
++            index = tl.min(tl.where(scores == best, offsets, BLOCK_K), axis=0)
++        else:
++            position = tl.load(sample_pos_ptr + flat) - 1
++            gumbel_seed = tl.randint(seed, position)
++            if USE_FP64:
++                uniform = tl_rand64(gumbel_seed, candidates, includes_zero=False)
++                noise = -tl.log(-tl.log(uniform))
++            else:
++                uniform = tl_rand32(gumbel_seed, candidates, includes_zero=False)
++                noise = -tl.log(-tldevice.log1p(-uniform))
++            sampled_scores = tl.where(
++                mask, scores / temperature + noise, -float("inf")
++            )
++            best = tl.max(sampled_scores, axis=0)
++            index = tl.min(
++                tl.where(sampled_scores == best, offsets, BLOCK_K), axis=0
++            )
++        # BLOCK_K is the next power of two (>= top_k). All-NaN / all-masked
++        # scores make every lane lose the min() and return BLOCK_K, which
++        # reads one-past the candidate row and yields garbage token ids.
++        # The target embed at tp=1 does not clamp - that is the C>=2
++        # vectorized_gather_kernel device assert.
++        index = tl.minimum(index, top_k - 1)
+ 
+         tl.store(
+             realized_scores_ptr + candidate_base + offsets,
+@@ -153,7 +166,6 @@ class DFlash2Speculator(DFlashSpeculator):
+             num_steps=self.num_speculative_steps,
+             top_k=self.selector_top_k,
+             BLOCK_K=block_k,
+-            SAMPLE_PROBABILISTIC=self.draft_logits is not None,
+             USE_FP64=self.use_fp64_gumbel,
+             num_warps=1,
+         )

@@ -1,0 +1,173 @@
+--- a/v1/attention/backends/gdn_attn.py
++++ b/v1/attention/backends/gdn_attn.py
+@@ -64,6 +64,8 @@ class GDNAttentionMetadata:
+     non_spec_token_indx: torch.Tensor | None = None
+ 
+     num_accepted_tokens: torch.Tensor | None = None  # shape: [batch,]
++    spec_query_len: int = 0
++    """Active spec-decode query window (1 + runtime K)."""
+ 
+     # Pre-computed FLA chunk metadata (avoids GPU->CPU sync in prepare_chunk_indices)
+     chunk_indices: torch.Tensor | None = None
+@@ -144,6 +146,11 @@ class GDNAttentionMetadataBuilder(AttentionMetadataBui
+             dtype=torch.int32,
+             device=device,
+         )
++        self.spec_token_arange: torch.Tensor = torch.arange(
++            self.vllm_config.scheduler_config.max_num_seqs * (self.num_spec + 1),
++            dtype=torch.int32,
++            device=device,
++        )
+         self.non_spec_token_indx: torch.Tensor = torch.empty(
+             (self.decode_cudagraph_max_bs * (self.num_spec + 1),),
+             dtype=torch.int32,
+@@ -216,6 +223,7 @@ class GDNAttentionMetadataBuilder(AttentionMetadataBui
+         fast_build: bool = False,
+     ) -> GDNAttentionMetadata:
+         m = common_attn_metadata
++        spec_query_len = 1
+ 
+         query_start_loc = m.query_start_loc
+         query_start_loc_cpu = m.query_start_loc_cpu
+@@ -241,6 +249,15 @@ class GDNAttentionMetadataBuilder(AttentionMetadataBui
+         else:
+             spec_sequence_masks_cpu = num_decode_draft_tokens_cpu >= 0
+             num_spec_decodes = spec_sequence_masks_cpu.sum().item()
++            # Dynamic SD: recover the active query window from the scheduled
++            # draft counts (1 + runtime K), clamped to the configured maximum.
++            if num_spec_decodes > 0:
++                spec_query_len = int(
++                    num_decode_draft_tokens_cpu[spec_sequence_masks_cpu].max().item()
++                ) + 1
++                spec_query_len = min(spec_query_len, self.num_spec + 1)
++            else:
++                spec_query_len = 1
+             if num_spec_decodes == 0:
+                 spec_sequence_masks = None
+                 spec_sequence_masks_cpu = None
+@@ -296,14 +313,8 @@ class GDNAttentionMetadataBuilder(AttentionMetadataBui
+                     num_spec_decodes * (self.num_spec + 1),
+                     query_start_loc_cpu[-1].item(),
+                 )
+-                spec_token_indx = torch.arange(
+-                    spec_token_size,
+-                    dtype=torch.int32,
+-                    device=query_start_loc.device,
+-                )
+-                non_spec_token_indx = torch.empty(
+-                    0, dtype=torch.int32, device=query_start_loc.device
+-                )
++                spec_token_indx = self.spec_token_arange[:spec_token_size]
++                non_spec_token_indx = self.non_spec_token_indx[:0]
+                 # Filter by spec_sequence_masks to exclude padded sequences
+                 spec_state_indices_tensor = block_table_tensor[
+                     spec_sequence_masks_cpu, : self.num_spec + 1
+@@ -449,17 +460,21 @@ class GDNAttentionMetadataBuilder(AttentionMetadataBui
+             spec_sequence_masks[num_spec_decodes:].fill_(False)
+ 
+             assert non_spec_token_indx is not None and spec_token_indx is not None
+-            self.non_spec_token_indx[: non_spec_token_indx.size(0)].copy_(
+-                non_spec_token_indx, non_blocking=True
+-            )
+-            non_spec_token_indx = self.non_spec_token_indx[
+-                : non_spec_token_indx.size(0)
+-            ]
++            if non_spec_token_indx.numel() > 0:
++                self.non_spec_token_indx[: non_spec_token_indx.size(0)].copy_(
++                    non_spec_token_indx, non_blocking=True
++                )
++                non_spec_token_indx = self.non_spec_token_indx[
++                    : non_spec_token_indx.size(0)
++                ]
+ 
+-            self.spec_token_indx[: spec_token_indx.size(0)].copy_(
+-                spec_token_indx, non_blocking=True
+-            )
+-            spec_token_indx = self.spec_token_indx[: spec_token_indx.size(0)]
++            if spec_token_indx.data_ptr() == self.spec_token_arange.data_ptr():
++                spec_token_indx = self.spec_token_arange[: spec_token_indx.size(0)]
++            else:
++                self.spec_token_indx[: spec_token_indx.size(0)].copy_(
++                    spec_token_indx, non_blocking=True
++                )
++                spec_token_indx = self.spec_token_indx[: spec_token_indx.size(0)]
+ 
+             self.spec_query_start_loc[: num_spec_decodes + 1].copy_(
+                 spec_query_start_loc, non_blocking=True
+@@ -517,6 +532,7 @@ class GDNAttentionMetadataBuilder(AttentionMetadataBui
+             spec_token_indx=spec_token_indx,
+             non_spec_token_indx=non_spec_token_indx,
+             num_accepted_tokens=num_accepted_tokens,
++            spec_query_len=spec_query_len,
+             nums_dict=nums_dict,
+             batch_ptr=batch_ptr,
+             token_chunk_offset_ptr=token_chunk_offset_ptr,
+--- a/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
++++ b/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+@@ -1340,7 +1340,12 @@ class QwenGatedDeltaNetAttention(GatedDeltaNetAttentio
+                 ],
+                 num_accepted_tokens=num_accepted_tokens,
+                 query_start_loc=spec_query_start_loc,
+-                max_query_len=spec_state_indices_tensor.size(-1),
++                # Keep the contiguous configured-width state table for the
++                # recurrent kernels, but size convolution work to runtime K.
++                max_query_len=(
++                    attn_metadata.spec_query_len
++                    or spec_state_indices_tensor.size(-1)
++                ),
+                 validate_data=False,
+             )
+ 
+@@ -1718,7 +1723,9 @@ class QwenGatedDeltaNetAttention(GatedDeltaNetAttentio
+             conv_state_indices=state_indices[:num_requests, 0],
+             num_accepted_tokens=num_accepted_tokens[:num_requests],
+             query_start_loc=cu_seqlens[: num_requests + 1],
+-            max_query_len=state_indices.size(1),
++            max_query_len=(
++                attn_metadata.spec_query_len or state_indices.size(1)
++            ),
+             validate_data=False,
+         )
+         self._forward_core_decode_spec_post_conv_fused_norm(
+--- a/third_party/flash_linear_attention/ops/fused_recurrent.py
++++ b/third_party/flash_linear_attention/ops/fused_recurrent.py
+@@ -106,10 +106,14 @@ def fused_recurrent_gated_delta_rule_fwd_kernel(
+                 i_t = tl.load(num_accepted_tokens + i_n).to(tl.int64) - 1
+             else:
+                 i_t = 0
+-            # Load state index and check for invalid entries
+-            state_idx = tl.load(ssm_state_indices + i_n * stride_indices_seq + i_t).to(
+-                tl.int64
+-            )
++            # num_accepted_tokens is asynchronous GPU state. Keep a stale or
++            # zero count from indexing another request's state row.
++            idx_in_row = (i_t >= 0) & (i_t < stride_indices_seq)
++            state_idx = tl.load(
++                ssm_state_indices + i_n * stride_indices_seq + i_t,
++                mask=idx_in_row,
++                other=0,
++            ).to(tl.int64)
+             # Skip if state index is invalid (NULL_BLOCK_ID=0)
+             if state_idx <= 0:
+                 return
+--- a/third_party/flash_linear_attention/ops/fused_sigmoid_gating.py
++++ b/third_party/flash_linear_attention/ops/fused_sigmoid_gating.py
+@@ -106,10 +106,14 @@ def fused_sigmoid_gating_delta_rule_update_kernel(
+                 i_t = tl.load(num_accepted_tokens + i_n).to(tl.int64) - 1
+             else:
+                 i_t = 0
+-            # Load state index and check for invalid entries
+-            state_idx = tl.load(ssm_state_indices + i_n * stride_indices_seq + i_t).to(
+-                tl.int64
+-            )
++            # num_accepted_tokens is asynchronous GPU state. Keep a stale or
++            # zero count from indexing another request's state row.
++            idx_in_row = (i_t >= 0) & (i_t < stride_indices_seq)
++            state_idx = tl.load(
++                ssm_state_indices + i_n * stride_indices_seq + i_t,
++                mask=idx_in_row,
++                other=0,
++            ).to(tl.int64)
+             # Skip if state index is invalid (NULL_BLOCK_ID=0)
+             if state_idx <= 0:
+                 return

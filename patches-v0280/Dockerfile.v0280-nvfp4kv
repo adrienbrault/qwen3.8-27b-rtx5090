@@ -55,19 +55,38 @@ RUN set -eux; \
     cd /opt/vllm-sm12x && python3 build_overlay.py; \
     ls -la /opt/vllm-sm12x/build/*.so
 
+# 2b) suffix decoding runtime (R113 S-arm: vLLM's suffix method requires Arctic Inference)
+RUN pip install --no-cache-dir arctic-inference==0.1.1
+
 # 3) vLLM python patches (package-root-relative). R107: 0103 XQA-NVFP4 decode (runtime knob
 # VLLM_SM12X_NVFP4_XQA=0 reverts to the R106 FA2 decode route) + 0104 drafter FULL-cudagraph.
 COPY 0101-sm120-nvfp4kv-fa2-routing-v0280.diff /tmp/0101.diff
 COPY 0101a-ALTERNATIVE-dflash-noncausal-nvfp4-fa2-v0280.diff /tmp/0101a.diff
 COPY 0103-sm120-nvfp4-xqa-decode-v0280.diff /tmp/0103.diff
 COPY 0104-mtp-drafter-full-cudagraph-v0280.diff /tmp/0104.diff
+COPY 0105-dflash-noncausal-nvfp4-fa2-v0280.diff /tmp/0105.diff
+COPY 0106-dflash2-selector-sampling-v0280.diff /tmp/0106.diff
+COPY 0107-dflash-quantized-draft-loader.diff /tmp/0107.diff
+COPY 0108-gdn-kernels-v0280.diff /tmp/0108.diff
+COPY 0111-replayssm-spec-v0280.diff /tmp/0111.diff
+COPY 0112-xqa-verify-v0280.diff /tmp/0112.diff
+COPY 0113-dflash-speculator-graphs-v0280.diff /tmp/0113.diff
+COPY 0109-dflash-noncausal-complete-v0280.diff /tmp/0109.diff
 RUN set -eux; \
     VROOT="$(python3 -c 'import os, vllm; print(os.path.dirname(vllm.__file__))')"; \
     patch --batch --forward -p1 -d "$VROOT" < /tmp/0101.diff; \
     patch --batch --forward -p1 -d "$VROOT" < /tmp/0103.diff; \
     patch --batch --forward -p1 -d "$VROOT" < /tmp/0104.diff; \
+    patch --batch --forward -p1 -d "$VROOT" < /tmp/0105.diff; \
+    patch --batch --forward -p1 -d "$VROOT" < /tmp/0106.diff; \
+    patch --batch --forward -p1 -d "$VROOT" < /tmp/0107.diff; \
+    patch --batch --forward -p1 -d "$VROOT" < /tmp/0108.diff; \
+    patch --batch --forward -p1 -d "$VROOT" < /tmp/0109.diff; \
+    patch --batch --forward -p1 -d "$VROOT" < /tmp/0111.diff; \
+    patch --batch --forward -p1 -d "$VROOT" < /tmp/0112.diff; \
+    patch --batch --forward -p1 -d "$VROOT" < /tmp/0113.diff; \
     if [ "${WITH_DFLASH_NC}" = "1" ]; then patch --batch --forward -p1 -d "$VROOT" < /tmp/0101a.diff; echo "0101a APPLIED (DFlash non-causal nvfp4 A/B)"; else echo "0101a skipped (primary: skip-layers)"; fi; \
-    for f in v1/attention/backends/flashinfer.py v1/worker/gpu_worker.py v1/spec_decode/llm_base_proposer.py v1/worker/gpu_model_runner.py; do python3 -m py_compile "$VROOT/$f"; done; \
+    for f in v1/attention/backends/flashinfer.py v1/worker/gpu_worker.py v1/spec_decode/llm_base_proposer.py v1/worker/gpu_model_runner.py v1/worker/gpu/spec_decode/dflash2/speculator.py model_executor/models/qwen3_dflash.py v1/attention/backends/gdn_attn.py model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py; do python3 -m py_compile "$VROOT/$f"; done; \
     grep -q "use_fa2_nvfp4_kv" "$VROOT/v1/attention/backends/flashinfer.py"; \
     python3 -c "import torch; torch.ops.load_library('/opt/vllm-sm12x/build/vllm_sm12x_nvfp4kv.so'); assert hasattr(torch.ops.vllm_sm12x, 'reshape_and_cache_nvfp4'); print('overlay op registered')"; \
     echo "V0280-NVFP4KV IMAGE OK (WITH_DFLASH_NC=${WITH_DFLASH_NC})"

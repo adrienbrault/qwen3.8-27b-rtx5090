@@ -1,0 +1,40 @@
+--- a/model_executor/models/qwen3_dflash.py
++++ b/model_executor/models/qwen3_dflash.py
+@@ -487,7 +487,20 @@
+         self._hidden_norm_weight = self.hidden_norm.weight.data
+ 
+         # KV projection weights: [num_layers * 2 * kv_size, hidden_size]
+-        kv_weights = [a.qkv_proj.weight[a.q_size :] for a in layers_attn]
++        def _dense_w(lin):
++            if hasattr(lin, "weight"):
++                return lin.weight
++            # Quantized draft (e.g. compressed-tensors pack-quantized): no dense .weight
++            # param exists, so materialize it exactly through the layer's own quant
++            # kernel -- eye(in) @ W^T = W^T -- once at load time.
++            eye = torch.eye(
++                lin.input_size,
++                dtype=self.hidden_norm.weight.dtype,
++                device=self.hidden_norm.weight.device,
++            )
++            return lin.quant_method.apply(lin, eye, bias=None).t().contiguous()
++
++        kv_weights = [_dense_w(a.qkv_proj)[a.q_size :] for a in layers_attn]
+         self._fused_kv_weight = torch.cat(kv_weights, dim=0)
+         if has_bias:
+             kv_biases = [a.qkv_proj.bias[a.q_size :] for a in layers_attn]
+@@ -857,7 +870,14 @@
+             skip_substrs=skip_substrs,
+         )
+         loader.load_weights(model_weights.items())
+-        self.model._build_fused_kv_buffers()
++        try:
++            self.model._build_fused_kv_buffers()
++        except AttributeError:
++            # Quantized draft: the quant kernel can't run until
++            # process_weights_after_loading repacks the layers (e.g. Marlin's
++            # g_idx_sort_indices). The lazy rebuild in
++            # precompute_and_store_context_kv fires after that and succeeds.
++            pass
+ 
+     def _read_mask_embedding(self) -> torch.Tensor | None:
+         """Checks for an override mask embedding in `mask_embedding.pt` and returns it.
