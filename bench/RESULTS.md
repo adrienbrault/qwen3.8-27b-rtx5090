@@ -2,7 +2,9 @@
 
 Hardware: RTX 5090 32 GB (`sm_120`), Ryzen 9 5900X, 64 GB RAM, Ubuntu 24.04. GPU memory OC +4500 MHz (16 GHz effective), 600 W, core stock: decode is memory-bound, so these throughput numbers run above a stock 5090. Tool: [llama-benchy](https://github.com/eugr/llama-benchy) 0.3.8 unless stated; raw output lives in the results directories named per section on the serving host.
 
-## Current daily — 2026-08-21, Qwen3.8-27B, NVFP4 KV + LMCache tiers, V2 model runner
+**Current daily (since 2026-08-28, tuned 08-29):** vLLM v0.28.0 + `patches-v0280/` — nvfp4 KV + XQA decode + MTP ns4 + async + native disk tier on a hard-capped loopback; pool 381,300 @262K, tool-eval 90.0 ±1.4 (×4), decode code c1 ~178–206 / c8 1,221, GDN hardening (0108) live, XQA-verify and ReplaySSM staged OFF-default. Sections dated 2026-08-28/29 below tell the story newest-first; the LMCache generation follows after them.
+
+## Previous generation (daily 2026-08-21→28) — Qwen3.8-27B, NVFP4 KV + LMCache tiers, V2 model runner
 
 Engine: saka W4A4 NVFP4 + `nvfp4` KV + FlashInfer FA2 + MTP `ns=4` + vision, V2 runner, LMCache 0.5.4rc4 (chunk 2864, mnbt 5727), util 0.93, max-len 200K, seqs 8, T=0.6, reasoning effort medium. Results dir `2026-08-21-qwen38-tiers-nvfp4kv` (FINDINGS R81).
 

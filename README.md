@@ -7,7 +7,7 @@ A serving config for concurrent long-context coding agents on one 32 GB Blackwel
 | | |
 |---|---|
 | model | [gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090-LMHead4](https://huggingface.co/gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090-LMHead4) — NVFP4 everywhere incl. the GDN projections and lm_head (ModelOpt), MTP head, vision tower, 18.8 GB; served with the stock Qwen3.8 chat template |
-| engine | vLLM **v0.28.0** (release, not nightly) + the [patches-v0280](patches-v0280/) stack: sm120 NVFP4→FA2 routing, the linear-V-scale store overlay, XQA-NVFP4 decode, MTP-drafter full cudagraphs |
+| engine | vLLM **v0.28.0** (release, not nightly) + the [patches-v0280](patches-v0280/) stack (0101–0113): sm120 NVFP4→FA2 routing, the linear-V-scale store overlay, XQA-NVFP4 decode, MTP-drafter full cudagraphs, quantized-DFlash-draft loader, GDN state-lookup hardening; XQA speculative-verify and ReplaySSM chunked-GDN-verify baked OFF-default pending A/Bs |
 | KV cache | `--kv-cache-dtype nvfp4` (E2M1 + FP8 scale per 16 elements), `decode_backend=xqa`; fp8 paths byte-identical to stock |
 | hot pool | **381,300 tokens** at util 0.955, max-len 262,144, 8 sequences (fp8 KV on the same engine: ~225K at 200K) |
 | disk tier | vLLM's native OffloadingConnector (4 GiB CPU staging → 200 GiB fs tier, `offload_prompt_only`), backed by a **fixed-size loopback ext4 image** — the capacity cap holds by construction. Survives `docker restart`: 40K revisit 1.5–2.6 s vs 5.5–6.2 s cold (R108/R113) |
@@ -62,7 +62,8 @@ The serve script fails closed on every load-bearing property: the overlay-ACTIVE
 5. **Engine swaps can transiently exceed host RAM**: `docker rm -f` returns before the old engine's memory is reaped, and booting the next engine into that window global-OOMed the host (the OOM killer only reaps small high-`oom_score_adj` victims, so the box thrashed for hours). The serve script gates on MemAvailable before starting the container.
 6. **Offload decode-phase KV and you pay for it in agentic quality**: the default (offload everything) cost 1.8 tool-eval points in write stalls; `offload_prompt_only` restored parity, since prefix reuse only ever hits prompt blocks (R113).
 7. **Don't trust the tier's own capacity limit** — back it with a fixed-size filesystem so the cap holds by construction. (An earlier generation's cache once grew to 876 GB past a 60 GB config cap.)
-8. **Single-stream decode swings ±10% boot-to-boot** with speculative acceptance (0.43–0.69 on identical prompts). A/B decode within one boot, or normalize by acceptance.
+8. **Single-stream decode swings ±10% boot-to-boot** with speculative acceptance (0.43–0.69 on identical prompts) — the mechanism is T>0 sampling-content divergence through content-dependent acceptance (T=0 outputs are bit-identical across boots), decorrelated by batching timing. A/B decode within one boot, normalize by accepted-tokens-per-step, or probe at T=0.
+9. **DFlash2 drafts read the target's KV non-causally** — a third read path beyond XQA-decode and FA2-causal-prefill, and on this FlashInfer build it faults on NVFP4 pages (five-theory falsification ledger in [bench/RESULTS.md](bench/RESULTS.md)). DFlash2 therefore pairs with fp8 KV (where it holds the code records); the NVFP4 daily uses MTP, which is purely causal.
 
 Previous-generation gotchas (LMCache chunk=block, sidecar shm, util ceilings): [docs/GOTCHAS.md](docs/GOTCHAS.md).
 
@@ -70,7 +71,7 @@ Previous-generation gotchas (LMCache chunk=block, sidecar shm, util ceilings): [
 
 | stack | what | status |
 |---|---|---|
-| [patches-v0280/](patches-v0280/README-sm120-nvfp4.md) | **Current.** vLLM v0.28.0: PR #49891 re-rebase (0101), linear-V-scale overlay (0102), XQA-NVFP4 decode (0103), drafter full cudagraphs (0104), DFlash2 quantized-draft loader fix, DFlash2 non-causal A/B diff. Per-hunk rationale in the README; provenance in [THIRD_PARTY.md](THIRD_PARTY.md). | daily |
+| [patches-v0280/](patches-v0280/README-sm120-nvfp4.md) | **Current.** vLLM v0.28.0, 0101–0113: NVFP4 routing + overlay + XQA decode + drafter graphs (0101–0104), non-causal/dflash work (0105/0107/0109/0113), sampling guard (0106), GDN hardening (0108), ReplaySSM chunked verify (0111, OFF-default), XQA verify (0112, OFF-default). Per-hunk READMEs in the directory; provenance in [THIRD_PARTY.md](THIRD_PARTY.md). | daily |
 | [patches/rc4/](patches/rc4/README.md) + [patches-nvfp4kv/](patches-nvfp4kv/README.md) | The 0.26/0.27 generation: LMCache tier fixes and the original sm120 NVFP4 overlay. | superseded, reproducible |
 
 ## Rejected
