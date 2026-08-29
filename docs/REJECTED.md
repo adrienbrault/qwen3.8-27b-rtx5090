@@ -21,3 +21,7 @@ Every row was tried on this box and rejected with the number that killed it. Row
 | `VLLM_TQ_KV_SPLITS` < 32 | Hurts *both* c1 (139→132) and c8. Not the batching bottleneck. |
 | `VLLM_NVFP4_GEMM_BACKEND=flashinfer-cutlass` | Already the nightly default. No-op. |
 | **LMCache + TurboQuant KV** (`turboquant_k8v4`, persisted tier) | **Composes, but the persisted L2 tier is lossy — not shipped.** k8v4 KV builds and runs under LMCache and stores land, but the L2 SSD reload silently drops long-context needles (7/7 miss) — the format-10 kernel copies the standard 512-wide layout, not k8v4's 262-wide packed one. (`turboquant_4bit_nc` packs even tighter, so it would have been lossier still.) LMCache persistence only round-trips faithfully with fp8 KV. Full write-up: [`LMCACHE.md`](LMCACHE.md#lmcache--k8v4-composes-but-the-persisted-tier-is-lossy--not-shipped). |
+
+## Suffix decoding (2026-08-29)
+
+vLLM 0.28's built-in suffix decoding (arctic-inference backend), on the v0.28 nvfp4 daily: quality held (tool-eval 88.5 ± 0.7 ×2) but **code decode fell to 31.2 t/s** (accepted-per-draft 0.185) vs 177–190 with MTP on the same engine — worse than no speculation. Pattern-matching speculation has nothing to match on fresh generation, and the method is boot-level, so it cannot be confined to the repetitive flows it was designed for. `results/2026-08-29-r115-misc`.
