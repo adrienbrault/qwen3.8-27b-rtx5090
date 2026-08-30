@@ -123,6 +123,10 @@ One instrument caveat, learned the hard way: the screen is only meaningful again
 
 GSM8K tracks fidelity exactly; IFEval inverts it (saka +3.7, ~1.9σ) in the same direction as its tool-eval edge. IFEval absolute levels are low for Qwen3.8 (thinking-mode formatting under effort medium; identical setup for all four — relative only). Decision: gittensor stays the daily — best pool and decode, fidelity and math within noise of the best, IFEval within 1σ of the cluster.
 
+## Terminal-Bench 4.0 probed, then deliberately abandoned (2026-08-29→30, `results/2026-08-29-tb40`)
+
+We pointed the official `terminal-bench@4.0.0` dataset (harbor 0.22.0, terminus-2, k=1 c=2) at the daily-identical v0.28 engine and stopped the run after the first two trials by choice: both scored 0 — one hit the flat 8h agent timeout, the other burned ~7h/333 steps without ever writing its deliverable — and together they cost ~15 GPU-hours. Extrapolated, a full 89-task pass is multiple days of daily downtime per datapoint. The engine itself was flawless throughout: ~47M prompt tokens served at 38:1 prefill-to-decode ratio, prefill bursts to 20,130 t/s, mean TTFT 3.5 s, 63% MTP draft acceptance, zero request errors at 150–250K-token live contexts. Conclusion: TB 4.0 measures frontier-agent capability, not serving-stack regressions — **TB 2.1 (56.2% on this stack, one overnight) remains our agentic tracking eval.** Operational note for anyone trying anyway: `harbor job resume -p <jobdir>` honors a hand-edited `n_concurrent_trials` in the job's `config.json`, so concurrency can be changed mid-run without discarding completed trials.
+
 ## Day two on v0.28: GDN hardening in, DFlash2-on-NVFP4 parked with a full falsification ledger, variance mechanism corrected (2026-08-29, `results/2026-08-29-r12*`)
 
 **Landed in the daily image** (each canary-gated, fidelity-checked): the triaged GDN kernel port (state-lookup bounds guards + spec-width plumbing; fidelity 0.8896 = baseline, decode-neutral as predicted), plus two OFF-default features awaiting their corrected A/Bs: an XQA speculative-verify route and a full ReplaySSM chunked-GDN-verify port.
