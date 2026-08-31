@@ -44,6 +44,18 @@ TP=${TP:-1}                  # R130: tensor parallelism (dual 5090). TP=2 needs 
 TP_LINE=""; [ "$TP" -gt 1 ] && TP_LINE="--tensor-parallel-size $TP"
 CGMODE=${CGMODE:-}           # e.g. piecewise (R119 graph-mode A/B); empty = engine default
 FUSIONS=${FUSIONS:-}         # e.g. '\"fuse_norm_quant\":true' extras merged into pass_config (R122)  # 268435456 for dflash-on-nvfp4 (XQA scale scratch for target+draft, R109b/R112)   # e.g. "-v /path/draft:/draft:ro" (R112 dflash arms)        # 1 = pip install arctic-inference before serve (R115 S-arm; the R112 image bakes it)
+# R136: CGMODE/FUSIONS were comment-only stubs — wire them into --compilation-config.
+# MUST live BELOW the CGMODE/FUSIONS default declarations (set -u; the first r136 launch
+# died on 'CGMODE: unbound variable' when this block sat above them, taking the daily
+# restore down with it). FUSIONS = raw pass_config pairs, e.g. '"enable_sp":true'.
+CC_LINE=""
+if [ -n "${CGMODE}" ] || [ -n "${FUSIONS}" ]; then
+  CCJ="{"
+  [ -n "${CGMODE}" ] && CCJ="${CCJ}\"cudagraph_mode\":\"${CGMODE}\","
+  [ -n "${FUSIONS}" ] && CCJ="${CCJ}\"pass_config\":{${FUSIONS}},"
+  CCJ="${CCJ%,}}"
+  CC_LINE="--compilation-config '$CCJ'"
+fi
 SPEC_LINE="--speculative-config '$SPEC_FINAL'"
 [ "$NOSPEC" = 1 ] && SPEC_LINE=""
 PIP_PREFIX=""
@@ -111,6 +123,7 @@ sudo docker run -d --name "$NAME" --restart unless-stopped \
     $SPEC_LINE \
     $KVT_LINE \
     $TP_LINE \
+    $CC_LINE \
     --default-chat-template-kwargs '{\"preserve_thinking\":true,\"reasoning_effort\":\"medium\"}' \
     --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_xml \
     --override-generation-config '{\"temperature\":0.6,\"top_p\":0.95,\"top_k\":20}'"
