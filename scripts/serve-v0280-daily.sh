@@ -160,7 +160,7 @@ BOOTLOG=$(sudo docker logs "$NAME" 2>&1)
 # grep -c, NOT grep -q: with pipefail, -q's early exit SIGPIPEs the echo and fails the
 # pipeline on a SUCCESSFUL match (the documented launch-tier-rc4 gotcha; refired here 2026-08-28).
 [ "$KVD" != nvfp4 ] || [ "$(echo "$BOOTLOG" | grep -ac "linear-V-scale store overlay ACTIVE")" -ge 1 ] || { echo "FAILED: overlay ACTIVE line missing — swizzled writer would serve silently-wrong KV (R106 D: ΔNLL 8.8%)"; exit 1; }
-[ "$KVD" != nvfp4 ] || [ "$(echo "$BOOTLOG" | grep -ac "decode_backend=xqa")" -ge 1 ] || { echo "FAILED: decode_backend is not xqa — 0103 route did not engage (R107: −28% code decode)"; exit 1; }
+[ "$KVD" != nvfp4 ] || [ "${ALLOW_NO_XQA:-0}" = 1 ] || [ "$(echo "$BOOTLOG" | grep -ac "decode_backend=xqa")" -ge 1 ] || { echo "FAILED: decode_backend is not xqa — 0103 route did not engage (R107: −28% code decode; ALLOW_NO_XQA=1 to bypass for diagnostics)"; exit 1; }
 if [ "$NO_TIER" != 1 ]; then [ "$(echo "$BOOTLOG" | grep -ac "OffloadingConnector")" -ge 1 ] || { echo "FAILED: OffloadingConnector did not initialize — no disk tier"; exit 1; }; fi
 POOL=$(echo "$BOOTLOG" | grep -a 'GPU KV cache size' | tail -1 | grep -oE 'cache size: [0-9,]+' | tr -dc 0-9)
 echo "daily up. KV pool: ${POOL} tokens"
