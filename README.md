@@ -12,20 +12,21 @@ The same [gittensor NVFP4 checkpoint](https://huggingface.co/gittensor-model-hub
 | KV pool @ 262K max-len | 381,300 tokens | 719,420 | **1,508,519 (~4x one card)** |
 | decode, prose c1 | 130.1 t/s | **178.1** | 157.5 |
 | decode, code c1 | 175.0 | **298.9** (runs span 293–385) | 225.3 |
+| decode, prose c8 aggregate | 941 | 961 | **1,116** |
 | decode, code c8 aggregate | 1,187 | 1,289 | **1,349** |
 | decode, code c16 aggregate | — (spec-decode admission cap) | 1,522 | **2,007** |
 | decode @30K context | 131.9 | **168.7** | 148.3 |
 | decode @100K | 106.7 | **174.4** | 137.5 |
-| decode @200K | 108.9 | 135.6 | 135.1 |
+| decode @200K | 94.3 | **135.6** | 135.1 |
 | prefill @8K | **11.9K t/s** | 9.3K | 9.0K |
 | prefill @30K | 9.3K | **9.8K** | 9.1K |
 | prefill @100K | 4.7K | **7.0K** | 6.3K |
-| prefill @200K | 3.2K | **3.9K** | 3.5K |
+| prefill @200K | 2.3K | **3.9K** | 3.5K |
 | tool-eval ×4 | 89.2 ± 1.7 | 89.8 ± 1.3 | 90.2 ± 1.0 |
 | GSM8K T=0 ×120 | 0.8417 | 0.8583 | 0.8333 |
 | retrieval needles | 4/4 | 4/4 | 4/4 |
 
-Reading the columns: **DFlash2-TP2 is the latency shape** — fastest single-stream decode from the surface to 100K deep (+37–71% over one card), and it wins prefill everywhere past 8K. **MTP-TP2 is the capacity shape** — a 1.5M-token KV pool and the best aggregate throughput at deep concurrency (2,007 t/s at c16, where DFlash2's low acceptance costs it). Quality is config-invariant. Two footnotes the numbers force: DFlash2's speed is a random variable (acceptance runs 0.12–0.30 with content — the code-c1 band is real, and its @200K decode converges to MTP's as acceptance decays with depth), and the @200K prefills are cold-cache — a warm disk-tier revisit cut MTP-TP2's 200K TTFT from 56.5 s to 39.5 s on the same prompt.
+Reading the columns: **DFlash2-TP2 is the latency shape** — fastest single-stream decode from the surface to 100K deep (+37–71% over one card), and it wins prefill everywhere past 8K. **MTP-TP2 is the capacity shape** — a 1.5M-token KV pool and the best aggregate throughput at deep concurrency (2,007 t/s at c16, where DFlash2's low acceptance costs it) — and at batched prose (1,116 vs ~950 at c8, same mechanism). Quality is config-invariant. Two footnotes the numbers force: DFlash2's speed is a random variable (acceptance runs 0.12–0.30 with content — the code-c1 band is real, and its @200K decode converges to MTP's as acceptance decays with depth), and the @200K prefills are cold-cache — a warm disk-tier revisit cut MTP-TP2's 200K TTFT from 56.5 s to 39.5 s on the same prompt.
 
 Host: ASRock X870 Taichi Creator, Ryzen 7 9800X3D, 64 GB DDR5-6000, model weights and the KV disk tier both on a Gen5 x4 NVMe (fio post-format: 10.4 GB/s read, 9.8 GB/s write, 1.38M IOPS), Ubuntu 24.04 HWE; GPUs: ASUS 600 W + HP OEM 575 W at Gen5 x8/x8 with the P2P driver ([THIRD_PARTY](THIRD_PARTY.md)). Why the split wins land where they do: speculative decoding with *low* acceptance is weight-bandwidth-bound — exactly what a second card doubles — while high-acceptance MTP amortizes weight reads and converts the second card into KV space and admission headroom instead (bench/RESULTS.md, R130–R143). Endpoint: OpenAI-compatible `:8020/v1`, served as `qwen3.8-27b`.
 
@@ -37,7 +38,7 @@ A few coding agents with 8K–100K+ contexts, interactive chat, the occasional i
 
 1. Correctness of the cache. An engine that answers fluently from corrupted KV is worse than a slower one. Nothing becomes the daily without the gauntlet: the fidelity ruler vs the FP8 reference (behavioral probes are provably blind to KV-layout bugs — twice measured here), depth needles cold and warm, a needle retrieved through disk-tier eviction and after a container restart, and a full tool-eval at ×4 trials.
 2. Context capacity that passes rule 1.
-3. Latency in the agent regime: prefill on the FP4 tensor cores, single-stream decode through MTP + XQA.
+3. Latency in the agent regime: prefill on the FP4 tensor cores, single-stream decode through speculative decoding (DFlash2 ns9 on the TP=2 daily; MTP + XQA on one card).
 4. Everything on at once: vision, 262K context, speculative decoding, reasoning, structured outputs, tool calling.
 
 Non-goals: maximum aggregate throughput for many shallow users, multi-GPU, minimum VRAM.
