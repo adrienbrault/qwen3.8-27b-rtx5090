@@ -57,6 +57,10 @@ Upstream: https://github.com/LMCache/LMCache — [Apache-2.0](https://github.com
 - [tool-eval-bench](https://github.com/SeraphimSerapis/tool-eval-bench).
 - [aider](https://github.com/Aider-AI/aider) — Apache-2.0.
 
+## GPU driver P2P (dual-5090 host config)
+
+The serving host runs [QuixiAI/open-gpu-kernel-modules](https://github.com/QuixiAI/open-gpu-kernel-modules) (Eric Hartford) — NVIDIA's open GPU kernel modules (dual MIT/GPL) with PCIe peer-to-peer force-enabled for consumer GeForce cards. The technique originates with [tinygrad / George Hotz's P2P patch](https://github.com/tinygrad/open-gpu-kernel-modules), later simplified by **aikitoria**, and ported to the 610 driver series with Blackwell support by QuixiAI. `scripts/gpu-p2p-610.sh` (ours, MIT) automates their install on Ubuntu, and the `RMForceStaticBar1=1` + `NVreg_EnableResizableBar=1` regkey pair plus the `iommu=pt` requirement come from that fork's documentation and our validation on a 2x RTX 5090 / X870 box.
+
 ## If you upstream this
 
 The fixes in `fix_spec_output.py` and the six `patches/lmcache/` diffs belong in vLLM/LMCache, not in a patch repo. They are offered to those projects under Apache-2.0, on the same terms as any other contribution.
