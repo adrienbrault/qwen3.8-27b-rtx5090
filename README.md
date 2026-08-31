@@ -1,4 +1,4 @@
-# Qwen3.8-27B on RTX 5090s: 262K context on one card — 719K-token KV pool and ~300 t/s code decode on two
+# Qwen3.8-27B on RTX 5090s: 262K context on one card — 747K-token KV pool and ~300 t/s code decode on two
 
 Serving configs for concurrent long-context coding agents on Blackwell consumer cards (`sm_120`): a W4A4 NVFP4 checkpoint, quantized KV with the XQA decode kernel, speculative decoding (MTP on one card, DFlash2 across two), vision, and a native disk KV tier on a dedicated Gen5 NVMe partition that survives restarts. Every number was measured on this box on the date given; the raw results directory or FINDINGS round is named next to it.
 
@@ -8,8 +8,8 @@ The same [gittensor NVFP4 checkpoint](https://huggingface.co/gittensor-model-hub
 
 | | **TP=1** (one 5090) | **TP=2 DFlash2** (the daily) | **TP=2 MTP** |
 |---|---|---|---|
-| recipe | nvfp4 KV + XQA decode + MTP ns4, util 0.955 — [scripts/serve-v0280-daily.sh](scripts/serve-v0280-daily.sh) | fp8 KV + DFlash2 ns9 ([syv-ai W4A16 drafter](https://huggingface.co/syv-ai)), util 0.90, `NCCL_P2P_LEVEL=SYS` — [scripts/serve-r134-daily.sh](scripts/serve-r134-daily.sh) | nvfp4 KV + XQA decode + MTP ns4, util 0.90 — [serve-v0280-daily.sh](scripts/serve-v0280-daily.sh) with `TP=2` |
-| KV pool @ 262K max-len | 381,300 tokens | 719,420 | **1,508,519 (~4x one card)** |
+| recipe | nvfp4 KV + XQA decode + MTP ns4, util 0.955 — [scripts/serve-v0280-daily.sh](scripts/serve-v0280-daily.sh) | fp8 KV + DFlash2 ns9 ([syv-ai W4A16 drafter](https://huggingface.co/syv-ai)), util 0.92, `NCCL_P2P_LEVEL=SYS` — [scripts/serve-r134-daily.sh](scripts/serve-r134-daily.sh) | nvfp4 KV + XQA decode + MTP ns4, util 0.90 — [serve-v0280-daily.sh](scripts/serve-v0280-daily.sh) with `TP=2` |
+| KV pool @ 262K max-len | 381,300 tokens | 746,849 | **1,508,519 (~4x one card)** |
 | decode, prose c1 | 130.1 t/s | **178.1** | 157.5 |
 | decode, code c1 | 175.0 | **298.9** (runs span 293–385) | 225.3 |
 | decode, prose c8 aggregate | 941 | 961 | **1,116** |

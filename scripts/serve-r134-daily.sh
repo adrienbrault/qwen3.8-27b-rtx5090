@@ -21,8 +21,8 @@ DRAFT=/srv/qwen5090/models/dflash2-qwen38-syvai-w4a16
 # open-webui broke): owui-proxy and harbor task containers reach the engine via 172.17.0.1,
 # which a 127.0.0.1 bind refuses; the LAN sits behind the UDM.
 env PORT=8020 NAME=vllm-27b BIND_ADDR=0.0.0.0 \
-  TP=2 KVD_OVERRIDE=fp8_e4m3 NO_TIER=0 FIWS=268435456 UTIL=0.90 \
-  MAXLEN=262144 POOL_MIN=650000 POOL_MAX=800000 \
+  TP=2 KVD_OVERRIDE=fp8_e4m3 NO_TIER=0 FIWS=268435456 UTIL=0.92 \
+  MAXLEN=262144 POOL_MIN=730000 POOL_MAX=800000 \
   EXTRA_MOUNT="-v $DRAFT:/draft:ro" \
   SPEC_JSON='{"method":"dflash","model":"/draft","num_speculative_tokens":9}' \
   EXTRA_ENV="-e NCCL_P2P_LEVEL=SYS" \
