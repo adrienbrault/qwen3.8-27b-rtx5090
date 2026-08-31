@@ -31,8 +31,26 @@ NO_TIER=${NO_TIER:-0}   # NO_TIER=1: plain engine (diagnostics only — the dail
 [ "$NO_TIER" = 1 ] && KVT_LINE=""
 
 SPEC_FINAL=${SPEC_JSON:-"{\"method\":\"qwen3_5_mtp\",\"num_speculative_tokens\":$NS}"}
+NOSPEC=${NOSPEC:-0}          # 1 = no speculative decoding at all (R115 A-arm)
+PIP_ARM=${PIP_ARM:-0}
+EXTRA_MOUNT=${EXTRA_MOUNT:-}
+FIWS=${FIWS:-134217728}
+PREFIX_CACHE=${PREFIX_CACHE:-1}   # 0 = --no-enable-prefix-caching (ReplaySSM A/B only)
+MAMBA_MODE=${MAMBA_MODE:-align}   # ReplaySSM requires 'none' (loses hybrid prefix caching — R128)
+KVD=${KVD_OVERRIDE:-nvfp4}   # fp8_e4m3 for diagnostics/dflash-fp8 arms
+EXTRA_ENV=${EXTRA_ENV:-}     # extra docker -e flags (e.g. "-e VLLM_SM12X_DFLASH_ADAPTIVE=1")
+TP=${TP:-1}                  # R130: tensor parallelism (dual 5090). TP=2 needs NCCL env via
+                             # EXTRA_ENV (-e NCCL_P2P_LEVEL=SYS) + POOL band override (~2x)
+TP_LINE=""; [ "$TP" -gt 1 ] && TP_LINE="--tensor-parallel-size $TP"
+CGMODE=${CGMODE:-}           # e.g. piecewise (R119 graph-mode A/B); empty = engine default
+FUSIONS=${FUSIONS:-}         # e.g. '\"fuse_norm_quant\":true' extras merged into pass_config (R122)  # 268435456 for dflash-on-nvfp4 (XQA scale scratch for target+draft, R109b/R112)   # e.g. "-v /path/draft:/draft:ro" (R112 dflash arms)        # 1 = pip install arctic-inference before serve (R115 S-arm; the R112 image bakes it)
+SPEC_LINE="--speculative-config '$SPEC_FINAL'"
+[ "$NOSPEC" = 1 ] && SPEC_LINE=""
+PIP_PREFIX=""
+[ "$PIP_ARM" = 1 ] && PIP_PREFIX="pip install --no-cache-dir arctic-inference==0.1.1 >/tmp/pip-arm.log 2>&1 && "
 
 mountpoint -q "$L2MNT" || { echo "FAILED: $L2MNT not mounted (run setup-native-l2.sh) — refusing an uncapped tier"; exit 1; }
+[ "$(df -k --output=avail "$L2MNT" | tail -1 | tr -dc 0-9)" -ge 5242880 ] || { echo "FAILED: <5G free on $L2MNT — native tier ENOSPC crashes engine-init (R130); wipe stale namespaces"; exit 1; }
 
 # tokenizer truncation guard (gotcha #9, checkpoint-side — survives across engine generations)
 python3 - <<PYEOF
@@ -78,20 +96,21 @@ sudo docker run -d --name "$NAME" --restart unless-stopped \
   --entrypoint bash --runtime nvidia --gpus all --ipc=host \
   -p ${BIND_ADDR}:${PORT}:8000 --shm-size 8g --memory 52g --memory-swap 52g \
   -e VLLM_ATTENTION_BACKEND=FLASHINFER \
-  -e VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE=134217728 \
+  -e VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE=${FIWS:-134217728} \
   -e CUDA_MODULE_LOADING=LAZY \
   -e TORCHINDUCTOR_COMPILE_THREADS=8 -e MAX_JOBS=4 -e FLASHINFER_NUM_COMPILE_JOBS=4 \
-  -e PYTHONHASHSEED=0 \
-  $CACHE -v "$L2MNT":/l2 -v "$MODEL_DIR":/model \
-  "$IMAGE" -c "exec python3 -m vllm.entrypoints.openai.api_server \
+  -e PYTHONHASHSEED=0 $EXTRA_ENV \
+  $CACHE -v "$L2MNT":/l2 -v "$MODEL_DIR":/model $EXTRA_MOUNT \
+  "$IMAGE" -c "${PIP_PREFIX}exec python3 -m vllm.entrypoints.openai.api_server \
     --model /model --served-model-name qwen3.8-27b qwen3.6-27b --trust-remote-code \
-    --kv-cache-dtype nvfp4 \
+    --kv-cache-dtype $KVD \
     --gpu-memory-utilization $UTIL --max-model-len $MAXLEN \
     --max-num-seqs $SEQS --max-num-batched-tokens $MNBT \
     --limit-mm-per-prompt '{\"image\":4,\"video\":0}' \
     --mamba-cache-mode align --enable-prefix-caching \
-    --speculative-config '$SPEC_FINAL' \
+    $SPEC_LINE \
     $KVT_LINE \
+    $TP_LINE \
     --default-chat-template-kwargs '{\"preserve_thinking\":true,\"reasoning_effort\":\"medium\"}' \
     --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_xml \
     --override-generation-config '{\"temperature\":0.6,\"top_p\":0.95,\"top_k\":20}'"
@@ -110,8 +129,8 @@ BOOTLOG=$(sudo docker logs "$NAME" 2>&1)
 # fail-closed asserts: every piece of the stack must positively identify itself.
 # grep -c, NOT grep -q: with pipefail, -q's early exit SIGPIPEs the echo and fails the
 # pipeline on a SUCCESSFUL match (the documented launch-tier-rc4 gotcha; refired here 2026-08-28).
-[ "$(echo "$BOOTLOG" | grep -ac "linear-V-scale store overlay ACTIVE")" -ge 1 ] || { echo "FAILED: overlay ACTIVE line missing — swizzled writer would serve silently-wrong KV (R106 D: ΔNLL 8.8%)"; exit 1; }
-[ "$(echo "$BOOTLOG" | grep -ac "decode_backend=xqa")" -ge 1 ] || { echo "FAILED: decode_backend is not xqa — 0103 route did not engage (R107: −28% code decode)"; exit 1; }
+[ "$KVD" != nvfp4 ] || [ "$(echo "$BOOTLOG" | grep -ac "linear-V-scale store overlay ACTIVE")" -ge 1 ] || { echo "FAILED: overlay ACTIVE line missing — swizzled writer would serve silently-wrong KV (R106 D: ΔNLL 8.8%)"; exit 1; }
+[ "$KVD" != nvfp4 ] || [ "$(echo "$BOOTLOG" | grep -ac "decode_backend=xqa")" -ge 1 ] || { echo "FAILED: decode_backend is not xqa — 0103 route did not engage (R107: −28% code decode)"; exit 1; }
 if [ "$NO_TIER" != 1 ]; then [ "$(echo "$BOOTLOG" | grep -ac "OffloadingConnector")" -ge 1 ] || { echo "FAILED: OffloadingConnector did not initialize — no disk tier"; exit 1; }; fi
 POOL=$(echo "$BOOTLOG" | grep -a 'GPU KV cache size' | tail -1 | grep -oE 'cache size: [0-9,]+' | tr -dc 0-9)
 echo "daily up. KV pool: ${POOL} tokens"
