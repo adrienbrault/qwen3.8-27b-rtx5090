@@ -25,7 +25,8 @@ L2MNT=${L2MNT:-/srv/qwen5090/native-l2}   # hard-capped loopback fs — cap by c
 CACHE_DIR=${CACHE_DIR:-/srv/qwen5090/cache}
 POOL_MIN=${POOL_MIN:-340000}   # R113 @0.955: 381,300 expected
 POOL_MAX=${POOL_MAX:-420000}
-KVT='{"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":4294967296,"offload_prompt_only":true,"secondary_tiers":[{"type":"fs","root_dir":"/l2","n_read_threads":16,"n_write_threads":4}]}}'
+CPUB=${CPUB:-4294967296}   # R153: CPU hot-tier bytes (codex idea 6; sweep 4/8/12G)
+KVT='{"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":'"$CPUB"',"offload_prompt_only":true,"secondary_tiers":[{"type":"fs","root_dir":"/l2","n_read_threads":16,"n_write_threads":4}]}}'
 KVT_LINE="--kv-transfer-config '$KVT'"
 NO_TIER=${NO_TIER:-0}   # NO_TIER=1: plain engine (diagnostics only — the daily contract includes the tier)
 [ "$NO_TIER" = 1 ] && KVT_LINE=""
