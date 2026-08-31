@@ -1,27 +1,31 @@
-# Qwen3.8-27B on a single RTX 5090: 381K-token NVFP4 KV pool, XQA decode, restart-proof disk cache, 262K context
+# Qwen3.8-27B on RTX 5090s: 262K context on one card — 719K-token KV pool and ~300 t/s code decode on two
 
-A serving config for concurrent long-context coding agents on one 32 GB Blackwell card (`sm_120`): a W4A4 NVFP4 checkpoint, an NVFP4 KV cache with the XQA decode kernel, MTP speculative decoding, vision, and a native disk KV tier on a hard-capped loopback filesystem that survives restarts. Every number was measured on this box on the date given; the raw results directory or FINDINGS round is named next to it.
+Serving configs for concurrent long-context coding agents on Blackwell consumer cards (`sm_120`): a W4A4 NVFP4 checkpoint, quantized KV with the XQA decode kernel, speculative decoding (MTP on one card, DFlash2 across two), vision, and a native disk KV tier on a dedicated Gen5 NVMe partition that survives restarts. Every number was measured on this box on the date given; the raw results directory or FINDINGS round is named next to it.
 
-> **Daily update (2026-08-31):** the box gained a second RTX 5090, and the *served* daily is now **DFlash2 + fp8 KV at TP=2** — code c1 240–260 / c4 963 / c8 1,382, deep-context 172.6 @30K / 130.8 @100K, pool 711K @262K, tool-eval 90.2 ± 1.5, GSM8K 0.8417, native disk tier included (`scripts/serve-r134-daily.sh`; details in [bench/RESULTS.md](bench/RESULTS.md), FINDINGS R129–R134). The single-card config below is unchanged, remains the rollback, and is what this repo's title describes.
+## Two serving shapes, one checkpoint (all numbers re-measured 2026-08-31, same day, same harness)
 
-## The config at a glance (single-card config; served daily 2026-08-28→31, now the rollback)
+The same [gittensor NVFP4 checkpoint](https://huggingface.co/gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090-LMHead4) serves in two shapes on this box. **TP=1** is the recipe this repo grew up on — everything fits one 32 GB card. **TP=2** is the served daily since the box gained a second 5090 (PCIe Gen5 x8/x8, P2P-enabled driver, custom allreduce). Both run vLLM v0.28.0 + [patches-v0280](patches-v0280/), the native disk KV tier, and memory-OC'd cards (+15% measured DRAM bandwidth).
 
-| | |
-|---|---|
-| model | [gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090-LMHead4](https://huggingface.co/gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090-LMHead4) — NVFP4 everywhere incl. the GDN projections and lm_head (ModelOpt), MTP head, vision tower, 18.8 GB; served with the stock Qwen3.8 chat template |
-| engine | vLLM **v0.28.0** (release, not nightly) + the [patches-v0280](patches-v0280/) stack (0101–0113): sm120 NVFP4→FA2 routing, the linear-V-scale store overlay, XQA-NVFP4 decode, MTP-drafter full cudagraphs, quantized-DFlash-draft loader, GDN state-lookup hardening; XQA speculative-verify and ReplaySSM chunked-GDN-verify baked OFF-default pending A/Bs |
-| KV cache | `--kv-cache-dtype nvfp4` (E2M1 + FP8 scale per 16 elements), `decode_backend=xqa`; fp8 paths byte-identical to stock |
-| hot pool | **381,300 tokens** at util 0.955, max-len 262,144, 8 sequences (fp8 KV on the same engine: ~225K at 200K) |
-| disk tier | vLLM's native OffloadingConnector (4 GiB CPU staging → 200 GiB fs tier, `offload_prompt_only`), backed by a **fixed-size loopback ext4 image** — the capacity cap holds by construction. Survives `docker restart`: 40K revisit 1.5–2.6 s vs 5.5–6.2 s cold (R108/R113) |
-| spec decode | MTP `ns=4` (the depth curve re-measured on this engine: ns5 ties, ns6 loses — R113), **async scheduling ON** (the v0.28 default; disabling it costs 20–40%) |
-| decode (steady state, `scripts/decode_ss.py`, 2026-08-29 on the live daily) | prose c1 124.5; code c1 178 (boot-to-boot 167–206, tracks MTP acceptance 0.43–0.69 — see the variance note in [bench/RESULTS.md](bench/RESULTS.md)); **code c8 1,221 aggregate** (152.6/stream) |
-| prefill | ~12.8K t/s at 8K, ~9.3K at 30K, single stream (shared lane) |
-| quality | tool-eval-bench 69×4 **90.0 ± 1.4** — identical to the engine with the tier removed and to the previous (LMCache) generation, same-day same-harness (R113/R108) |
-| fidelity | prefill-logprob ruler vs the FP8 reference: top-1 0.8895 / ΔNLL 2.25% (parity with fp8 KV); with the V-scale overlay disabled: 0.8552 / 8.82% with zero behavioral symptoms — the falsification run that justifies the fail-closed boot assert (R106) |
-| hardware | RTX 5090 32 GB (+4500 MHz memory OC, 600 W), Ryzen 9 5900X, 64 GB RAM, Ubuntu 24.04 |
-| endpoint | OpenAI-compatible `http://127.0.0.1:8020/v1`, served as `qwen3.8-27b` (alias `qwen3.6-27b`); loopback, no auth |
+| | **TP=1** (one 5090) | **TP=2** (two 5090s) |
+|---|---|---|
+| recipe | nvfp4 KV + XQA decode + MTP ns4, util 0.955 — `scripts/serve-v0280-daily.sh` | fp8 KV + DFlash2 ns9 ([syv-ai W4A16 drafter](https://huggingface.co/syv-ai)), util 0.90, `NCCL_P2P_LEVEL=SYS` — `scripts/serve-r134-daily.sh` |
+| KV pool @ 262K max-len | 381,300 tokens | **719,420 tokens** |
+| decode, prose c1 | 130.1 t/s | **178.1** (+37%) |
+| decode, code c1 | 175.0 | **298.9** (+71%; runs span 293–385) |
+| decode, code c8 aggregate | 1,187 | 1,289 (+9%; band 1,290–1,430 across boots) |
+| decode @100K context | 106.7 | **174.4** (+63% — flat from surface to 100K) |
+| concurrency ceiling | 8 (spec-decode admission cap) | **16** (1,927 t/s aggregate) |
+| prefill @8K | **11.9K t/s** | 9.3K (−22% — the one TP=2 loss) |
+| prefill @30K | 9.3K | 9.8K (parity) |
+| prefill @100K | 4.7K | **7.0K** (+49%) |
+| tool-eval ×4 | 89.2 ± 1.7 | 89.8 ± 1.3 |
+| GSM8K T=0 ×120 | 0.8417 | 0.8583 |
+| retrieval needles | 4/4 | 4/4 |
+| hardware | RTX 5090 32 GB, mem OC 16 GHz | 2× RTX 5090 (ASUS 600 W + HP OEM 575 W), Gen5 x8/x8, P2P driver ([THIRD_PARTY](THIRD_PARTY.md)) |
 
-Source: FINDINGS R104–R113, results dirs `2026-08-28-r10*`. The previous generation (vLLM 0.26 nightly + LMCache DRAM/NVMe tiers, daily 2026-08-21→28) is fully documented in [docs/HISTORY.md](docs/HISTORY.md) and remains reproducible from [patches/rc4](patches/rc4/) + [patches-nvfp4kv](patches-nvfp4kv/).
+Host: ASRock X870 Taichi Creator, Ryzen 7 9800X3D, 64 GB DDR5-6000, KV disk tier on a Gen5 x4 NVMe partition (6.9 GB/s), Ubuntu 24.04 HWE. The TP=2 shape reads: speculative decoding with *low* acceptance is weight-bandwidth-bound, which is exactly what a second card doubles — so DFlash2 gains 37–71% where high-acceptance MTP gained little (see bench/RESULTS.md, R130–R142). Endpoint: OpenAI-compatible `:8020/v1`, served as `qwen3.8-27b`.
+
+Raw results: `results/2026-08-31-r142-matrix` on the host; history in [bench/RESULTS.md](bench/RESULTS.md).
 
 ## What it optimizes for
 
