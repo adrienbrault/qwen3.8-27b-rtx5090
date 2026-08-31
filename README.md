@@ -8,7 +8,7 @@ The same [gittensor NVFP4 checkpoint](https://huggingface.co/gittensor-model-hub
 
 | | **TP=1** (one 5090) | **TP=2 DFlash2** (the daily) | **TP=2 MTP** |
 |---|---|---|---|
-| recipe | nvfp4 KV + XQA decode + MTP ns4, util 0.955 — `scripts/serve-v0280-daily.sh` | fp8 KV + DFlash2 ns9 ([syv-ai W4A16 drafter](https://huggingface.co/syv-ai)), util 0.90, `NCCL_P2P_LEVEL=SYS` — `scripts/serve-r134-daily.sh` | nvfp4 KV + XQA decode + MTP ns4 at `TP=2`, util 0.90 |
+| recipe | nvfp4 KV + XQA decode + MTP ns4, util 0.955 — [scripts/serve-v0280-daily.sh](scripts/serve-v0280-daily.sh) | fp8 KV + DFlash2 ns9 ([syv-ai W4A16 drafter](https://huggingface.co/syv-ai)), util 0.90, `NCCL_P2P_LEVEL=SYS` — [scripts/serve-r134-daily.sh](scripts/serve-r134-daily.sh) | nvfp4 KV + XQA decode + MTP ns4, util 0.90 — [serve-v0280-daily.sh](scripts/serve-v0280-daily.sh) with `TP=2` |
 | KV pool @ 262K max-len | 381,300 tokens | 719,420 | **1,508,519 (~4x one card)** |
 | decode, prose c1 | 130.1 t/s | **178.1** | 157.5 |
 | decode, code c1 | 175.0 | **298.9** (runs span 293–385) | 225.3 |
