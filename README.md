@@ -23,7 +23,7 @@ The same [gittensor NVFP4 checkpoint](https://huggingface.co/gittensor-model-hub
 | retrieval needles | 4/4 | 4/4 |
 | hardware | RTX 5090 32 GB, mem OC 16 GHz | 2× RTX 5090 (ASUS 600 W + HP OEM 575 W), Gen5 x8/x8, P2P driver ([THIRD_PARTY](THIRD_PARTY.md)) |
 
-Host: ASRock X870 Taichi Creator, Ryzen 7 9800X3D, 64 GB DDR5-6000, KV disk tier on a Gen5 x4 NVMe partition (6.9 GB/s), Ubuntu 24.04 HWE. The TP=2 shape reads: speculative decoding with *low* acceptance is weight-bandwidth-bound, which is exactly what a second card doubles — so DFlash2 gains 37–71% where high-acceptance MTP gained little (see bench/RESULTS.md, R130–R142). Endpoint: OpenAI-compatible `:8020/v1`, served as `qwen3.8-27b`.
+Host: ASRock X870 Taichi Creator, Ryzen 7 9800X3D, 64 GB DDR5-6000, KV disk tier on a Gen5 x4 NVMe partition (fio post-format: 10.4 GB/s read, 9.8 GB/s write, 1.38M IOPS), Ubuntu 24.04 HWE. The TP=2 shape reads: speculative decoding with *low* acceptance is weight-bandwidth-bound, which is exactly what a second card doubles — so DFlash2 gains 37–71% where high-acceptance MTP gained little (see bench/RESULTS.md, R130–R142). Endpoint: OpenAI-compatible `:8020/v1`, served as `qwen3.8-27b`.
 
 Raw results: `results/2026-08-31-r142-matrix` on the host; history in [bench/RESULTS.md](bench/RESULTS.md).
 
