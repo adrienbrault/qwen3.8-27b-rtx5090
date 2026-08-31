@@ -42,6 +42,8 @@ EXTRA_ENV=${EXTRA_ENV:-}     # extra docker -e flags (e.g. "-e VLLM_SM12X_DFLASH
 TP=${TP:-1}                  # R130: tensor parallelism (dual 5090). TP=2 needs NCCL env via
                              # EXTRA_ENV (-e NCCL_P2P_LEVEL=SYS) + POOL band override (~2x)
 TP_LINE=""; [ "$TP" -gt 1 ] && TP_LINE="--tensor-parallel-size $TP"
+PP=${PP:-1}                  # R150: pipeline parallelism (codex idea 10; PP=2 = one activation hop, no per-layer allreduce)
+PP_LINE=""; [ "$PP" -gt 1 ] && PP_LINE="--pipeline-parallel-size $PP --distributed-executor-backend mp"
 CGMODE=${CGMODE:-}           # e.g. piecewise (R119 graph-mode A/B); empty = engine default
 FUSIONS=${FUSIONS:-}         # e.g. '\"fuse_norm_quant\":true' extras merged into pass_config (R122)  # 268435456 for dflash-on-nvfp4 (XQA scale scratch for target+draft, R109b/R112)   # e.g. "-v /path/draft:/draft:ro" (R112 dflash arms)        # 1 = pip install arctic-inference before serve (R115 S-arm; the R112 image bakes it)
 # R136: CGMODE/FUSIONS were comment-only stubs — wire them into --compilation-config.
@@ -131,6 +133,7 @@ sudo docker run -d --name "$NAME" --restart unless-stopped \
     $SPEC_LINE \
     $KVT_LINE \
     $TP_LINE \
+    $PP_LINE \
     $CC_LINE \
     --default-chat-template-kwargs '{\"preserve_thinking\":true,\"reasoning_effort\":\"medium\"}' \
     --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_xml \
