@@ -123,6 +123,21 @@ One instrument caveat, learned the hard way: the screen is only meaningful again
 
 GSM8K tracks fidelity exactly; IFEval inverts it (saka +3.7, ~1.9σ) in the same direction as its tool-eval edge. IFEval absolute levels are low for Qwen3.8 (thinking-mode formatting under effort medium; identical setup for all four — relative only). Decision: gittensor stays the daily — best pool and decode, fidelity and math within noise of the best, IFEval within 1σ of the cluster.
 
+## The DFlash2-on-NVFP4 revival: from parked IMA to a serving engine in one night (2026-08-31, `results/2026-08-31-r155-revival/`, patches 0116–0119)
+
+The route this repo parked on 2026-08-29 (DFlash2 speculative decoding over an NVFP4 KV cache — non-causal verify reads appeared to IMA) came back to life on the strength of upstream [vllm#53979](https://github.com/vllm-project/vllm/pull/53979) (+[#53978](https://github.com/vllm-project/vllm/pull/53978)/[#53977](https://github.com/vllm-project/vllm/pull/53977)) and a night of instrumented debugging. Score: **three of our own bugs found and fixed, two remaining upstream-grade correctness bugs isolated with clean discriminators, and a working engine.**
+
+The bug ladder, in order of discovery:
+1. **The historic "IMA" never reproduced** — the 0116 reconciliation (upstream's 47-line non-causal FA2 gate adapted to our tree) + the #53977/#53978 warmup OOB fixes boot clean. The old crash was most plausibly those warmup OOBs surfacing asynchronously.
+2. **Speculator capture livelock** — our full-cudagraph drafter patch captured unconditionally; a drafter-scoped `enforce_eager` gate (0118) escapes it.
+3. **The real livelock: a wrapper-width invariant.** Our sm12x graph-bound FA2 prefill-wrapper pool sized itself `1+2N` for any `parallel_drafting` method — but DFlash verifies `1+N`. The mismatch silently deselected the graph-stable wrapper; FULL capture recorded kernels against a mutable singleton whose plan/workspace mutates before replay → `CUDAGraph.replay` spins forever at 100% util/120W. Six-line fix (0119), found via a mid-hang host py-spy dump. Upstream's newer config independently codifies `1+N` for dflash.
+
+Proven envelope (all needles-clean, FULL graphs, eager drafter): **TP=1 @32K — code c1 217 t/s @ acceptance 0.38**; **TP=2 (`draft_tp=1`) @32K — c1 ~207 @ 0.34, prefix caching clean**. The capacity prize is measured and waiting: **pool 1,183,052 tokens at 262K max-len** (+64% over the served fp8+DFlash2 daily) — behind the second of two isolated correctness bugs:
+- `draft_tp=2` corrupts reads (needles 0/4; fp8 KV fine, MTP-over-nvfp4-TP2 fine → the sharded drafter's nvfp4 reads);
+- raising `max_model_len` 32K→262K corrupts reads even at shallow depths on the otherwise-green shape (max-len-dependent geometry in the nvfp4 addressing).
+
+Debug-method notes that earned their keep: persist engine logs on health-timeout (a teardown destroyed the first hang's evidence); a host `py-spy dump` at hang time beats any amount of config bisection (two blind 25-min boots vs one dump that named the exact frame); and needle probes remain the only honest gate — every corrupt configuration was perfectly fluent.
+
 ## One evening of upstream auditions: five verdicts, all "keep the daily" (2026-08-31, `results/2026-08-31-r14{6,7,8}*`, `r15{0,1}*`)
 
 A consult-driven sweep of the freshest upstream work relevant to this exact stack (dual-5090, hybrid GDN, DFlash2/MTP spec decode, vLLM v0.28.0). Every arm was measured against same-day canon; nothing displaced the daily, and the negative results are exactly the footguns worth writing down.
