@@ -64,3 +64,11 @@ The serving host runs [QuixiAI/open-gpu-kernel-modules](https://github.com/Quixi
 ## If you upstream this
 
 The fixes in `fix_spec_output.py` and the six `patches/lmcache/` diffs belong in vLLM/LMCache, not in a patch repo. They are offered to those projects under Apache-2.0, on the same terms as any other contribution.
+
+## Upstream work audited 2026-08-31 (verdicts in bench/RESULTS.md; credited regardless of adoption)
+
+- **[vllm#53479](https://github.com/vllm-project/vllm/pull/53479)** (mamba-align boundary states) and **[vllm#53670](https://github.com/vllm-project/vllm/issues/53670)** (EAGLE last-block drop cost on hybrid GDN) — the prefix-cache line we backported and measured; the issue's warm-revisit methodology inspired our `probes/warm-revisit` probe.
+- **[vllm#53426](https://github.com/vllm-project/vllm/pull/53426)** + **[vllm#51575](https://github.com/vllm-project/vllm/pull/51575)** — the `skip_draft_when_k0` mechanism and its runtime-K propagation; our 0115 backport reproduces both on v0.28.0.
+- **[maurienne-ai/Qwen3.8-27B-DFlash2-NVFP4-RTNcal](https://huggingface.co/maurienne-ai/Qwen3.8-27B-DFlash2-NVFP4-RTNcal)** — calibrated W4A4 DFlash2 drafter; auditioning it exposed and fixed a real bug in our quantized-draft loader patch (0114).
+- **[seanyourhighness/vllm-sm12x-nvfp4-dflash2](https://github.com/seanyourhighness/vllm-sm12x-nvfp4-dflash2)** — pinned all-NVFP4 DFlash2 overlay for sm12x on vLLM v0.27.1; independent evidence for the DFlash2-on-NVFP4 route and source of the eager-drafter/XQA-interference note.
+- **[vllm#53979](https://github.com/vllm-project/vllm/pull/53979)/[#53978](https://github.com/vllm-project/vllm/pull/53978)/[#53977](https://github.com/vllm-project/vllm/pull/53977)** — the upstream FA2 non-causal NVFP4 route (staged here, not yet built).
