@@ -64,6 +64,7 @@ SPEC_LINE="--speculative-config '$SPEC_FINAL'"
 PIP_PREFIX=""
 [ "$PIP_ARM" = 1 ] && PIP_PREFIX="pip install --no-cache-dir arctic-inference==0.1.1 >/tmp/pip-arm.log 2>&1 && "
 
+if [ "${NO_TIER:-0}" = "1" ]; then :; else
 mountpoint -q "$L2MNT" || { echo "FAILED: $L2MNT not mounted (run setup-native-l2.sh) — refusing an uncapped tier"; exit 1; }
 # Startup GC (R148/codex idea 4): if <40G free, delete namespace sets oldest-first,
 # always keeping the most recently modified set. Engines are down at this point.
@@ -74,6 +75,7 @@ if [ "$(df -k --output=avail "$L2MNT" | tail -1 | tr -dc 0-9)" -lt 41943040 ]; t
   done
 fi
 [ "$(df -k --output=avail "$L2MNT" | tail -1 | tr -dc 0-9)" -ge 5242880 ] || { echo "FAILED: <5G free on $L2MNT — native tier ENOSPC crashes engine-init (R130); wipe stale namespaces"; exit 1; }
+fi   # NO_TIER=1: tier checks skipped (R155l lesson: tier-less boots blocked by a full tier)
 
 # tokenizer truncation guard (gotcha #9, checkpoint-side — survives across engine generations)
 python3 - <<PYEOF
