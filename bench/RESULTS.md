@@ -123,6 +123,10 @@ One instrument caveat, learned the hard way: the screen is only meaningful again
 
 GSM8K tracks fidelity exactly; IFEval inverts it (saka +3.7, ~1.9σ) in the same direction as its tool-eval edge. IFEval absolute levels are low for Qwen3.8 (thinking-mode formatting under effort medium; identical setup for all four — relative only). Decision: gittensor stays the daily — best pool and decode, fidelity and math within noise of the best, IFEval within 1σ of the cluster.
 
+## The promoted daily characterized: variance, teardown, and the tier at its cap (2026-08-31, `results/2026-08-31-r135-watchitems`)
+
+Three-boot confirmation puts the promoted config's code c1 at **~270 median with only 3% across-boot spread** (274.1/266.1/274.3; the wide 217–288 per-run spans are within-boot sampling content, not boot state — tighter than the MTP stack's ±7%). TP=2 teardown is clean: both engine processes release ~10 GB of host RAM within 5 s of container removal. A 30-round, ~4M-token write soak drove the disk tier to its hard cap and mapped the capacity behavior: the OffloadingConnector does **not** proactively evict — the tier fills to 100%, then new stores fail gracefully per-job (`ENOSPC` logged, `cascade_job_failures` counting) while reads keep hitting and decode stays in-band (236.8 c1 at a full tier); a post-soak revisit needle answered correctly *against the full tier*. Zero real retrieval errors across the soak (the only needle misses were max-token truncation clips). Operational contract that falls out: the tier is bounded by its loopback by construction, fails soft at runtime, fails closed at boot (a ≥5 GB-free launcher precheck), and gets wiped on restore as cache hygiene.
+
 ## PROMOTED: the daily is now DFlash2-fp8-TP=2 (2026-08-31)
 
 After the gauntlet below, this config was promoted to the served daily: `scripts/serve-r134-daily.sh` — TP=2 across both 5090s, fp8 KV, DFlash2 ns7 (syvai W4A16 drafter), native disk tier, 262K context, **pool 711,281 tokens**. Rollback is the single-GPU nvfp4+MTP config it replaced. Known cost accepted: ~15% prefill at 8–30K prompts.
