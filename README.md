@@ -2,7 +2,9 @@
 
 A serving config for concurrent long-context coding agents on one 32 GB Blackwell card (`sm_120`): a W4A4 NVFP4 checkpoint, an NVFP4 KV cache with the XQA decode kernel, MTP speculative decoding, vision, and a native disk KV tier on a hard-capped loopback filesystem that survives restarts. Every number was measured on this box on the date given; the raw results directory or FINDINGS round is named next to it.
 
-## The config at a glance (daily since 2026-08-28)
+> **Daily update (2026-08-31):** the box gained a second RTX 5090, and the *served* daily is now **DFlash2 + fp8 KV at TP=2** — code c1 240–260 / c4 963 / c8 1,382, deep-context 172.6 @30K / 130.8 @100K, pool 711K @262K, tool-eval 90.2 ± 1.5, GSM8K 0.8417, native disk tier included (`scripts/serve-r134-daily.sh`; details in [bench/RESULTS.md](bench/RESULTS.md), FINDINGS R129–R134). The single-card config below is unchanged, remains the rollback, and is what this repo's title describes.
+
+## The config at a glance (single-card config; served daily 2026-08-28→31, now the rollback)
 
 | | |
 |---|---|
