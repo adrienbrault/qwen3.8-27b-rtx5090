@@ -2,28 +2,32 @@
 
 Serving configs for concurrent long-context coding agents on Blackwell consumer cards (`sm_120`): a W4A4 NVFP4 checkpoint, quantized KV with the XQA decode kernel, speculative decoding (MTP on one card, DFlash2 across two), vision, and a native disk KV tier on a dedicated Gen5 NVMe partition that survives restarts. Every number was measured on this box on the date given; the raw results directory or FINDINGS round is named next to it.
 
-## Two serving shapes, one checkpoint (all numbers re-measured 2026-08-31, same day, same harness)
+## Three serving configs, one checkpoint (all numbers re-measured 2026-08-31, same day, same harness)
 
-The same [gittensor NVFP4 checkpoint](https://huggingface.co/gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090-LMHead4) serves in two shapes on this box. **TP=1** is the recipe this repo grew up on — everything fits one 32 GB card. **TP=2** is the served daily since the box gained a second 5090 (PCIe Gen5 x8/x8, P2P-enabled driver, custom allreduce). Both run vLLM v0.28.0 + [patches-v0280](patches-v0280/), the native disk KV tier, and memory-OC'd cards (+15% measured DRAM bandwidth).
+The same [gittensor NVFP4 checkpoint](https://huggingface.co/gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090-LMHead4) serves in three shapes on this box. **TP=1** is the recipe this repo grew up on — everything fits one 32 GB card. **TP=2 DFlash2** is the served daily since the box gained a second 5090 (PCIe Gen5 x8/x8, P2P-enabled driver, custom allreduce) — the latency shape. **TP=2 MTP** is the TP=1 recipe stretched across both GPUs, nothing changed but `TP=2` — the capacity/concurrency shape. All run vLLM v0.28.0 + [patches-v0280](patches-v0280/), the native disk KV tier, and memory-OC'd cards (+15% measured DRAM bandwidth).
 
-| | **TP=1** (one 5090) | **TP=2** (two 5090s) |
-|---|---|---|
-| recipe | nvfp4 KV + XQA decode + MTP ns4, util 0.955 — `scripts/serve-v0280-daily.sh` | fp8 KV + DFlash2 ns9 ([syv-ai W4A16 drafter](https://huggingface.co/syv-ai)), util 0.90, `NCCL_P2P_LEVEL=SYS` — `scripts/serve-r134-daily.sh` |
-| KV pool @ 262K max-len | 381,300 tokens | **719,420 tokens** |
-| decode, prose c1 | 130.1 t/s | **178.1** (+37%) |
-| decode, code c1 | 175.0 | **298.9** (+71%; runs span 293–385) |
-| decode, code c8 aggregate | 1,187 | 1,289 (+9%; band 1,290–1,430 across boots) |
-| decode @100K context | 106.7 | **174.4** (+63% — flat from surface to 100K) |
-| concurrency ceiling | 8 (spec-decode admission cap) | **16** (1,927 t/s aggregate) |
-| prefill @8K | **11.9K t/s** | 9.3K (−22% — the one TP=2 loss) |
-| prefill @30K | 9.3K | 9.8K (parity) |
-| prefill @100K | 4.7K | **7.0K** (+49%) |
-| tool-eval ×4 | 89.2 ± 1.7 | 89.8 ± 1.3 |
-| GSM8K T=0 ×120 | 0.8417 | 0.8583 |
-| retrieval needles | 4/4 | 4/4 |
-| hardware | RTX 5090 32 GB, mem OC 16 GHz | 2× RTX 5090 (ASUS 600 W + HP OEM 575 W), Gen5 x8/x8, P2P driver ([THIRD_PARTY](THIRD_PARTY.md)) |
+| | **TP=1** (one 5090) | **TP=2 DFlash2** (the daily) | **TP=2 MTP** |
+|---|---|---|---|
+| recipe | nvfp4 KV + XQA decode + MTP ns4, util 0.955 — `scripts/serve-v0280-daily.sh` | fp8 KV + DFlash2 ns9 ([syv-ai W4A16 drafter](https://huggingface.co/syv-ai)), util 0.90, `NCCL_P2P_LEVEL=SYS` — `scripts/serve-r134-daily.sh` | nvfp4 KV + XQA decode + MTP ns4 at `TP=2`, util 0.90 |
+| KV pool @ 262K max-len | 381,300 tokens | 719,420 | **1,508,519 (~4x one card)** |
+| decode, prose c1 | 130.1 t/s | **178.1** | 157.5 |
+| decode, code c1 | 175.0 | **298.9** (runs span 293–385) | 225.3 |
+| decode, code c8 aggregate | 1,187 | 1,289 | **1,349** |
+| decode, code c16 aggregate | — (spec-decode admission cap) | 1,522 | **2,007** |
+| decode @30K context | 131.9 | **168.7** | 148.3 |
+| decode @100K | 106.7 | **174.4** | 137.5 |
+| decode @200K | 108.9 | 135.6 | 135.1 |
+| prefill @8K | **11.9K t/s** | 9.3K | 9.0K |
+| prefill @30K | 9.3K | **9.8K** | 9.1K |
+| prefill @100K | 4.7K | **7.0K** | 6.3K |
+| prefill @200K | 3.2K | **3.9K** | 3.5K |
+| tool-eval ×4 | 89.2 ± 1.7 | 89.8 ± 1.3 | 90.2 ± 1.0 |
+| GSM8K T=0 ×120 | 0.8417 | 0.8583 | 0.8333 |
+| retrieval needles | 4/4 | 4/4 | 4/4 |
 
-Host: ASRock X870 Taichi Creator, Ryzen 7 9800X3D, 64 GB DDR5-6000, KV disk tier on a Gen5 x4 NVMe partition (fio post-format: 10.4 GB/s read, 9.8 GB/s write, 1.38M IOPS), Ubuntu 24.04 HWE. The TP=2 shape reads: speculative decoding with *low* acceptance is weight-bandwidth-bound, which is exactly what a second card doubles — so DFlash2 gains 37–71% where high-acceptance MTP gained little (see bench/RESULTS.md, R130–R142). Endpoint: OpenAI-compatible `:8020/v1`, served as `qwen3.8-27b`.
+Reading the columns: **DFlash2-TP2 is the latency shape** — fastest single-stream decode from the surface to 100K deep (+37–71% over one card), and it wins prefill everywhere past 8K. **MTP-TP2 is the capacity shape** — a 1.5M-token KV pool and the best aggregate throughput at deep concurrency (2,007 t/s at c16, where DFlash2\'s low acceptance costs it). Quality is config-invariant. Two footnotes the numbers force: DFlash2\'s speed is a random variable (acceptance runs 0.12–0.30 with content — the code-c1 band is real, and its @200K decode converges to MTP\'s as acceptance decays with depth), and the @200K prefills are cold-cache — a warm disk-tier revisit cut MTP-TP2\'s 200K TTFT from 56.5 s to 39.5 s on the same prompt.
+
+Host: ASRock X870 Taichi Creator, Ryzen 7 9800X3D, 64 GB DDR5-6000, model weights and the KV disk tier both on a Gen5 x4 NVMe (fio post-format: 10.4 GB/s read, 9.8 GB/s write, 1.38M IOPS), Ubuntu 24.04 HWE; GPUs: ASUS 600 W + HP OEM 575 W at Gen5 x8/x8 with the P2P driver ([THIRD_PARTY](THIRD_PARTY.md)). Why the split wins land where they do: speculative decoding with *low* acceptance is weight-bandwidth-bound — exactly what a second card doubles — while high-acceptance MTP amortizes weight reads and converts the second card into KV space and admission headroom instead (bench/RESULTS.md, R130–R143). Endpoint: OpenAI-compatible `:8020/v1`, served as `qwen3.8-27b`.
 
 Raw results: `results/2026-08-31-r142-matrix` on the host; history in [bench/RESULTS.md](bench/RESULTS.md).
 
