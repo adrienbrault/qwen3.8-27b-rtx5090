@@ -25,7 +25,7 @@ L2MNT=${L2MNT:-/srv/qwen5090/native-l2}   # hard-capped loopback fs — cap by c
 CACHE_DIR=${CACHE_DIR:-/srv/qwen5090/cache}
 POOL_MIN=${POOL_MIN:-340000}   # R113 @0.955: 381,300 expected
 POOL_MAX=${POOL_MAX:-420000}
-KVT='{"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":4294967296,"secondary_tiers":[{"type":"fs","root_dir":"/l2","n_read_threads":16,"n_write_threads":8}]}}'
+KVT='{"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":4294967296,"offload_prompt_only":true,"secondary_tiers":[{"type":"fs","root_dir":"/l2","n_read_threads":16,"n_write_threads":4}]}}'
 KVT_LINE="--kv-transfer-config '$KVT'"
 NO_TIER=${NO_TIER:-0}   # NO_TIER=1: plain engine (diagnostics only — the daily contract includes the tier)
 [ "$NO_TIER" = 1 ] && KVT_LINE=""
@@ -119,7 +119,7 @@ sudo docker run -d --name "$NAME" --restart unless-stopped \
     --gpu-memory-utilization $UTIL --max-model-len $MAXLEN \
     --max-num-seqs $SEQS --max-num-batched-tokens $MNBT \
     --limit-mm-per-prompt '{\"image\":4,\"video\":0}' \
-    --mamba-cache-mode align --enable-prefix-caching \
+    --mamba-cache-mode "$MAMBA_MODE" $([ "$PREFIX_CACHE" = "1" ] && echo "--enable-prefix-caching" || echo "--no-enable-prefix-caching") \
     $SPEC_LINE \
     $KVT_LINE \
     $TP_LINE \
