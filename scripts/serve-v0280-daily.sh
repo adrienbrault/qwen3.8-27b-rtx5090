@@ -69,7 +69,7 @@ mountpoint -q "$L2MNT" || { echo "FAILED: $L2MNT not mounted (run setup-native-l
 if [ "$(df -k --output=avail "$L2MNT" | tail -1 | tr -dc 0-9)" -lt 41943040 ]; then
   for ns in $(ls -1t "$L2MNT" | grep '^_model_' | sed 's/_r[0-9]*$//' | awk '!seen[$0]++' | tail -n +2 | tac); do
     [ "$(df -k --output=avail "$L2MNT" | tail -1 | tr -dc 0-9)" -ge 41943040 ] && break
-    echo "tier GC: deleting stale namespace $ns"; rm -rf "$L2MNT/$ns" "$L2MNT/${ns}"_r*
+    echo "tier GC: deleting stale namespace $ns"; sudo rm -rf "$L2MNT/$ns" "$L2MNT/${ns}"_r*   # sudo: tier files are root-owned (container-written) — R152 lesson
   done
 fi
 [ "$(df -k --output=avail "$L2MNT" | tail -1 | tr -dc 0-9)" -ge 5242880 ] || { echo "FAILED: <5G free on $L2MNT — native tier ENOSPC crashes engine-init (R130); wipe stale namespaces"; exit 1; }
