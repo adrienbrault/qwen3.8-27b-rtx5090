@@ -6,6 +6,7 @@
 # Gauntlet basis: R132 sweep (260/963/1382, deep 172.6/130.8) + R133 quality (tool-eval 90.2,
 #   GSM 0.8417, needles 0-false) + R133b tier (revisit green, 239.8 c1 tiered, pool 711,281).
 # Known cost: prefill −15% @8–30K vs the MTP daily (parity→+14% by 100K).
+# ns9 since R139 (2026-08-31): code c1 325 / prose 173 (beats ns7 both), tool-eval 90.0, needles 4/4.
 # Rollback: bash /srv/qwen5090/launch-daily-mtp-0829.sh  (single-GPU nvfp4+MTP config)
 set -uo pipefail
 # The daily is DETERMINISTIC (2026-08-23 knob-leak incident): drop inherited tuning env unless
@@ -20,7 +21,7 @@ env PORT=8020 NAME=vllm-27b BIND_ADDR=127.0.0.1 \
   TP=2 KVD_OVERRIDE=fp8_e4m3 NO_TIER=0 FIWS=268435456 UTIL=0.90 \
   MAXLEN=262144 POOL_MIN=650000 POOL_MAX=800000 \
   EXTRA_MOUNT="-v $DRAFT:/draft:ro" \
-  SPEC_JSON='{"method":"dflash","model":"/draft","num_speculative_tokens":7}' \
+  SPEC_JSON='{"method":"dflash","model":"/draft","num_speculative_tokens":9}' \
   EXTRA_ENV="-e NCCL_P2P_LEVEL=SYS" \
   bash /srv/qwen5090/launch-daily-v0280.sh || exit 1
 
