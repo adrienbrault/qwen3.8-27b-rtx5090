@@ -2,7 +2,9 @@
 
 Hardware: RTX 5090 32 GB (`sm_120`), Ryzen 9 5900X, 64 GB RAM, Ubuntu 24.04. GPU memory OC +4500 MHz (16 GHz effective), 600 W, core stock: decode is memory-bound, so these throughput numbers run above a stock 5090. Tool: [llama-benchy](https://github.com/eugr/llama-benchy) 0.3.8 unless stated; raw output lives in the results directories named per section on the serving host.
 
-**Current daily (since 2026-08-28, tuned 08-29):** vLLM v0.28.0 + `patches-v0280/` — nvfp4 KV + XQA decode + MTP ns4 + async + native disk tier on a hard-capped loopback; pool 381,300 @262K, tool-eval 90.0 ±1.4 (×4), decode code c1 ~178–206 / c8 1,221, GDN hardening (0108) live, XQA-verify and ReplaySSM staged OFF-default. Sections dated 2026-08-28/29 below tell the story newest-first; the LMCache generation follows after them.
+**Current daily (since 2026-09-02):** `RedHatAI/Qwen3.8-27B-NVFP4` on the TP=2 DFlash2-fp8 shape (`scripts/serve-r156-daily.sh`) — pool 654,491 @262K, spec-ON decode c1 ~319 t/s (llama-benchy T=0.6), tool-eval 90.2 ±1.0. Chosen by the fidelity ladder in the first section below.
+
+**Previous daily (2026-08-28→09-02, tuned 08-29):** vLLM v0.28.0 + `patches-v0280/` — nvfp4 KV + XQA decode + MTP ns4 + async + native disk tier on a hard-capped loopback; pool 381,300 @262K, tool-eval 90.0 ±1.4 (×4), decode code c1 ~178–206 / c8 1,221, GDN hardening (0108) live, XQA-verify and ReplaySSM staged OFF-default. Sections dated 2026-08-28/29 below tell the story newest-first; the LMCache generation follows after them.
 
 ## Previous generation (daily 2026-08-21→28) — Qwen3.8-27B, NVFP4 KV + LMCache tiers, V2 model runner
 
@@ -167,6 +169,49 @@ Tuning the promoted TP=2 daily produced two real wins and several honest nulls. 
 ## The promoted daily characterized: variance, teardown, and the tier at its cap (2026-08-31, `results/2026-08-31-r135-watchitems`)
 
 Three-boot confirmation puts the promoted config's code c1 at **~270 median with only 3% across-boot spread** (274.1/266.1/274.3; the wide 217–288 per-run spans are within-boot sampling content, not boot state — tighter than the MTP stack's ±7%). TP=2 teardown is clean: both engine processes release ~10 GB of host RAM within 5 s of container removal. A 30-round, ~4M-token write soak drove the disk tier to its hard cap and mapped the capacity behavior: the OffloadingConnector does **not** proactively evict — the tier fills to 100%, then new stores fail gracefully per-job (`ENOSPC` logged, `cascade_job_failures` counting) while reads keep hitting and decode stays in-band (236.8 c1 at a full tier); a post-soak revisit needle answered correctly *against the full tier*. Zero real retrieval errors across the soak (the only needle misses were max-token truncation clips). Operational contract that falls out: the tier is bounded by its loopback by construction, fails soft at runtime, fails closed at boot (a ≥5 GB-free launcher precheck), and gets wiped on restore as cache hygiene.
+
+## PROMOTED: the daily checkpoint is RedHatAI NVFP4 (2026-09-02, `results/2026-09-02-r156-promote-redhat`)
+
+Only `MODEL_DIR` changed; the serving shape is the R134 DFlash2-fp8-TP=2 recipe (`scripts/serve-r156-daily.sh`; the gittensor launcher is frozen as `serve-r134-daily.sh` for rollback). Boot: pool 654,491 (the profiler is bimodal on this shape — 628,798 on the other mode, hence the 620–690K band), quick tool-eval 15/15 at 100/100, warm-revisit on the freshly wiped tier 7.49 s → 0.45 s (51,584/53,458 block hits). The quantized syv-ai drafter stays: on RedHat the bf16 z-lab drafter costs −6.5% code c8 and 46K of pool. 4-bit KV would cost RedHat only ~0.4 pp of top-1 agreement (95.57% vs 95.95%), but DFlash2 over nvfp4 KV at TP=2 still carries the two open R155 correctness bugs, so fp8 KV it is.
+
+**Tier lesson:** vLLM's fs offload tier names its namespace from `model_name` (the mount path), dtype and parallelism — nothing weight-derived (`vllm/v1/kv_offload/file_mapper.py`). Swapping checkpoints under the same mount would serve the old checkpoint's KV blocks on every revisit. The launcher now writes a `.checkpoint` stamp on the tier and wipes all namespace sets when it changes (engines are down at that point, so the wipe cannot race a load).
+
+## The checkpoint decision: a bf16-anchored fidelity ladder (2026-09-01, `results/2026-09-01-r156-bf16-ladder`)
+
+**Question.** Our task gates (tool-eval ±2–3, GSM8K n=250 with an ~8 pp minimum detectable difference) had said every NVFP4 checkpoint was fine. Were they blind? **Yes.**
+
+**Method** (`scripts/fidelity_ladder.py`, `fidelity_compare.py`, `build_fidelity_corpus.py`): a 693-document pinned corpus (Python dist-packages, wikitext-103, GSM8K-train; ~1K tokens each), scored teacher-forced via `prompt_logprobs` at concurrency 1, speculation off, on every arm — 724,781 positions per arm. Reference = `Qwen/Qwen3.8-27B` bf16 at TP=2 with bf16 KV. Metrics: corpus perplexity delta, and top-1 flip rate bucketed by the *reference's* confidence. Noise floor (same arm, two boots): 0.003% flips in the certain bucket — ~100x finer than tool-eval.
+
+| checkpoint | PPL delta vs bf16 (5.4501) |
+|---|---|
+| unsloth Dynamic V3.0 NVFP4 | **+0.37%** |
+| kelnei NVFP4 | +0.37% |
+| **RedHatAI NVFP4** | **+0.38%** |
+| fp8 weights (reference quant) | +0.43% |
+| RadixArk NVFP4, bf16 lm_head | +1.91% |
+| QUASAR QAT NVFP4 | +2.12% |
+| RadixArk NVFP4 | +2.77% |
+| gittensor + fp8 lm_head | +3.71% |
+| gittensor + bf16 KV | +4.38% |
+| **gittensor (the daily until 09-02)** | **+4.46%** |
+
+Controlled decompositions: 4-bit `lm_head` ≈ 0.85 pp (RadixArk pair; an independent family gives 0.72); fp8 KV 0.13 pp; nvfp4 KV 0.76 pp; neither KV scheme compounds with context out to ~171K (five depths). The remaining ~3.6 pp is the quantizer itself — unsloth/kelnei/RedHat are the same llm-compressor recipe family (303 modules preserved at 8-bit vs gittensor's 148) and reach +0.37% at the *same* 4-bit width.
+
+**Caveat, then closed.** That corpus is raw, largely memorised text with no chat template, tools or thinking — a faithful weight-fidelity ruler, not the deployed regime. So the second experiment (`scripts/agentic_ref.py`, `build_agentic_prompts.py`, `agentic_by_kind.py`) let **bf16 generate** greedy responses to 72 held-out chat-templated prompts (32 tool-call tasks with a 5-tool schema, 16 code, 16 reasoning, 8 prose; 57,972 positions), then teacher-forced each candidate on bf16's exact token ids — neither arm authored the text.
+
+| arm | top-1 agreement with bf16 | PPL delta | flips where bf16 was moderately sure (0.5 < p ≤ 0.9) | near-tie flips |
+|---|---|---|---|---|
+| gittensor | 92.60% | +6.56% | 8.57% | 35.9% |
+| **RedHatAI, fp8 KV** | **95.95%** | **+2.41%** | **3.36%** | 22.1% |
+| RedHatAI, nvfp4 KV | 95.57% | +2.65% | 3.81% | 24.0% |
+
+Per kind the ratio is uniform (moderate-bucket flips gittensor → RedHat: tool 8.3 → 3.2%, code 8.8 → 3.7%, reason 9.0 → 3.2%, prose 8.0 → 2.8%). Both agree with bf16 essentially always where bf16 was confident. Reading: on the decision points of a greedy trajectory the old daily left bf16's path 1 token in 12, RedHat 1 in 30; under teacher forcing each flip is contained, under real generation each is a divergence, so this is a floor on behavioural divergence. (Reference PPL here is 1.29 — bf16 scoring its own argmax path — so these relative deltas are not comparable to the raw-corpus column; compare arms to each other.)
+
+**Cost, measured on the exact daily shape** (TP=2, util 0.92, fp8 KV, DFlash2 ns9, syv-ai drafter): forward pass alone (spec off, content-independent) −18.6% c1 / −13.5% c8; RedHat's higher draft acceptance (+5–6%) buys a third of it back, so spec-ON decode lands at **−6% c1 (llama-benchy, T=0.6, three instruments agree) and −7% c8**; prefill −14% (no acceptance rebate); pool −12.4% (654,491, still 2.5x the 262K max context); TTFT @2K +33 ms. What is *not* established is a task-outcome difference: no affordable task gate can see one either way. That is the trade the switch makes: a large, measured fidelity gain against certain, quantified speed costs.
+
+**Drafter 2x2 (most generalizable result).** Quantized syv-ai W4A16 vs original bf16 z-lab drafter, on both targets, code c8: gittensor 1,299 (syv-ai) vs 1,191 (z-lab, −8.3%); RedHat 1,212 vs 1,134 (−6.5%); unsloth ~flat within run spread. Acceptance measures drafter–target *agreement*, not either party's quality — and it is a property of the pair, not predictable from target fidelity (RedHat and unsloth tie on fidelity yet respond differently). A mid-fidelity QAT checkpoint (QUASAR) lost 26% code decode this way. Always re-run the drafter A/B on a checkpoint switch.
+
+**Measurement lessons banked** (`docs/R156-REVIEW.md` is the self-audit): `ignore_eos`/`min_tokens` force generation past EOS into degenerate text whose draft acceptance is checkpoint-dependent (a −35%…+133% swing on the same arms) — decompose into a spec-off kernel rate and a separately measured acceptance, or use `llama-benchy --extra-body '{"temperature":0.6}'` since production samples at 0.6 and acceptance at T=0 is argmax-only; single-stream `decode_ss` at n=3 has ±50% spread and was excluded; a GSM8K difference of 1.8 pp at n=250 is noise in either direction, and we had read it as signal twice.
 
 ## PROMOTED: the daily is now DFlash2-fp8-TP=2 (2026-08-31)
 

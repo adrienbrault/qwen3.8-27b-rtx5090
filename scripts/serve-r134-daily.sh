@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# ROLLBACK COPY (frozen 2026-09-02 at the R156 RedHat promotion): the gittensor DFlash2-fp8-TP2 daily
+# exactly as it served 2026-08-31 -> 2026-09-02. Mirrors flan/launch-daily-gittensor-0831.sh.
 # DAILY (since 2026-08-31, R134 promotion, user "Yes promote"): DFlash2-fp8-TP2 on the dual 5090s.
 #   = launch-daily-v0280.sh with: TP=2, fp8_e4m3 KV, DFlash2 ns7 (syvai W4A16 drafter), native
 #   disk tier ON (R133b: the LMCache-era no-tiers rule does not apply to OffloadingConnector),

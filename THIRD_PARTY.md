@@ -42,9 +42,11 @@ Upstream: https://github.com/LMCache/LMCache — [Apache-2.0](https://github.com
 
 ## Models (not redistributed here)
 
-- [`gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090-LMHead4`](https://huggingface.co/gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090-LMHead4) — **the current daily's weights** (see the README provenance note: bit-identical to our 2026-08-22 download of the parent repo). Qwen3.8 base license.
+- [`RedHatAI/Qwen3.8-27B-NVFP4`](https://huggingface.co/RedHatAI/Qwen3.8-27B-NVFP4) — **the current daily's weights (since 2026-09-02)**: llm-compressor NVFP4 with 303 modules kept at 8-bit and an FP8 `lm_head`; served with its own chat template. Qwen3.8 base license. Chosen by the R156 fidelity ladder (bench/RESULTS.md); [`unsloth/Qwen3.8-27B-NVFP4`](https://huggingface.co/unsloth/Qwen3.8-27B-NVFP4) and [`kelnei/Qwen3.8-27B-NVFP4`](https://huggingface.co/kelnei/Qwen3.8-27B-NVFP4) tie it on fidelity (same recipe family) and were the other two candidates.
+- [`gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090-LMHead4`](https://huggingface.co/gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090-LMHead4) — the 2026-08-22→09-02 daily (see the README provenance note: bit-identical to our 2026-08-22 download of the parent repo); every 2026-08 number in this repo was measured on it. Qwen3.8 base license.
+- [`Qwen/Qwen3.8-27B`](https://huggingface.co/Qwen/Qwen3.8-27B) (bf16) — the ground truth for the fidelity ladder; [`RadixArk`](https://huggingface.co/RadixArk), [`QUASAR`](https://huggingface.co/QUASAR) QAT and the fp8 reference were the other rungs.
 - [`syv-ai/DFlash2-Qwen3.8-27B-W4A16`](https://huggingface.co/syv-ai) — the DFlash2 draft used in speculative-decoding experiments; [`incoai/Qwen3.8-27B-DFlash2`](https://huggingface.co/incoai/Qwen3.8-27B-DFlash2) is the original bf16 draft.
-- [`sakamakismile/Qwen3.8-27B-MTP-NVFP4`](https://huggingface.co/sakamakismile/Qwen3.8-27B-MTP-NVFP4) — the previous daily; its Qwen3.8 XML chat template is what the current daily serves with.
+- [`sakamakismile/Qwen3.8-27B-MTP-NVFP4`](https://huggingface.co/sakamakismile/Qwen3.8-27B-MTP-NVFP4) — the 2026-08-14→22 daily; its Qwen3.8 XML chat template is what the gittensor daily served with.
 - [`natfii/Qwen3.6-27B-VLM-NVFP4-MTP`](https://huggingface.co/natfii/Qwen3.6-27B-VLM-NVFP4-MTP) — the Qwen3.6-era daily (validated snapshot revision `2e46c0ed7606f35e357bc5674d20c710fc51b178`). Qwen3.6 base license (Apache-2.0).
 - [`Lorbus/Qwen3.6-27B-int4-AutoRound`](https://huggingface.co/Lorbus/Qwen3.6-27B-int4-AutoRound) — an earlier (Qwen3.6-era) daily, still the W4A16 reference.
 - [`unsloth/Qwen3.6-27B-NVFP4`](https://huggingface.co/unsloth/Qwen3.6-27B-NVFP4) — earlier daily (TurboQuant era).

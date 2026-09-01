@@ -68,6 +68,20 @@ PIP_PREFIX=""
 
 if [ "${NO_TIER:-0}" = "1" ]; then :; else
 mountpoint -q "$L2MNT" || { echo "FAILED: $L2MNT not mounted (run setup-native-l2.sh) — refusing an uncapped tier"; exit 1; }
+# Checkpoint stamp (R156 promotion, 2026-09-02): the fs tier's namespace hash is built from
+# model_name (= "/model" for EVERY checkpoint), dtype, tp and kv groups — nothing weight-derived
+# (vllm/v1/kv_offload/file_mapper.py). A different checkpoint mounted at /model would silently
+# read the previous one's KV blocks. Engines are down here, so wiping is race-free. No stamp +
+# existing sets = unknown provenance = wipe. (A tier-ON experiment on another checkpoint wipes
+# the daily's warm tier: correctness over warmth; the daily rebuilds it.)
+CKPT=$(basename "$MODEL_DIR"); STAMP="$L2MNT/.checkpoint"
+if [ ! -f "$STAMP" ] || [ "$(cat "$STAMP")" != "$CKPT" ]; then
+  if ls -d "$L2MNT"/_model_* >/dev/null 2>&1; then
+    echo "tier GC: checkpoint $( [ -f "$STAMP" ] && cat "$STAMP" || echo '<unstamped>') -> $CKPT — wiping ALL namespace sets (namespace ignores weights)"
+    sudo find "$L2MNT" -mindepth 1 -maxdepth 1 -name '_model_*' -exec rm -rf {} + ; sync
+  fi
+  echo "$CKPT" | sudo tee "$STAMP" >/dev/null
+fi
 # Startup GC (R148/codex idea 4): if <40G free, delete namespace sets oldest-first,
 # always keeping the most recently modified set. Engines are down at this point.
 if [ "$(df -k --output=avail "$L2MNT" | tail -1 | tr -dc 0-9)" -lt 41943040 ]; then
@@ -75,6 +89,20 @@ if [ "$(df -k --output=avail "$L2MNT" | tail -1 | tr -dc 0-9)" -lt 41943040 ]; t
     [ "$(df -k --output=avail "$L2MNT" | tail -1 | tr -dc 0-9)" -ge 41943040 ] && break
     echo "tier GC: deleting stale namespace $ns"; sudo rm -rf "$L2MNT/$ns" "$L2MNT/${ns}"_r*   # sudo: tier files are root-owned (container-written) — R152 lesson
   done
+fi
+# Self-heal (2026-09-01): the GC above keeps the newest set, so a SINGLE set that has grown to the
+# cap cannot be reclaimed and the fail-loud below stranded the daily (no engine could restore it
+# unattended). The tier is a cache — engines are down here — so wipe everything and boot cold.
+# Boot-time LRU eviction (2026-09-02): engines are DOWN here, so this is the only RACE-FREE moment to
+# evict (v0.28 asserts on any failed load — see tier-evict.sh). Bring the tier to <=70% coldest-first;
+# wipe everything only if that still cannot free 5G.
+if [ "$(df --output=pcent "$L2MNT" | tail -1 | tr -dc 0-9)" -ge 85 ] && [ -f /srv/qwen5090/tier-evict.sh ]; then
+  echo "tier GC: >=85% used — boot-time LRU eviction to <=70% (engine down, race-free)"
+  DAILY=http://127.0.0.1:1 HOT_MIN=0 bash /srv/qwen5090/tier-evict.sh | tail -2
+fi
+if [ "$(df -k --output=avail "$L2MNT" | tail -1 | tr -dc 0-9)" -lt 5242880 ]; then
+  echo "tier GC: still <5G free — wiping ALL namespace sets (cold cache; the daily contract is availability, not warm revisits)"
+  sudo find "$L2MNT" -mindepth 1 -maxdepth 1 -name '_model_*' -exec rm -rf {} + ; sync
 fi
 [ "$(df -k --output=avail "$L2MNT" | tail -1 | tr -dc 0-9)" -ge 5242880 ] || { echo "FAILED: <5G free on $L2MNT — native tier ENOSPC crashes engine-init (R130); wipe stale namespaces"; exit 1; }
 fi   # NO_TIER=1: tier checks skipped (R155l lesson: tier-less boots blocked by a full tier)
