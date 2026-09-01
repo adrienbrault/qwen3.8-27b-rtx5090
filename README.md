@@ -16,7 +16,7 @@ The daily now serves [`RedHatAI/Qwen3.8-27B-NVFP4`](https://huggingface.co/RedHa
 | forward pass alone (spec off), c1 | 129.6 | 105.5 (−18.6%) |
 | prefill @2K | 10,190 t/s | 8,741 (−14%) |
 | KV pool @262K max-len | 746,849 | 654,491 (−12%) |
-| tool-eval ×4 / GSM8K T=0 ×120 / needles | 90.0 ± 1.4 / 0.8583 / 9/9 | 90.2 ± 1.0 / 0.8583 / 9/9 |
+| tool-eval ×4 / GSM8K T=0 ×120 / needles | 90.0 ± 1.4 / 0.8583 / 9/9 | 90.8 ± 0.5 / 0.8583 / 9/9 |
 
 Three things the ladder taught that generalize: the **quantizer recipe matters more than bit-width** (unsloth, kelnei and RedHat reach +0.37% at the same 4-bit width where gittensor sits at +4.46%); a **4-bit `lm_head` costs ~0.85 pp** on its own (controlled pair); **fp8 KV is nearly free (+0.13 pp)** and does not compound with context out to 171K, while 4-bit KV costs +0.76 pp. And one that bit: **draft acceptance measures drafter–target agreement, not quality** — the quantized syv-ai drafter beats the bf16 original on both checkpoints here, but a mid-fidelity QAT checkpoint lost 26% code decode to drafter mismatch. Re-run the drafter A/B for every checkpoint switch.
 
