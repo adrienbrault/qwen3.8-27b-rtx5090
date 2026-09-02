@@ -20,7 +20,7 @@ MODEL=/srv/qwen5090/models/qwen3.8-27b-redhat-nvfp4
 sudo docker image inspect vllm-qwen38:v0280-nvfp4kv-revival-graphs >/dev/null 2>&1 || { echo "FAILED: image vllm-qwen38:v0280-nvfp4kv-revival-graphs missing (build: dflash-nvfp4-revival/Dockerfile.graphs)"; exit 1; }
 env PORT=8020 NAME=vllm-27b BIND_ADDR=0.0.0.0 MODEL_DIR="$MODEL" TP=2 \
     IMAGE=vllm-qwen38:v0280-nvfp4kv-revival-graphs KVD_OVERRIDE=nvfp4 ALLOW_NO_XQA=1 \
-    NO_TIER=0 FIWS=536870912 MNBT=8192 SEQS=8 UTIL=0.90 MAXLEN=262144 POOL_MIN=980000 POOL_MAX=1100000 \
+    NO_TIER=0 FIWS=536870912 MNBT=8192 SEQS=8 UTIL=0.90 MAXLEN=262144 POOL_MIN=950000 POOL_MAX=1050000 \
     EXTRA_MOUNT="-v $DRAFT:/draft:ro" \
     SPEC_JSON='{"method":"dflash","model":"/draft","num_speculative_tokens":9,"draft_tensor_parallel_size":2,"attention_backend":"FLASHINFER","kv_cache_dtype":"nvfp4"}' \
     EXTRA_ENV="-e NCCL_P2P_LEVEL=SYS -e VLLM_SM12X_NVFP4_XQA=0 -e VLLM_SM12X_DFLASH_GRAPHS=1" \
