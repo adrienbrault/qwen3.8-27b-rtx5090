@@ -170,6 +170,23 @@ Tuning the promoted TP=2 daily produced two real wins and several honest nulls. 
 
 Three-boot confirmation puts the promoted config's code c1 at **~270 median with only 3% across-boot spread** (274.1/266.1/274.3; the wide 217–288 per-run spans are within-boot sampling content, not boot state — tighter than the MTP stack's ±7%). TP=2 teardown is clean: both engine processes release ~10 GB of host RAM within 5 s of container removal. A 30-round, ~4M-token write soak drove the disk tier to its hard cap and mapped the capacity behavior: the OffloadingConnector does **not** proactively evict — the tier fills to 100%, then new stores fail gracefully per-job (`ENOSPC` logged, `cascade_job_failures` counting) while reads keep hitting and decode stays in-band (236.8 c1 at a full tier); a post-soak revisit needle answered correctly *against the full tier*. Zero real retrieval errors across the soak (the only needle misses were max-token truncation clips). Operational contract that falls out: the tier is bounded by its loopback by construction, fails soft at runtime, fails closed at boot (a ≥5 GB-free launcher precheck), and gets wiped on restore as cache hygiene.
 
+## The nvfp4-KV shapes on the RedHat daily: pool doubles, single-stream pays (2026-09-02, `results/2026-09-02-r157-nvfp4-shapes`)
+
+Two TP=2 shapes with the 4-bit KV cache, both on the RedHat checkpoint, tier on, measured with the same instruments as the daily row (llama-benchy T=0.6 pp2048/tg256; `decode_ss` steady-state c8; needles at 9K/20K/131K). The DFlash2-on-nvfp4 shape is the R155 revival config (drafter unsharded, full MNBT, XQA off — the two known correctness bugs dodged structurally; revival image with patches 0116–0119).
+
+| RedHat, TP=2 | **fp8 KV + DFlash2 ns9 (daily)** | nvfp4 KV + MTP ns4 + XQA | nvfp4 KV + DFlash2 ns7 (draft_tp=1, XQA off) |
+|---|---|---|---|
+| KV pool @262K | 654,491 | **1,317,869** | 1,030,418 |
+| needles | 9/9 | 6/6 | 6/6 |
+| top-1 agreement with bf16 (agentic teacher-forced) | 95.95% | 95.57% | 95.57% |
+| decode c1, natural | **318.8 t/s** | 188.9 (−41%) | 229.7 (−28%) |
+| decode c8 code, steady state (acceptance/draft) | 1,212 (0.29) | **1,304 (0.57)** | 1,189 (0.38) |
+| decode c8 prose, steady state | 925 (0.19) | **1,106 (0.44)** | 925 (0.25) |
+| decode c1 @30K context | **157** | 139 | 132 |
+| prefill pp2048 | 8,741 | 8,328 | 8,328 |
+
+MTP+nvfp4 is the capacity shape, as it was on gittensor: twice the pool and the best batched throughput because Qwen's MTP head accepts ~0.55 per draft token, but −41% single-stream since it drafts its four tokens with four sequential head passes. DFlash2-on-nvfp4 sits between: c8 parity with the fp8 daily and a *higher* acceptance than fp8 (so its −28% at c1 is forward-pass cost — FA2-over-nvfp4 verify batches plus the unsharded drafter — not draft quality). Both nvfp4 shapes prefill ~5% slower. The served daily stays fp8 DFlash2 for its interactive single-stream workload; the MTP+nvfp4 launch is one env change away (`TP=2 UTIL=0.90` on `serve-v0280-daily.sh`) for a batched or long-context job. Scripts: `scripts/r157-shapes.sh`.
+
 ## PROMOTED: the daily checkpoint is RedHatAI NVFP4 (2026-09-02, `results/2026-09-02-r156-promote-redhat`)
 
 Only `MODEL_DIR` changed; the serving shape is the R134 DFlash2-fp8-TP=2 recipe (`scripts/serve-r156-daily.sh`; the gittensor launcher is frozen as `serve-r134-daily.sh` for rollback). Boot: pool 654,491 (the profiler is bimodal on this shape — 628,798 on the other mode, hence the 620–690K band), tool-eval 69×4 on the served port **90.8 ± 0.5** (gittensor daily 90.0 ± 1.4 — tied, as the ladder predicted the task gate would say), quick tool-eval 15/15 at 100/100, warm-revisit on the freshly wiped tier 7.49 s → 0.45 s (51,584/53,458 block hits). The quantized syv-ai drafter stays: on RedHat the bf16 z-lab drafter costs −6.5% code c8 and 46K of pool. 4-bit KV would cost RedHat only ~0.4 pp of top-1 agreement (95.57% vs 95.95%), but DFlash2 over nvfp4 KV at TP=2 still carries the two open R155 correctness bugs, so fp8 KV it is.
