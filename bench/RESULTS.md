@@ -6,6 +6,25 @@ Hardware: RTX 5090 32 GB (`sm_120`), Ryzen 9 5900X, 64 GB RAM, Ubuntu 24.04. GPU
 
 **Previous daily (2026-08-28→09-02, tuned 08-29):** vLLM v0.28.0 + `patches-v0280/` — nvfp4 KV + XQA decode + MTP ns4 + async + native disk tier on a hard-capped loopback; pool 381,300 @262K, tool-eval 90.0 ±1.4 (×4), decode code c1 ~178–206 / c8 1,221, GDN hardening (0108) live, XQA-verify and ReplaySSM staged OFF-default. Sections dated 2026-08-28/29 below tell the story newest-first; the LMCache generation follows after them.
 
+## R159 (2026-09-02): the daily shape at concurrency 8/16/32/64 — aggregate saturates at c16, and the pool caps admission at ~18 short requests (`results/2026-09-02-r159-conc-b`, `scripts/r159-conc.sh` + `r159c-live.sh`)
+
+The daily admits 8 streams (`--max-num-seqs 8`). Same shape (RedHat NVFP4 weights, fp8 KV, DFlash2 ns9, TP=2, MNBT 8192, no tier) booted with `--max-num-seqs 64`. At util 0.92 it OOM'd on the first c64 step: `sample_tokens` needs 64 × 10 spec positions × vocab × fp32 = 392 MB of logits the boot profiler never budgets. Util 0.90 (pool 624,284) survived with three allocator OOM-retry warnings during c64.
+
+**llama-benchy pp2048/tg256, T=0.6, 3 runs, one boot:**
+
+| conc | prefill t/s | decode peak agg t/s | TTFT |
+|---|---|---|---|
+| 8 | 9,235 | 1,467 | 1.32 s |
+| 16 | 9,174 | **2,012** | 2.20 s |
+| 32 | 6,604 | 1,934 | 5.01 s |
+| 64 | 5,989 | 1,990 | 10.7 s |
+
+**Steady-state decode (`decode_ss.py`, window = samples with `num_requests_running == c`, 512 tokens, 3 runs):** code c8 **1,147** agg (143/stream, accept 0.27) → c16 **1,533** (96/stream, 0.30); prose c8 **914** (114, 0.20) → c16 **1,213** (76, 0.21). c32 and c64 have **no steady state** even with 2,048-token outputs: `num_requests_running` never exceeded **17**, the rest waited on `capacity`, `kv_cache_usage_perc` read 0.88 with 15 running ~2K-token requests, 38 preemptions.
+
+**Why 17.** vLLM sets the attention block to 1,664 tokens so one attention page equals one mamba page (16 full-attention + 48 GDN layers → 2 mamba groups). Each request holds one block per KV-cache group, and under speculative decoding each mamba group needs `num_speculative_tokens + 1 = 10` state slots for draft rollback: 2 × 10 × 1,664 ≈ **33K tokens of pool per request before any context** (gauges: 21.9 blocks/request incl. 2 attention blocks). A 624K pool therefore admits ~18 short requests; every stream past that is a preemption, which is what the c32/c64 rows are measuring. Cross-check: TP=1 (block 2,864) with MTP ns4 (5 slots) on a 352K pool admits ~12 — the earlier "c16 never reaches 16 running" observation, now explained. Admission scales with pool / ((ns+1) × groups × block), not with `--max-num-seqs`.
+
+Takeaway for the daily: raising `--max-num-seqs` to 16 sits at the pool's natural ceiling and buys ~+34% aggregate with no queueing for streams 9–16, at the cost of per-stream 143 → 96 t/s (code) during bursts. Not promoted.
+
 ## R158 (2026-09-02): DFlash2 on NVFP4 KV — drafter graphs close the single-stream gap (`results/2026-09-02-r158-nvfp4-profile`)
 
 All arms RedHatAI NVFP4 weights, TP=2, `num_speculative_tokens=7`, `draft_tensor_parallel_size=1` (identical drafter), MNBT 8192, util 0.90, no tier; llama-benchy natural T=0.6 pp2048 tg256, runs 3. Profile = torch profiler, 60 decode iterations, rank 0 (`scripts/prof_summary.py`, `scripts/prof_cpu.py`).
