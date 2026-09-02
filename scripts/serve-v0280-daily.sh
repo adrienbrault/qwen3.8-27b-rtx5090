@@ -148,7 +148,7 @@ for i in $(seq 1 60); do
 done
 [ "$AVAIL_KB" -le "$GATE_KB" ] && { echo "FAILED: memory gate timed out at $((AVAIL_KB/1048576))G — refusing to boot into an OOM window"; exit 1; }
 
-sudo docker run -d --name "$NAME" --restart unless-stopped \
+sudo docker run -d --name "$NAME" --restart unless-stopped --oom-score-adj -800 \
   --entrypoint bash --runtime nvidia --gpus all --ipc=host \
   -p ${BIND_ADDR}:${PORT}:8000 --shm-size 8g --memory 52g --memory-swap 52g \
   -e VLLM_ATTENTION_BACKEND=FLASHINFER \
@@ -179,6 +179,11 @@ HEALTHY=0
 for i in $(seq 1 150); do
   curl -sf -m 5 http://${BIND_ADDR}:${PORT}/health >/dev/null 2>&1 && { echo "HEALTHY"; HEALTHY=1; break; }
   timeout 15 sudo docker ps --filter name="$NAME" --format x 2>/dev/null | grep -q x || { echo "FAILED: container died"; sudo docker logs "$NAME" 2>&1 | tail -20; exit 1; }
+  # fail-fast on the TP2 warmup-hang signature (2026-09-02: a worker died with "CUDA error: invalid argument"
+  # in kernel_warmup, the other worker waited forever, and this loop burned the full 25 min twice). Only the
+  # worker ERROR counts — the shm_broadcast "no available block" line alone is normal during cold compiles.
+  if [ "$(timeout 15 sudo docker logs --tail 600 "$NAME" 2>&1 | grep -acE "Worker failed with error|torch.AcceleratorError|CUDA error: (invalid argument|an illegal)")" -ge 1 ]; then
+    H="/tmp/$NAME-warmupfail-$(date +%s).log"; sudo docker logs "$NAME" > "$H" 2>&1; echo "FAILED: worker CUDA error during warmup (hang signature) — aborting early; full log: $H"; grep -aE "AcceleratorError|CUDA error" "$H" | head -3; exit 1; fi
   [ "$(timeout 15 sudo docker inspect "$NAME" --format '{{.RestartCount}}' 2>/dev/null || echo 0)" -gt 0 ] && { echo "FAILED: engine-init crash loop; log: /tmp/$NAME-crash.log"; sudo docker logs "$NAME" > "/tmp/$NAME-crash.log" 2>&1; grep -aE "Error|raise" "/tmp/$NAME-crash.log" | grep -av Qwen3VLVideo | tail -8; timeout 60 sudo docker rm -f "$NAME" >/dev/null 2>&1; exit 1; }
   sleep 10
 done
