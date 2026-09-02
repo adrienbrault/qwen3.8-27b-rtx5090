@@ -37,6 +37,9 @@ PIP_ARM=${PIP_ARM:-0}
 EXTRA_MOUNT=${EXTRA_MOUNT:-}
 FIWS=${FIWS:-134217728}
 PREFIX_CACHE=${PREFIX_CACHE:-1}   # 0 = --no-enable-prefix-caching (ReplaySSM A/B only)
+MMLIMIT=${MMLIMIT:-'{"image":4,"video":0}'}   # R161: --limit-mm-per-prompt JSON; count is free at profile time (profiler encodes encoder_budget//max_item_tokens items)
+MMKW=${MMKW:-}               # R161: --mm-processor-kwargs JSON, e.g. '{"max_pixels":1048576}' caps tokens per image (default cap 16.7 Mpx = 16,384 tok)
+MMKW_LINE=""; [ -n "$MMKW" ] && MMKW_LINE="--mm-processor-kwargs '$MMKW'"
 MAMBA_MODE=${MAMBA_MODE:-align}   # ReplaySSM requires 'none' (loses hybrid prefix caching — R128)
 KVD=${KVD_OVERRIDE:-nvfp4}   # fp8_e4m3 for diagnostics/dflash-fp8 arms
 EXTRA_ENV=${EXTRA_ENV:-}     # extra docker -e flags (e.g. "-e VLLM_SM12X_DFLASH_ADAPTIVE=1")
@@ -162,7 +165,7 @@ sudo docker run -d --name "$NAME" --restart unless-stopped --oom-score-adj -800 
     --kv-cache-dtype $KVD \
     --gpu-memory-utilization $UTIL --max-model-len $MAXLEN \
     --max-num-seqs $SEQS --max-num-batched-tokens $MNBT \
-    --limit-mm-per-prompt '{\"image\":4,\"video\":0}' \
+    --limit-mm-per-prompt '$MMLIMIT' $MMKW_LINE \
     --mamba-cache-mode "$MAMBA_MODE" $([ "$PREFIX_CACHE" = "1" ] && echo "--enable-prefix-caching" || echo "--no-enable-prefix-caching") \
     $SPEC_LINE \
     $KVT_LINE \
