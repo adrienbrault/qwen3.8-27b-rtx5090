@@ -105,7 +105,7 @@ Previous-generation gotchas (LMCache chunk=block, sidecar shm, util ceilings): [
 
 | stack | what | status |
 |---|---|---|
-| [patches-v0280/](patches-v0280/README-sm120-nvfp4.md) | **Current.** vLLM v0.28.0, 0101–0113: NVFP4 routing + overlay + XQA decode + drafter graphs (0101–0104), non-causal/dflash work (0105/0107/0109/0113), sampling guard (0106), GDN hardening (0108), ReplaySSM chunked verify (0111, OFF-default), XQA verify (0112, OFF-default). Per-hunk READMEs in the directory; provenance in [THIRD_PARTY.md](THIRD_PARTY.md). | daily |
+| [patches-v0280/](patches-v0280/README-sm120-nvfp4.md) | **Current.** vLLM v0.28.0, 0101–0113 (+ the 0116–0119/0129 DFlash-on-NVFP4 revival chain, [README-r158](patches-v0280/README-r158-dflash-nvfp4-graphs.md), candidate not daily): NVFP4 routing + overlay + XQA decode + drafter graphs (0101–0104), non-causal/dflash work (0105/0107/0109/0113), sampling guard (0106), GDN hardening (0108), ReplaySSM chunked verify (0111, OFF-default), XQA verify (0112, OFF-default). Per-hunk READMEs in the directory; provenance in [THIRD_PARTY.md](THIRD_PARTY.md). | daily |
 | [patches/rc4/](patches/rc4/README.md) + [patches-nvfp4kv/](patches-nvfp4kv/README.md) | The 0.26/0.27 generation: LMCache tier fixes and the original sm120 NVFP4 overlay. | superseded, reproducible |
 
 ## Rejected

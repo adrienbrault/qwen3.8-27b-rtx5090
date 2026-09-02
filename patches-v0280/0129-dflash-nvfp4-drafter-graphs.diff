@@ -1,0 +1,56 @@
+--- a/vllm/v1/attention/backends/flashinfer.py
++++ b/vllm/v1/attention/backends/flashinfer.py
+@@ -121,6 +121,19 @@
+ 
+ 
+ @cache
++def _sm12x_dflash_graphs_enabled() -> bool:
++    """R158/0129: let the DFlash drafter capture FULL graphs on the SM12x NVFP4 route."""
++    import os
++
++    enabled = os.environ.get("VLLM_SM12X_DFLASH_GRAPHS", "0") == "1"
++    if enabled:
++        logger.info_once(
++            "VLLM_SM12X_DFLASH_GRAPHS=1: SM12x NVFP4 non-causal (DFlash draft) "
++            "attention reports UNIFORM_BATCH graph support (0129)."
++        )
++    return enabled
++
++
+ def _sm12x_xqa_verify_enabled() -> bool:
+     """Whether uniform SM12x NVFP4 speculative verify should use XQA."""
+     import os
+@@ -1107,11 +1120,17 @@
+                 current_platform.is_device_capability_family(120)
+                 and cache_config is not None
+                 and str(cache_config.cache_dtype).startswith("nvfp4")
++                and not _sm12x_dflash_graphs_enabled()
+             ):
+                 # Keep the FA2-NVFP4 non-causal path off the custom 0109
+                 # uniform graph route. The validated upstream path uses the
+                 # ordinary paged wrapper; an eager drafter also isolates it
+                 # from the local XQA decode graph.
++                # R158 (0129): the eager drafter costs ~15% single-stream
++                # (drafter launch-bound: ~50 eager launches/step, GPU idle
++                # 2.8 ms/step at c1). VLLM_SM12X_DFLASH_GRAPHS=1 re-admits the
++                # 0109/0113 graph-bound non-causal wrappers; XQA is off on this
++                # shape so the isolation the eager drafter bought is moot.
+                 return AttentionCGSupport.UNIFORM_SINGLE_TOKEN_DECODE
+             return AttentionCGSupport.UNIFORM_BATCH
+ 
+@@ -1274,8 +1293,14 @@
+             if (
+                 self.enable_cuda_graph
+                 and not self.has_sinks
+-                and not self.use_fa2_nvfp4_kv
++                and (not self.use_fa2_nvfp4_kv or _sm12x_dflash_graphs_enabled())
+             ):
++                # R158/0129: with the drafter capturing FULL graphs, the
++                # non-causal nvfp4 path MUST use the graph-bound pooled
++                # wrappers too; the mutable singleton below re-plans into fresh
++                # device buffers, so a graph captured over it replays stale
++                # plan memory (illegal access at the first warmup decode step,
++                # the R126 mechanism).
+                 assert batch_size > 0
+                 wrapper = self._noncausal_prefill_wrappers_cudagraph.get(batch_size)
+                 if wrapper is None:

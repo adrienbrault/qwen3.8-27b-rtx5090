@@ -1,0 +1,21 @@
+--- a/vllm/v1/attention/backends/flashinfer.py
++++ b/vllm/v1/attention/backends/flashinfer.py
+@@ -860,10 +860,18 @@
+         # Give only the SM12x NVFP4 path graph-bound prefill wrappers; stock
+         # FP8/auto keeps the existing XQA/decode-wrapper behavior byte-for-byte.
+         if self.enable_cuda_graph and self.use_fa2_nvfp4_kv:
++            # DFlash's parallel_drafting flag describes how its draft is
++            # produced. Its target still verifies exactly bonus + N tokens,
++            # so do not apply the generic parallel-draft width multiplier.
++            is_dflash = (
++                speculative_config is not None
++                and speculative_config.method == "dflash"
++            )
+             parallel_draft_multiplier = (
+                 2
+                 if speculative_config is not None
+                 and speculative_config.parallel_drafting
++                and not is_dflash
+                 else 1
+             )
+             self._uniform_decode_query_len = (
