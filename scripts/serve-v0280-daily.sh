@@ -40,6 +40,7 @@ PREFIX_CACHE=${PREFIX_CACHE:-1}   # 0 = --no-enable-prefix-caching (ReplaySSM A/
 MAMBA_MODE=${MAMBA_MODE:-align}   # ReplaySSM requires 'none' (loses hybrid prefix caching — R128)
 KVD=${KVD_OVERRIDE:-nvfp4}   # fp8_e4m3 for diagnostics/dflash-fp8 arms
 EXTRA_ENV=${EXTRA_ENV:-}     # extra docker -e flags (e.g. "-e VLLM_SM12X_DFLASH_ADAPTIVE=1")
+EXTRA_ARGS=${EXTRA_ARGS:-}   # extra vllm serve flags appended verbatim (R158: --profiler-config.profiler=torch ...; --attention-config.use_trtllm_attention=false)
 TP=${TP:-1}                  # R130: tensor parallelism (dual 5090). TP=2 needs NCCL env via
                              # EXTRA_ENV (-e NCCL_P2P_LEVEL=SYS) + POOL band override (~2x)
 TP_LINE=""; [ "$TP" -gt 1 ] && TP_LINE="--tensor-parallel-size $TP"
@@ -171,7 +172,7 @@ sudo docker run -d --name "$NAME" --restart unless-stopped \
     $CC_LINE \
     --default-chat-template-kwargs '{\"preserve_thinking\":true,\"reasoning_effort\":\"medium\"}' \
     --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_xml \
-    --override-generation-config '{\"temperature\":0.6,\"top_p\":0.95,\"top_k\":20}'"
+    --override-generation-config '{\"temperature\":0.6,\"top_p\":0.95,\"top_k\":20}' $EXTRA_ARGS"
 
 echo "launching $NAME (v0.28 nvfp4+XQA+MTP+native-offload) on ${BIND_ADDR}:$PORT ..."
 HEALTHY=0
