@@ -179,7 +179,8 @@ sudo docker run -d --name "$NAME" --restart unless-stopped --oom-score-adj -800 
 
 echo "launching $NAME (v0.28 nvfp4+XQA+MTP+native-offload) on ${BIND_ADDR}:$PORT ..."
 HEALTHY=0
-for i in $(seq 1 150); do
+HEALTH_TRIES=${HEALTH_TRIES:-150}   # ×10 s; experiments may shorten (R162 settle ladder: 45)
+for i in $(seq 1 "$HEALTH_TRIES"); do
   curl -sf -m 5 http://${BIND_ADDR}:${PORT}/health >/dev/null 2>&1 && { echo "HEALTHY"; HEALTHY=1; break; }
   timeout 15 sudo docker ps --filter name="$NAME" --format x 2>/dev/null | grep -q x || { echo "FAILED: container died"; sudo docker logs "$NAME" 2>&1 | tail -20; exit 1; }
   # fail-fast on the TP2 warmup-hang signature (2026-09-02: a worker died with "CUDA error: invalid argument"
@@ -190,7 +191,7 @@ for i in $(seq 1 150); do
   [ "$(timeout 15 sudo docker inspect "$NAME" --format '{{.RestartCount}}' 2>/dev/null || echo 0)" -gt 0 ] && { echo "FAILED: engine-init crash loop; log: /tmp/$NAME-crash.log"; sudo docker logs "$NAME" > "/tmp/$NAME-crash.log" 2>&1; grep -aE "Error|raise" "/tmp/$NAME-crash.log" | grep -av Qwen3VLVideo | tail -8; timeout 60 sudo docker rm -f "$NAME" >/dev/null 2>&1; exit 1; }
   sleep 10
 done
-[ "$HEALTHY" = 1 ] || { H="/tmp/$NAME-hang-$(date +%s).log"; sudo docker logs "$NAME" > "$H" 2>&1; echo "FAILED: /health never came up in 25 min; full log: $H"; tail -20 "$H"; exit 1; }
+[ "$HEALTHY" = 1 ] || { H="/tmp/$NAME-hang-$(date +%s).log"; sudo docker logs "$NAME" > "$H" 2>&1; echo "FAILED: /health never came up in $((HEALTH_TRIES/6)) min; full log: $H"; tail -20 "$H"; exit 1; }
 
 BOOTLOG=$(sudo docker logs "$NAME" 2>&1)
 # fail-closed asserts: every piece of the stack must positively identify itself.
