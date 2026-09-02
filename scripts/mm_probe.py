@@ -102,11 +102,11 @@ def step(name, content, max_tokens):
 ask = ("Each image shows a page with one 4-digit code in a blue box. List the codes in image order as a "
        "comma-separated list, nothing else.")
 parts = [img_part(i) for i in range(1, N + 1)] + [{"type": "text", "text": ask}]
-r = step("cold", parts, 300)
+r = step("cold", parts, 1500)
 found = sum(1 for c in codes[:N] if str(c) in r["text"]); res["cold_codes_found"] = found
 print(f"[{LABEL}] codes found {found}/{N}: {r['text'][:120]!r}")
-step("warm", parts, 300)
-step("plus1", [img_part(i) for i in range(1, N + 2)] + [{"type": "text", "text": ask}], 300)
+step("warm", parts, 1500)
+step("plus1", [img_part(i) for i in range(1, N + 2)] + [{"type": "text", "text": ask}], 1500)
 if DECODE:
     essay = "Write a 600-word essay on the history of pinball machines, plain prose, no lists."
     step("decode_img", [img_part(i) for i in range(1, N + 1)] + [{"type": "text", "text": essay}], 512)

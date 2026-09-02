@@ -82,6 +82,7 @@ Every flag of the two-card configuration, why it is set, and what happens withou
 --limit-mm-per-prompt '{"image":4,"video":0}'
 ```
 
+- `--limit-mm-per-prompt`: 4 images on the daily. Raising the count costs nothing at boot (the profiler encodes one maximum-size image whatever the count; measured at 16 in `results/2026-09-03-r161-images`). A per-image pixel cap via `--mm-processor-kwargs max_pixels` shrinks the profiler reserve and OOMs the autotuner at util 0.92. Launcher knobs: `MMLIMIT`, `MMKW`.
 - The Qwen3.8 template prefills `<think>` and injects a reasoning-effort line; `qwen3` parses the reasoning, `qwen3_xml` parses the tool calls (`hermes` drops them). The tool parser stays on even for clients that parse text themselves: a request that carries `tools` without `tool_choice` is rejected without it.
 - T=0.6 over the model default T=1.0: 90.5 ± 2.1 versus 87.8 ± 1.3 on tool-eval (2026-08-14). A later A/B at the recommended T=1.0 settings confirmed the override (`results/2026-08-27-recsettings`).
 - `preserve_thinking` keeps earlier `<think>` blocks across turns when the client resends them in the `reasoning` field. Effort `medium` is the default; `xhigh` livelocked an evaluation engine once and scored flat on SWE-Bench.
