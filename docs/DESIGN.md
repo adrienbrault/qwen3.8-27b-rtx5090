@@ -1,44 +1,50 @@
 # Design notes
 
-Why the weights, where the VRAM goes, what the host contributes. Numbers are measured on this box; protocols in [../bench/RESULTS.md](../bench/RESULTS.md).
+Why the weights, why the model, where the VRAM goes, and why the second card helps the way it does. Numbers are measured on this hardware; protocols in [../bench/RESULTS.md](../bench/RESULTS.md).
 
 ## Why W4A4 weights
 
-Prefill is a compute-bound GEMM, so its speed is set by which tensor-core path the quant format dispatches, and that is decided by the activation format:
+Prefill is a compute-bound GEMM, so its speed is set by which tensor-core path the quantization format dispatches. That is decided by the activation format, not the weight format:
 
-| format | tensor-core path | relative GEMM rate | prefill measured here |
+| format | tensor-core path | relative GEMM rate | prefill measured here at 8K |
 |---|---|---|---|
-| W4A4 (NVFP4, the daily) | native FP4 (Blackwell) | ~4× bf16 | 12.8–13.5K t/s at 8K |
-| W8A8 (fp8) | fp8 | ~2× bf16 | (attention layers of NVIDIA's export) |
-| W4A16 (AutoRound, GPTQ, AWQ) | bf16 + inline dequant | ~1× bf16 | ~4.0K t/s at 8K (2026-07 daily) |
+| W4A4 (NVFP4, served) | native FP4 (Blackwell) | ~4× bf16 | 11.9K to 13.5K t/s |
+| W8A8 (fp8) | fp8 | ~2× bf16 | attention layers of NVIDIA's export only |
+| W4A16 (AutoRound, GPTQ, AWQ) | bf16 with inline dequant | ~1× bf16 | ~4.0K t/s |
 
-Weight-only quants save bandwidth and decode fast, but prefill no faster than bf16. W4A4 quantizes activations on the fly and runs the GEMM on the FP4 units. The activation-quant quality cost was bounded at about 1 tool-eval point in 2026-07 by a chimera checkpoint A/B (W4A4 MLPs + fp8 attention); the calibrated export covers it.
+Weight-only quantization saves bandwidth and decodes fast, but prefills no faster than bf16. W4A4 quantizes activations on the fly and runs the GEMM on the FP4 units. The activation-quantization quality cost was bounded at about one tool-eval point by a checkpoint A/B in 2026-07 (W4A4 MLPs with fp8 attention versus all-W4A4), and the bf16-anchored fidelity ladder of 2026-09 put the best W4A4 checkpoints within +0.37% perplexity of bf16.
 
-The model shape that fits a 32 GB Blackwell card for long-context agents, which this checkpoint is:
+## Why this model
 
-1. A hybrid layout (48 GDN linear-attention + 16 full-attention layers): linear layers pay a fixed per-sequence state instead of per-token KV.
-2. W4A4 on the MLPs with real calibration.
-3. An attention stack and KV cache that tolerate low-precision KV: fp8 passed every concurrency gate; nvfp4 passes them on the V2 runner with the FA2 path and the store overlay.
-4. An MTP draft head in the checkpoint (0.8 GiB, about 2× single-stream decode) and a compact vision tower.
-5. A clean compressed-tensors export that vLLM auto-detects (no `--quantization` flag) with an unquantized `lm_head`.
+Qwen3.8-27B fits long-context agents on a 32 GB card because of its layout:
+
+1. A hybrid of 48 GDN linear-attention layers and 16 full-attention layers. Linear layers pay a fixed per-sequence state instead of per-token KV, so only a quarter of the layers grow with context.
+2. Calibrated W4A4 exports exist from several quantizers; the recipe matters more than the bit width (see the checkpoint section of the [README](../README.md#the-checkpoint)).
+3. The attention stack tolerates low-precision KV: fp8 KV costs +0.13 percentage points of perplexity and passes every concurrency gate; NVFP4 KV costs +0.76 and works on one card with the store overlay.
+4. An MTP draft head ships in the checkpoint (0.8 GiB), and DFlash2 drafters exist for it.
+5. A compact vision tower, and a clean compressed-tensors export that vLLM detects without a `--quantization` flag.
 
 ## Where the VRAM goes
 
-Measured from the boot log (`gpu_worker` prints the breakdown) on the 2026-07-19 W4A4 export; the 3.8 export has the same tensor layout and size, and the KV rows are from the 2026-08-21 daily.
+One card, measured from the boot log (`gpu_worker` prints the breakdown) on the 2026-07 W4A4 export; the Qwen3.8 exports have the same tensor layout and size.
 
 | slice | GiB | notes |
 |---|---:|---|
-| weights | 19.5 | language model 12.8 (64 hybrid layers, NVFP4 W4A4 + block scales), embeddings 2.4 and lm_head 2.4 (bf16), vision tower 0.9, MTP drafter 0.8 |
-| KV pool, nvfp4 KV | ≈ 8.1 | 309,090 tokens at util 0.93 (fp8 KV at 0.95: 208,450 tokens in ≈ 7.9) |
-| LMCache sidecar | 0.78 | 796 MiB of CUDA context, invisible to `--gpu-memory-utilization` |
-| activation reserve, CUDA graphs, autotune workspace | remainder | sized by profiling at `mnbt` 5727; the FlashInfer autotuner allocates at serve time on the first new shape (gotcha 4) |
+| weights | 19.5 | language model 12.8 (64 layers, NVFP4 W4A4 plus block scales), embeddings 2.4 and lm_head 2.4 (bf16 in that export), vision tower 0.9, MTP drafter 0.8 |
+| KV pool, nvfp4 KV | ≈ 8.1 | 309,090 tokens at util 0.93 in 2026-08; 381,300 at 0.955 on the v0.28 stack |
+| activation reserve, CUDA graphs, autotune workspace | remainder | sized by profiling at the prefill chunk; the FlashInfer autotuner allocates more at serve time on the first new batch shape |
 
-Why nvfp4 KV gives +48% and not ×1.8: only the 16 attention layers' KV shrinks; GDN state and activations do not. With MTP off the same engine reads 415–444K: the drafter's lookahead costs 120–150K tokens of pool.
+Why NVFP4 KV gives +48% pool over fp8 and not ×1.8: only the 16 attention layers' KV shrinks. GDN state and activations do not. With MTP off the same engine reads 415K to 444K tokens; the drafter's lookahead costs 120K to 150K tokens of pool.
 
-What a cache hit is worth (60K context, 2026-08-21 on the nvfp4 tier daily): in-pool revisit ≈ 1 s; DRAM tier ≈ 1–2 s; NVMe tier after a restart 3.3 s; full re-prefill 11.6 s. Tier capacities in tokens have not been re-measured for nvfp4 pages; a serialized page is 1152 bytes per token for the attention layers (8 heads × 144 bytes) plus the GDN state page.
+## Why the second card helps the way it does
 
-Effective deep concurrency is pool-bound: four 50K-token agent sessions fill the hot pool; the fifth demotes to a tier and comes back in seconds.
+Tensor parallelism across two RTX 5090s splits the weights and the KV pool. Two consequences follow, and they explain the two-card table in the [README](../README.md#the-three-configurations):
 
-## Host
+- Speculative decoding with low acceptance (DFlash2, 0.12 to 0.30 accepted per draft token depending on content) is bound by weight bandwidth per step. The second card doubles that, so single-stream decode rises 37% to 71% and stays flat from the surface to 100K context.
+- Speculative decoding with high acceptance (MTP, about 0.37) amortizes the weight reads over more tokens per step. The second card then buys KV space and admission headroom instead: a 1.5M-token pool and the best aggregate throughput at 16 streams.
 
-RTX 5090 32 GB with a memory-only overclock (+4500 MHz, 16,051 MHz effective vs 14,001 stock) at the 600 W power limit, core stock, persisted by a systemd unit; Ryzen 9 5900X; 64 GB RAM (24 GiB pinned by the L1 tier); NVMe with 200 GiB reserved for L2; Ubuntu 24.04; swap off. Commands in [CONFIG.md](CONFIG.md#host).
+Decode allreduces go through vLLM's custom allreduce over PCIe peer-to-peer. NCCL transport settings measured neutral for decode. The memory-clock offset delivers its full 15% bandwidth gain in silicon on both cards, but TP=2 decode gains only about 4% from it, because at TP=2 decode is co-bound by allreduce latency and drafter compute.
+
+## What a cache hit is worth
+
+60K context on the 2026-08 one-card stack: in-pool revisit about 1 s, DRAM tier 1 to 2 s, NVMe tier after a restart 3.3 s, full re-prefill 11.6 s. On the two-card stack a 32K warm revisit from the disk tier takes 0.45 s against 7.5 s cold. An agent step resends its whole transcript, so nearly every agent request is a long prefix revisit.

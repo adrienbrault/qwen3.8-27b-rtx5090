@@ -1,71 +1,79 @@
-# Every flag, and why (daily of 2026-08-21)
+# Configuration of the served engine
 
-The launcher is [`../scripts/serve-tier-rc4.sh`](../scripts/serve-tier-rc4.sh); its inline comments are canonical. This page gives the reason and the failure mode for each flag. Previous generations (TurboQuant, AutoRound, the 0.23 base) are in [HISTORY.md](HISTORY.md).
+Every flag of the two-card configuration, why it is set, and what happens without it. The launchers are [`scripts/serve-r156-daily.sh`](../scripts/serve-r156-daily.sh) (sets the two-card values and calls the generic launcher) and [`scripts/serve-v0280-daily.sh`](../scripts/serve-v0280-daily.sh) (the generic launcher, whose defaults are the one-card configuration). Inline comments in the scripts are the reference when the two disagree. Earlier generations are in [HISTORY.md](HISTORY.md) and [archive/](archive/).
+
+## Image
+
+`vllm-qwen38:v0280-nvfp4kv` = `vllm/vllm-openai:v0.28.0` plus [`patches-v0280/`](../patches-v0280/README-sm120-nvfp4.md). The two-card configuration uses from it: the DFlash2 quantized-drafter loader (0107), the DFlash2 selector sampling guard (0106), the GDN kernel hardening (0108) and the speculator CUDA graphs (0113). The one-card configuration additionally needs the NVFP4 KV cache pieces: FA2 routing (0101), the linear V-scale store overlay (0102), XQA decode (0103) and drafter graphs (0104). No GPU is needed to build the image.
 
 ## Container
 
 ```bash
--e VLLM_USE_V2_MODEL_RUNNER=1
+--runtime nvidia --gpus all --ipc=host --shm-size 8g
+--memory 52g --memory-swap 52g --oom-score-adj -800
+-p ${BIND_ADDR}:${PORT}:8000
 ```
-The V2 GPU model runner. Measured 2026-08-21 on the fp8 tier profile against the V1 runner the same hour: decode c1 128 → 152, c4 309 → 360, 30K-deep c1 119 → 143 t/s ([V2RUNNER.md](V2RUNNER.md)). The MTP cliff at ≥50K prompt tokens in flight with nvfp4 KV (R77) is gone on it. Known wart on nightly `ba07e4a48`: one boot in six raised an `ImportError` (undefined cutlass symbol in `_C_stable_libtorch`) in the spawned engine-core child; a retry boots clean. At util 0.98 on the plain profile the first request OOMs inside the FlashInfer `fp4_gemm` autotuner; keep util at 0.95 (fp8) or 0.93 (nvfp4).
+
+- `--ipc=host` and `--shm-size 8g`: the tensor-parallel workers' message queues and the KV connector's staging buffer live in shared memory. 8 GB is the value validated on this host.
+- `--memory 52g`: on a 64 GB host the engine plus the 4 GiB CPU KV staging buffer must leave room for the OS and the clients. Uncapped, an engine swap has driven the host into swap-less thrash.
+- `--oom-score-adj -800`: if the host runs out of memory, the kernel should kill a client, not the engine.
 
 ```bash
 -e VLLM_ATTENTION_BACKEND=FLASHINFER
--e VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE=134217728
-```
-FlashInfer is the only backend with the FA2 nvfp4 KV path on sm120. The workspace cap (128 MiB) bounds the lazily allocated autotune buffer; perf-neutral in every regime measured.
-
-```bash
--e LMCACHE_MP_GPU_STAGING_BATCH_SIZE=1 -e CUDA_MODULE_LOADING=LAZY
-```
-The sidecar's VRAM diet: 1,412 → 796 MiB, which is what buys the tier profile its utilization.
-
-```bash
+-e VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE=268435456   # 256 MiB (128 MiB one card)
+-e CUDA_MODULE_LOADING=LAZY -e PYTHONHASHSEED=0
 -e TORCHINDUCTOR_COMPILE_THREADS=8 -e MAX_JOBS=4 -e FLASHINFER_NUM_COMPILE_JOBS=4
--v .../cache/torch_compile_<profile>:/root/.cache/vllm/torch_compile_cache
--v .../cache/triton:/root/.triton/cache -v .../cache/inductor:/root/.cache/inductor
--v .../cache/flashinfer:/root/.cache/flashinfer
+-e NCCL_P2P_LEVEL=SYS                                 # two cards only
+-v $CACHE_DIR/torch_compile_<profile>:/root/.cache/vllm/torch_compile_cache
+-v $CACHE_DIR/triton:/root/.triton/cache -v $CACHE_DIR/inductor:/root/.cache/inductor
+-v $CACHE_DIR/flashinfer:/root/.cache/flashinfer
+-v $L2MNT:/l2 -v $MODEL_DIR:/model -v $DRAFT:/draft:ro
 ```
-Cap the JIT parallelism and persist the caches. Unbounded `nvcc` on the first forward has livelocked the host (64 GB RAM). One torch.compile cache per KV dtype: the captured graphs differ.
 
-`--ipc=host --entrypoint bash`: CUDA-IPC between engine and sidecar needs host IPC; the image entrypoint is `vllm serve` and would swallow the `bash -c`. Never `PYTORCH_ALLOC_CONF=expandable_segments`: cuMem/VMM memory is not CUDA-IPC-exportable ([pytorch#165685](https://github.com/pytorch/pytorch/issues/165685), [vllm#29544](https://github.com/vllm-project/vllm/issues/29544)) and `register_kv_caches` silently times out after 300 s.
+- FlashInfer is the only backend with the sm120 NVFP4 KV path and the XQA decode kernel. The workspace cap bounds the lazily allocated autotune buffer; the two-card DFlash2 shape needs 256 MiB because the target and the drafter both allocate scale scratch.
+- The compile-job caps and the persisted caches exist because an unbounded first-forward JIT once consumed all 64 GB of host RAM. One torch.compile cache per profile, because the captured graphs differ between KV dtypes.
+- `PYTHONHASHSEED=0` makes the prefix-cache hashing and the tier namespace stable across boots.
+- `NCCL_P2P_LEVEL=SYS` lets NCCL use the patched driver's peer-to-peer path. Decode allreduces go through vLLM's custom allreduce regardless, so this affects NCCL-carried collectives only.
 
-## Sidecar
+## Model and parallelism
 
 ```bash
-lmcache server --host 0.0.0.0 --port 5555 --chunk-size 2864 \
-  --l1-size-gb 24 --l1-init-size-gb 2 --eviction-policy LRU --worker-reap-timeout-seconds 0 \
-  --l2-adapter '{"type":"fs_native","base_path":"/l2","max_capacity_gb":200,"num_workers":4,"eviction":{"eviction_policy":"LRU","trigger_watermark":0.8,"eviction_ratio":0.2}}'
+--model /model --served-model-name qwen3.8-27b qwen3.6-27b --trust-remote-code
+--tensor-parallel-size 2                # two cards only
+--kv-cache-dtype fp8_e4m3               # nvfp4 on one card
+--gpu-memory-utilization 0.92           # 0.955 one card; 0.90 two-card MTP
+--max-model-len 262144 --max-num-seqs 8 --max-num-batched-tokens 8192
 ```
-- `--chunk-size` must equal vLLM's unified hybrid block, which vLLM logs at boot ("Setting attention block size to N tokens to ensure that attention page size is >= mamba page size"): 2864 with nvfp4 KV, 1616 with fp8 KV (1568 without MTP). The launcher derives it from `KVDTYPE`.
-- `--l1-size-gb 24`: pinned host RAM; `drop_caches` first. It must exceed the hot working set / 0.8 or LRU evicts the oldest session's head chunks first and the hit rate goes to 0%.
-- `--worker-reap-timeout-seconds 0`: the default reaper (120 s + a lazily started heartbeat) reaps the worker after one long idle span and the cache becomes a zombie (`found_count=0`, stores dropped).
-- The `eviction` block is what evicts; patches 0008/0009 make `max_capacity_gb` enforced and add watermark LRU. Unpatched, L2 grew to 876 GB against a 60 GB cap. Use a fresh L2 directory per stack generation: on-disk page format and namespace change with the KV dtype and the LMCache build.
 
-## Engine
+- `fp8_e4m3` KV on two cards: DFlash2 drafts read the target's KV non-causally, and that read path is not yet clean on NVFP4 pages at TP=2 (the candidate in [`scripts/serve-nvfp4-candidate.sh`](../scripts/serve-nvfp4-candidate.sh) works around it by disabling XQA). fp8 KV costs +0.13 percentage points of perplexity versus bf16 KV and does not grow with context.
+- Utilization is set per shape by the pool band the launcher asserts: 0.92 gives 654,491 or 628,798 tokens on this shape (the profiler's activation estimate is bimodal). Higher values OOM inside the FlashInfer autotuner on the first new batch shape, which no boot-time probe can see.
+- `--max-num-seqs 8`: on this shape admission is bounded by the KV pool, not by this flag. 16 fits for short requests and raises aggregate decode about 34% at the cost of per-stream speed; 64 OOMs the speculative sampler at util 0.92. Measured in `results/2026-09-02-r159-conc-b`.
+- `--max-num-batched-tokens 8192`: the prefill chunk. Larger chunks want more autotune workspace than the utilization leaves.
 
-```bash
---kv-cache-dtype nvfp4
-```
-NVFP4 KV: E2M1 values, one FP8 E4M3 scale per 16 elements, 0.5625 B/element. Pool 309,090 at util 0.93 vs 208,450 for `fp8_e4m3` ([NVFP4KV.md](NVFP4KV.md)). Requires the nvfp4kv patch stack on sm120: PR #49891's FA2 routing and the linear-V-scale store overlay. Without the overlay the writer emits SM100-swizzled V scales that the FA2 reader addresses linearly; behavioural probes pass anyway and the attention error is 2.7–10× higher. `nvfp4_4over6` (scale chosen so the block max maps to 4) measured no better (tool-eval 88.5 vs 89 on the plain profile, R80).
+## Speculative decoding
 
 ```bash
---kv-transfer-config '{"kv_connector":"LMCacheMPConnector","kv_role":"kv_both"}'
+--speculative-config '{"method":"dflash","model":"/draft","num_speculative_tokens":9}'   # two cards
+--speculative-config '{"method":"qwen3_5_mtp","num_speculative_tokens":4}'              # one card
 ```
-The only connector that handles this hybrid's opaque GDN state pages. On the V2 runner it attaches as-is; the tier correctness gates (needles cold/warm, restart-proof revisit, concurrent loaders) passed on both fp8 and nvfp4 pages on 2026-08-21.
+
+- Two cards: the [syvai W4A16 DFlash2 drafter](https://huggingface.co/syvai/Qwen3.8-27B-DFlash2-W4A16), 9 draft tokens. Tensor parallelism halves the verify cost, which is why 9 beats the 7 that was optimal on one card. The bf16 original drafter costs 6.5% code decode at 8 streams and 46K tokens of pool for no acceptance gain.
+- One card: the checkpoint's own MTP head, 4 draft tokens. DFlash2 on one card costs two thirds of the context window because the drafter's KV is sized for the full context.
+- Async scheduling stays on (the vLLM 0.28 default). `--no-async-scheduling` costs 21% prose and 29% code single-stream decode.
+
+## KV disk tier
 
 ```bash
---max-num-batched-tokens 5727          # = 2·chunk − 1 (3231 with fp8 KV)
---gpu-memory-utilization 0.93 --max-model-len 262144 --max-num-seqs 8
+--kv-transfer-config '{"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":4294967296,"offload_prompt_only":true,"secondary_tiers":[{"type":"fs","root_dir":"/l2","n_read_threads":16,"n_write_threads":4}]}}'
+--enable-prefix-caching --mamba-cache-mode align
 ```
-LMCache's MP connector requires batched tokens in [chunk, 2·chunk). The larger chunk of nvfp4 KV is why its prefill (12.8K t/s at 8K) beats the fp8 tier profile's (9.7K). Let vLLM profile the pool; `--kv-cache-memory` hints ignore warmup transients. The pool varies about ±6% boot to boot on this nightly; the launcher's band is 285–335K.
 
-```bash
---speculative-config '{"method":"qwen3_5_mtp","num_speculative_tokens":4}'
---no-async-scheduling
---mamba-cache-mode align --enable-prefix-caching --enable-chunked-prefill
-```
-MTP `ns=4` with the checkpoint's own draft head. Async scheduling off: about 1 tool-eval point with MTP on this hybrid, and the historical cause of KV corruption under spec decode ([vllm#42655](https://github.com/vllm-project/vllm/issues/42655)). `align` packs the GDN state into the unified KV pool, gives LMCache a scheduler-sized page to store, and is worth about 3 tool-eval points with spec decode (91 with, 87–88.5 without, 2026-08-15 ladder).
+- vLLM's native offloading connector: a 4 GiB pinned CPU staging tier in front of a filesystem tier at `/l2`. It replaced LMCache in 2026-08 (no sidecar process, no 24 GiB pinned DRAM, no chunk-equals-block constraint).
+- `offload_prompt_only`: offloading decode-phase blocks cost 1.8 tool-eval points in write stalls; prefix reuse only hits prompt blocks anyway.
+- The filesystem tier has no eviction and no enforced capacity. The launcher requires the tier to be a fixed-size loopback filesystem ([`scripts/setup-native-l2.sh`](../scripts/setup-native-l2.sh)), refuses to boot with under 5 GB free, wipes stale namespaces, and stamps the tier with the checkpoint name because the tier's namespace is derived from the mount path rather than the weights. [`scripts/tier-evict.sh`](../scripts/tier-evict.sh) adds watermark eviction as a timer.
+- `--mamba-cache-mode align` packs the GDN state into the unified KV block so the hybrid's state can be prefix-cached and offloaded. Worth about 3 tool-eval points with speculative decoding.
+
+## Chat, tools, sampling
 
 ```bash
 --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_xml
@@ -73,15 +81,15 @@ MTP `ns=4` with the checkpoint's own draft head. Async scheduling off: about 1 t
 --default-chat-template-kwargs '{"preserve_thinking":true,"reasoning_effort":"medium"}'
 --limit-mm-per-prompt '{"image":4,"video":0}'
 ```
-Qwen3.8's template prefills `<think>` and injects a reasoning-effort system line; `qwen3` parses it, `qwen3_xml` is the tool format (`hermes` drops calls). T=0.6 over the model default T=1.0 was measured on 2026-08-14: 90.5 ± 2.1 vs 87.8 ± 1.3 on a 69×4. Reasoning effort `medium` is the daily default; `xhigh` livelocked an eval engine on 2026-08-15. `preserve_thinking` keeps prior `<think>` blocks across turns if the client resends them in the `reasoning` field (not `reasoning_content`, which vLLM ignores on input). The tool parser is on even for harnesses that parse text themselves: a request that carries `tools` without `tool_choice` defaults to `auto` and is rejected without it.
+
+- The Qwen3.8 template prefills `<think>` and injects a reasoning-effort line; `qwen3` parses the reasoning, `qwen3_xml` parses the tool calls (`hermes` drops them). The tool parser stays on even for clients that parse text themselves: a request that carries `tools` without `tool_choice` is rejected without it.
+- T=0.6 over the model default T=1.0: 90.5 ± 2.1 versus 87.8 ± 1.3 on tool-eval (2026-08-14). A later A/B at the recommended T=1.0 settings confirmed the override (`results/2026-08-27-recsettings`).
+- `preserve_thinking` keeps earlier `<think>` blocks across turns when the client resends them in the `reasoning` field. Effort `medium` is the default; `xhigh` livelocked an evaluation engine once and scored flat on SWE-Bench.
 
 ## Host
 
-Memory-only overclock, +4500 MHz VRAM offset at the 600 W limit, core stock; decode is bandwidth-bound so the memory clock is the only knob that moves it. All throughput numbers in this repo are with this offset. Reproduce:
-
-```bash
-sudo nvidia-smi -pm 1 && sudo nvidia-smi -pl 600 && sudo nvidia-smi -rgc
-sudo python3 -c "import pynvml as N; N.nvmlInit(); h=N.nvmlDeviceGetHandleByIndex(0); N.nvmlDeviceSetGpcClkVfOffset(h,0); N.nvmlDeviceSetMemClkVfOffset(h,4500)"
-```
-
-Verify with `nvidia-smi -q -d CLOCK`. Disable swap: over-committing RAM next to a 24 GiB pinned tier hard-hangs the box instead of failing fast.
+- GPU: persistence mode on, power limits 600 W and 575 W, memory clock offset +4500 MHz on both cards, core stock: [`scripts/gpu-tune.sh`](../scripts/gpu-tune.sh). The legacy NVML offset call silently no-ops on driver 610; the script uses the clock-offsets API and verifies by readback.
+- Driver 610.57.04 with the QuixiAI peer-to-peer modules: [`scripts/gpu-p2p-610.sh`](../scripts/gpu-p2p-610.sh).
+- Swap off. A host that runs out of memory next to pinned buffers hangs instead of failing.
+- [`scripts/setup-earlyoom.sh`](../scripts/setup-earlyoom.sh): kills the largest client process at 5% available memory, never the engine, Docker or k3s.
+- Kernel panic on hung task or soft lockup, so a wedged host reboots instead of staying wedged.
