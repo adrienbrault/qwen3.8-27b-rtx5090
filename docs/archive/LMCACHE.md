@@ -1,6 +1,8 @@
 # LMCache KV tiers — the profile, and what removing it changes
 
-The daily runs LMCache 0.5.4rc4's MP connector with the [rc4 patch stack](../patches/rc4/README.md) on top of an NVFP4 KV cache. Launcher: [`../scripts/serve-tier-rc4.sh`](../scripts/serve-tier-rc4.sh).
+> **Archived.** Documents the LMCache tier generation (2026-07 to 2026-08-28). The served configuration now uses vLLM's native offloading connector; see [../CONFIG.md](../CONFIG.md).
+
+The daily runs LMCache 0.5.4rc4's MP connector with the [rc4 patch stack](../../patches/rc4/README.md) on top of an NVFP4 KV cache. Launcher: [`../scripts/serve-tier-rc4.sh`](../../scripts/serve-tier-rc4.sh).
 
 ## Current profile (2026-08-21)
 
@@ -22,7 +24,7 @@ Tier capacities in tokens have not been re-measured for nvfp4 pages; the 2026-07
 
 ## What removing LMCache changes
 
-The same engine without the connector is the plain profile ([`../scripts/serve-nvfp4kv.sh`](../scripts/serve-nvfp4kv.sh) with `EXTRA_ENV="-e VLLM_USE_V2_MODEL_RUNNER=1"`). Measured 2026-08-21 on the V2 runner:
+The same engine without the connector is the plain profile ([`../scripts/serve-nvfp4kv.sh`](../../scripts/serve-nvfp4kv.sh) with `EXTRA_ENV="-e VLLM_USE_V2_MODEL_RUNNER=1"`). Measured 2026-08-21 on the V2 runner:
 
 | | tiers on (daily) | plain |
 |---|---|---|
@@ -37,7 +39,7 @@ The same engine without the connector is the plain profile ([`../scripts/serve-n
 
 Drop the tiers when prompts are mostly fresh, when you cannot carry the rc4 patches, or when the host lacks the pinned RAM. Keep them when agents share large prefixes or sessions are revisited across hours and restarts.
 
-The agentic A/B that motivated the tiers (16 SWE-Bench-Verified tasks at 4 concurrent agents: 3.4× wall-clock with tiers on, external prefix hit 88.8%) and the concurrency sweep (c4 is the knee; past it streams evict each other's prefixes out of L1) were measured in 2026-07 on the previous model and are in [../bench/RESULTS.md](../bench/RESULTS.md#archive--qwen36-era-2026-07). The mechanism has not changed: an agent step resends its whole transcript, so nearly every request is a long prefix revisit.
+The agentic A/B that motivated the tiers (16 SWE-Bench-Verified tasks at 4 concurrent agents: 3.4× wall-clock with tiers on, external prefix hit 88.8%) and the concurrency sweep (c4 is the knee; past it streams evict each other's prefixes out of L1) were measured in 2026-07 on the previous model and are in [../bench/RESULTS.md](../../bench/RESULTS.md#archive-qwen36-era-2026-07-and-the-2026-08-15-re-platform). The mechanism has not changed: an agent step resends its whole transcript, so nearly every request is a long prefix revisit.
 
 ## Why a tier that looks fine can be wrong
 
@@ -50,4 +52,4 @@ Four rounds in 2026-07 ended in a confident, wrong "validated":
 
 Coherent output and rising hit counters are compatible with a completely broken cache. The discriminating test is a needle planted in a long context and retrieved after a restart, and it is the first gate in every audition since. The same lesson applied to the nvfp4 store overlay in 2026-08: needles and tool-eval passed with the wrong writer; only a numeric diagnostic caught it.
 
-The investigation as it unfolded is archived in [HISTORY.md](HISTORY.md#archive--the-2026-07-lmcache-investigation-vllm-024--lmcache-051--the-023-base).
+The investigation as it unfolded is archived in [HISTORY.md](../HISTORY.md#archive-the-2026-07-lmcache-investigation-vllm-024--lmcache-051--the-023-base).

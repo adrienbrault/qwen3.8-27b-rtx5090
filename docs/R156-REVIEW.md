@@ -1,7 +1,7 @@
 # R155/R156 — critical review of 2026-09-01 (measurements, reliability, conclusions)
 
 Written at the user's request after shutdown ("I question a lot some of the measurements
-reliability, and so some of the insights/decisions out of these"). Raw results live on flan (off),
+reliability, and so some of the insights/decisions out of these"). Raw results live on the serving host (off at the time),
 so this audits the CODE that produced each number, the recorded n/CIs, and the reasoning — it does
 not re-run anything. Confidence labels: HIGH / MEDIUM / LOW / RETRACT.
 

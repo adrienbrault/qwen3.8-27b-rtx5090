@@ -1,12 +1,14 @@
 # DFlash2 instead of MTP — measured on the 5090 (2026-08-21)
 
+> **Archived.** The first DFlash2 audition on one card (2026-08-21, rejected). DFlash2 with a quantized drafter across two cards became the served configuration on 2026-08-31; see [../CONFIG.md](../CONFIG.md) and [../../bench/RESULTS.md](../../bench/RESULTS.md).
+
 **Status: measured, rejected for this box.** [DFlash2](https://inco.ai/blog/dflash2/) (block-parallel drafter + candidate selector + local convolutions, vLLM [PR #52816](https://github.com/vllm-project/vllm/pull/52816), merged 2026-08-21) decodes at 164 t/s single-stream and is lossless on tool-eval — but so does MTP on the same runner (160 t/s), and DFlash2 pays for its 3% with two thirds of the context window and −30% at c4. The +34% headline against our served MTP was the V2 model runner / newer nightly, not the drafter. Full detail in the repo's FINDINGS R78.
 
 ## Stack
 
-- Base: nightly `ba07e4a48` (the newest nightly image, cut 100 minutes *before* the PR merged) + the PR as a Python/Triton patch — [`patches-dflash2/`](../patches-dflash2/) (Dockerfile + diff). No kernel build.
+- Base: nightly `ba07e4a48` (the newest nightly image, cut 100 minutes *before* the PR merged) + the PR as a Python/Triton patch — [`patches-dflash2/`](../../patches-dflash2/) (Dockerfile + diff). No kernel build.
 - Drafter: [`incoai/Qwen3.8-27B-DFlash2`](https://huggingface.co/incoai/Qwen3.8-27B-DFlash2) (= z-lab's), 3.85 GB bf16, 5 layers tapping target layers 5/19/33/47/61, SWA-2048, block 8.
-- Target: the daily's saka W4A4 checkpoint, fp8 KV, plain profile. Launcher: [`scripts/serve-dflash2.sh`](../scripts/serve-dflash2.sh).
+- Target: the daily's saka W4A4 checkpoint, fp8 KV, plain profile. Launcher: [`scripts/serve-dflash2.sh`](../../scripts/serve-dflash2.sh).
 - Gotchas that bite: `method` is `dflash` (the 2 comes from the draft's architecture); `num_speculative_tokens` **must be 7**; `--async-scheduling` is refused; greedy is unsupported by the selector; it **forces the V2 model runner**; the drafter does not receive multimodal embeddings (vision requests draft blind); the merged PR reads the target LM head through `LogitsProcessor`, so an unquantized-but-compressed-tensors `lm_head` works without #52883.
 
 ## Numbers (RTX 5090, Qwen3.8-27B saka W4A4 + fp8 KV, T=0.6, effort medium, llama-benchy)

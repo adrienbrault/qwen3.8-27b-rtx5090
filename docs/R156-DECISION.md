@@ -1,7 +1,7 @@
 # R156 — Promotion decision sheet: keep the daily, or switch to RedHat?
 
 **Status: DECIDED 2026-09-02 — user: "Lets go redhat". Promoted (FINDINGS R156f); rollback `launch-daily-gittensor-0831.sh`. Evidence below is as it stood at the decision.**
-Reviewed 2026-09-01 evening — reliability audit in `flan/r156-REVIEW.md`; numbers below carry its labels.
+Reviewed 2026-09-01 evening — reliability audit in [R156-REVIEW.md](R156-REVIEW.md); numbers below carry its labels.
 
 Campaign question (user, 2026-09-01): *"thorough testing/measurement of bf16 vs our current daily …
 I want to understand what we're missing"*, later reframed: *"with the dual/tp2 setup, I think it's

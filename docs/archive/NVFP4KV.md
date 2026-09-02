@@ -1,18 +1,20 @@
 # NVFP4 KV cache on the 5090 — measured (2026-08-21)
 
+> **Archived.** First port of the NVFP4 KV cache to sm120 on the 2026-08-21 nightly. The current port is [`patches-v0280/`](../../patches-v0280/README-sm120-nvfp4.md); the served two-card configuration uses fp8 KV ([../CONFIG.md](../CONFIG.md)).
+
 **Status: the daily since 2026-08-21 evening, with the LMCache tiers (below).** It boots, retrieval is clean, decode is at or above the fp8 daily, and the pool is +37% — but one MTP-specific throughput cliff is open, tool-eval is ~1.5 pts under fp8, and it runs without LMCache (the tier patches are fp8-page-specific). Numbers below are from one afternoon on one box; treat them as a first measurement, not a record.
 
 The starting point was [drowzeys' DGX-Spark repo](https://github.com/drowzeys/keys-vLLm.0.27-Qwen3.8-27B-ADay777Ablit-NVFP4-A4Q-NVFP4-KV-4M-KV-token-pool-MTP3-Single-DGX-Spark): "back-porting the upstream FA2 NVFP4-KV path to GB10 takes the KV pool to >4M tokens". 4M is a 121 GB box; on 32 GB the same path gives the numbers below.
 
 ## What the stack is
 
-Three pieces, all in [`patches-nvfp4kv/`](../patches-nvfp4kv/) (README there has the mechanism table, build and gauntlet):
+Three pieces, all in [`patches-nvfp4kv/`](../../patches-nvfp4kv/) (README there has the mechanism table, build and gauntlet):
 
 1. **FlashInfer's FA2 NVFP4-KV attention for sm120/121 (head_dim 256)** — merged, already inside the nightly's FlashInfer (0.6.16.post3 here; 0.6.17 on current main). Nothing to build.
 2. **vLLM routing, [PR #49891](https://github.com/vllm-project/vllm/pull/49891) (ch2lab, open)** — on sm120 send `--kv-cache-dtype nvfp4` to the FA2 wrappers instead of trtllm-gen, HND layout, bf16 q/o, cudagraph prefill wrappers. Rebased by hand onto the daily digest (`0001`, plus `0001b` for a signature the merge dropped).
 3. **A linear-V-scale store overlay (`0002`/`0002b`)** — vLLM's in-tree NVFP4 store kernel always writes V block scales in the SM100 trtllm-gen 4-token swizzle; the FA2 reader addresses them linearly. The overlay is the in-tree kernel with `swizzle_v_sf = major < 12`, AOT-built as a stable-ABI op and routed to from the FlashInfer backend. Credit: drowzeys' writer patch.
 
-Serving: [`scripts/serve-nvfp4kv.sh`](../scripts/serve-nvfp4kv.sh) — the plain profile (no LMCache) with `--kv-cache-dtype nvfp4 --attention-backend FLASHINFER`, MTP `ns=4`, `--no-async-scheduling`, `--mamba-cache-mode align`, util 0.95, max-len 200K, on an experiment port. Gauntlet driver: [`scripts/nvfp4kv-gauntlet.sh`](../scripts/nvfp4kv-gauntlet.sh).
+Serving: [`scripts/serve-nvfp4kv.sh`](../../scripts/serve-nvfp4kv.sh) — the plain profile (no LMCache) with `--kv-cache-dtype nvfp4 --attention-backend FLASHINFER`, MTP `ns=4`, `--no-async-scheduling`, `--mamba-cache-mode align`, util 0.95, max-len 200K, on an experiment port. Gauntlet driver: [`scripts/nvfp4kv-gauntlet.sh`](../../scripts/nvfp4kv-gauntlet.sh).
 
 ## Numbers (RTX 5090, Qwen3.8-27B saka W4A4, nightly `ac7509e2b`)
 
@@ -37,7 +39,7 @@ Serving: [`scripts/serve-nvfp4kv.sh`](../scripts/serve-nvfp4kv.sh) — the plain
 
 ## The swizzle question — measured, not argued
 
-The negative control (`VLLM_SM12X_NVFP4_LINEAR_VSF=0`, in-tree swizzled writer) **passed every behavioural probe** — needles, sean gate, and tool-eval 89.5 ± 2.1. Behavioural probes are blind to this bug. [`overlay/diag_vsf_layout.py`](../patches-nvfp4kv/overlay/diag_vsf_layout.py) pushes the same random K/V through both writers and runs the FA2 paged prefill against an fp32 reference: V-scale bytes differ in 30,091/32,768 positions (K scales and V data identical), and the FA2 output error is **2.7× worse with the in-tree writer on flat-magnitude V, 10× worse with group-structured V** (rel-L2 0.335–1.30 vs 0.124 for the overlay, identical at block 16 and 64). The in-tree writer is wrong for the FA2 reader on sm120; the model merely tolerates a 0.3–0.5 relative error on a quarter of its layers. Keep the overlay; the fix belongs upstream alongside #49891.
+The negative control (`VLLM_SM12X_NVFP4_LINEAR_VSF=0`, in-tree swizzled writer) **passed every behavioural probe** — needles, sean gate, and tool-eval 89.5 ± 2.1. Behavioural probes are blind to this bug. [`overlay/diag_vsf_layout.py`](../../patches-nvfp4kv/overlay/diag_vsf_layout.py) pushes the same random K/V through both writers and runs the FA2 paged prefill against an fp32 reference: V-scale bytes differ in 30,091/32,768 positions (K scales and V data identical), and the FA2 output error is **2.7× worse with the in-tree writer on flat-magnitude V, 10× worse with group-structured V** (rel-L2 0.335–1.30 vs 0.124 for the overlay, identical at block 16 and 64). The in-tree writer is wrong for the FA2 reader on sm120; the model merely tolerates a 0.3–0.5 relative error on a quarter of its layers. Keep the overlay; the fix belongs upstream alongside #49891.
 
 ## Update 2026-08-21 (later): on the V2 runner the cliff is gone
 

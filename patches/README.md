@@ -1,6 +1,6 @@
 # Patches
 
-> **Current images (2026-08-21):** [`rc4/Dockerfile.rc4`](rc4/README.md) (LMCache tiers on the vLLM nightly) and [`../patches-nvfp4kv/Dockerfile.nvfp4kv`](../patches-nvfp4kv/README.md) (NVFP4 KV cache) built on top of it. The base-image patches below (`Dockerfile`, the PR #42603 sync, the #44993 graft, the TurboQuant files) belong to the 0.23-base generations in [../docs/HISTORY.md](../docs/HISTORY.md) and are not applied to the current daily.
+> **Superseded.** The served configuration uses [`../patches-v0280/`](../patches-v0280/README-sm120-nvfp4.md) on vLLM v0.28.0. The 2026-08-21 generation used [`rc4/Dockerfile.rc4`](rc4/README.md) (LMCache tiers on the vLLM nightly) with [`../patches-nvfp4kv/Dockerfile.nvfp4kv`](../patches-nvfp4kv/README.md) on top. The base-image patches below (`Dockerfile`, the PR #42603 sync, the #44993 graft, the TurboQuant files) belong to the 0.23-base generations in [../docs/HISTORY.md](../docs/HISTORY.md).
 
 Applied on top of `vllm/vllm-openai:nightly`. All pure-Python — no CUDA recompile, ~1 min build.
 
@@ -14,7 +14,7 @@ docker build -t vllm-qwen36:patched .
 
 | file | purpose |
 |---|---|
-| [`install_pr42603_sync.py`](install_pr42603_sync.py) — from [PR #42603](https://github.com/vllm-project/vllm/pull/42603) (closed unmerged) | **The daily-critical one.** One stream-sync in the MTP draft loop — the locally validated workaround for the MTP × fp8-KV × Blackwell illegal-memory-access crash. [Why, in the README](../README.md#why-it-needs-a-patch-mtp--fp8-kv--blackwell-crashes-on-stock-vllm). |
+| [`install_pr42603_sync.py`](install_pr42603_sync.py) — from [PR #42603](https://github.com/vllm-project/vllm/pull/42603) (closed unmerged) | **The daily-critical one.** One stream-sync in the MTP draft loop — the locally validated workaround for the MTP × fp8-KV × Blackwell illegal-memory-access crash. Background in [../docs/HISTORY.md](../docs/HISTORY.md). |
 | `vllm-only.diff` | Upstream [PR #40914](https://github.com/vllm-project/vllm/pull/40914) (open) — TurboQuant K+1 spec-verify routing. |
 | `fix_spec_output.py` | **Makes #40914 actually work on Blackwell.** It returned the kernel tensor instead of writing the out-param buffer; under full CUDA-graph capture the return value is discarded → constant-token garbage. |
 | `tq_auto_fallback.py` | MTP draft runner never inherits `cache_config.cache_dtype` (arrives `"auto"`, crashes). Falls back to `$VLLM_TQ_PRESET`. |
@@ -30,7 +30,7 @@ as empty content.
 
 > **⚠️ WITHDRAWN (2026-07-18) — this patch restores corrupted content on hybrid models. Do not use it.** It was aimed at the wrong layer: the fault was never the transfer kernel, it was LMCache's kernel-page→logical-page *metadata* regrouping for vLLM's fused fp8 layout. **[`lmcache/0001` + `0002`](lmcache/README.md) are the real fix**, and the profile they enable is the current daily. Kept for historical reference only.
 
-`lmcache-0.5.1-format10-NL_X_NB_NH_BS_TWO_HS.patch` is **not** for vLLM — it patches [LMCache](https://github.com/LMCache/LMCache) `csrc/mp_mem_kernels.cu` (a CUDA recompile, unlike the pure-Python patches above). It targeted the [MTP + LMCache](../docs/LMCACHE.md) profile **on the nightly pairing**.
+`lmcache-0.5.1-format10-NL_X_NB_NH_BS_TWO_HS.patch` is **not** for vLLM — it patches [LMCache](https://github.com/LMCache/LMCache) `csrc/mp_mem_kernels.cu` (a CUDA recompile, unlike the pure-Python patches above). It targeted the [MTP + LMCache](../docs/archive/LMCACHE.md) profile **on the nightly pairing**.
 
 | file | purpose |
 |---|---|
