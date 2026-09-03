@@ -1,94 +1,86 @@
 #!/usr/bin/env python3
-"""Aggregate a torch-profiler chrome trace (json or json.gz) by CUDA kernel name.
+"""Summarize torch-profiler chrome traces (vLLM --profiler-config.profiler=torch) into a kernel table.
 
-  python3 prof_summary.py trace.json.gz [--top 40] [--steps N] [--label x]
-
-Prints total GPU kernel time, the wall span covered, and the top kernels by total time with
-count and mean. --steps N divides totals by N to give per-decode-step numbers (N = number of
-engine iterations captured, e.g. the profiler's max_iterations). Families group kernels by role
-so two arms can be compared at a glance (attention / gdn / gemm / other).
+R168 (2026-09-03): the rc1 nvfp4 route decodes 30K-context prompts at 29 tok/s vs 144 on v0.28; the kernel table of ~32
+decode steps at 30K on each image is what attributes the missing 55 ms/step to a kernel (FlashInfer FA2 split-KV
+decode, the overlay writer, GDN, the drafter) or to launch gaps (graph replay vs eager). Per input file (one per TP rank,
+.pt.trace.json or .json.gz) it prints: wall span, number of CUDA kernels, cudaGraphLaunch count, and the top-N kernels by
+total GPU time with count and mean; then a merged table across ranks. `--steps N` divides totals per step.
+Usage: prof_summary.py <trace files or dir...> [--top 30] [--steps N] [--json out.json]
 """
-from __future__ import annotations
-
-import argparse
-import collections
-import gzip
-import json
-import re
-import sys
-
-FAMILIES = [
-    ("attn-fa2-prefill", re.compile(r"BatchPrefillWithPagedKVCache|BatchPrefillWithRaggedKV|SinglePrefill")),
-    ("attn-fa2-decode", re.compile(r"BatchDecodeWithPagedKVCache")),
-    ("attn-xqa", re.compile(r"xqa|XQA|kernel_mha")),
-    ("attn-merge", re.compile(r"MergeState|VariableLengthMerge")),
-    ("kv-store", re.compile(r"reshape_and_cache|nvfp4_kv_cache")),
-    ("gdn", re.compile(r"fused_recurrent|chunk_|gated_delta|causal_conv1d|_fwd_kernel|gdn|GatedDelta", re.I)),
-    ("gemm", re.compile(r"gemm|Gemm|cutlass|nvfp4|fp4|Fp4|scaled_mm|matmul|cublas|Cutlass|sm120|marlin|Marlin|awq|gptq", re.I)),
-    ("nccl", re.compile(r"nccl|ncclDev|AllReduce|allreduce", re.I)),
-    ("elementwise", re.compile(r"elementwise|vectorized|reduce_kernel|rms_norm|RMSNorm|silu|rotary|Rotary|index_|gather|scatter|copy_|fill|cat|Cat|softmax|topk|Topk|sort|Sort|argmax", re.I)),
-]
+import argparse, gzip, json, os, sys, collections
 
 
-def family(name: str) -> str:
-    for fam, rx in FAMILIES:
-        if rx.search(name):
-            return fam
-    return "other"
+def load(path):
+    op = gzip.open if path.endswith(".gz") else open
+    with op(path, "rt") as f:
+        d = json.load(f)
+    return d.get("traceEvents", d) if isinstance(d, dict) else d
 
 
-def short(name: str, n: int = 110) -> str:
-    name = re.sub(r"\(.*", "", name)  # drop template args in parens
-    name = name.replace("void ", "")
+def summarize(events):
+    kern = collections.defaultdict(lambda: [0, 0.0])
+    t0 = None; t1 = None; n_graph = 0; n_kern = 0; kern_time = 0.0
+    for e in events:
+        if e.get("ph") != "X":
+            continue
+        ts = e.get("ts", 0); dur = e.get("dur", 0)
+        if t0 is None or ts < t0: t0 = ts
+        if t1 is None or ts + dur > t1: t1 = ts + dur
+        cat = e.get("cat", "")
+        name = e.get("name", "")
+        if cat == "kernel":
+            k = kern[name]; k[0] += 1; k[1] += dur; n_kern += 1; kern_time += dur
+        elif cat == "cuda_runtime" and "GraphLaunch" in name:
+            n_graph += 1
+    span = (t1 - t0) if (t0 is not None and t1 is not None) else 0.0
+    return dict(span_ms=span / 1000.0, kernels=n_kern, kernel_time_ms=kern_time / 1000.0, graph_launches=n_graph,
+                table={k: dict(count=v[0], total_ms=v[1] / 1000.0) for k, v in kern.items()})
+
+
+def short(name, n=95):
     return name if len(name) <= n else name[: n - 3] + "..."
 
 
+def print_table(tag, s, top, steps):
+    print(f"== {tag}: span {s['span_ms']:.1f} ms, {s['kernels']} kernels totalling {s['kernel_time_ms']:.1f} ms GPU, "
+          f"{s['graph_launches']} cudaGraphLaunch" + (f", per step: span {s['span_ms']/steps:.2f} ms, GPU {s['kernel_time_ms']/steps:.2f} ms, "
+          f"{s['kernels']/steps:.0f} kernels, {s['graph_launches']/steps:.1f} graph launches" if steps else ""))
+    rows = sorted(s["table"].items(), key=lambda kv: -kv[1]["total_ms"])[:top]
+    print(f"{'total_ms':>9} {'count':>7} {'mean_us':>8} {'per-step':>9}  kernel")
+    for name, r in rows:
+        ps = f"{r['total_ms']/steps:.2f}" if steps else "-"
+        print(f"{r['total_ms']:9.1f} {r['count']:7d} {1000*r['total_ms']/r['count']:8.1f} {ps:>9}  {short(name)}")
+
+
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("trace")
-    ap.add_argument("--top", type=int, default=40)
-    ap.add_argument("--steps", type=float, default=0.0)
-    ap.add_argument("--label", default="")
-    args = ap.parse_args()
-    opener = gzip.open if args.trace.endswith(".gz") else open
-    with opener(args.trace, "rt") as f:
-        data = json.load(f)
-    ev = data["traceEvents"] if isinstance(data, dict) else data
-    by_name = collections.defaultdict(lambda: [0.0, 0])
-    t_min, t_max, total = float("inf"), 0.0, 0.0
-    n_kernels = 0
-    graphs = 0
-    for e in ev:
-        cat = e.get("cat", "")
-        if cat == "kernel" or cat == "gpu_memcpy" or cat == "gpu_memset":
-            d = float(e.get("dur", 0.0))
-            nm = e["name"] if cat == "kernel" else f"[{cat}]"
-            by_name[nm][0] += d
-            by_name[nm][1] += 1
-            total += d
-            n_kernels += 1
-            ts = float(e.get("ts", 0.0))
-            t_min = min(t_min, ts)
-            t_max = max(t_max, ts + d)
-        elif cat == "cuda_runtime" and "GraphLaunch" in e.get("name", ""):
-            graphs += 1
-    span = (t_max - t_min) if n_kernels else 0.0
-    steps = args.steps or 1.0
-    unit = "ms/step" if args.steps else "ms"
-    print(f"== {args.label or args.trace}")
-    print(f"kernels={n_kernels} graph_launches={graphs} gpu_busy={total/1000:.1f} ms wall_span={span/1000:.1f} ms "
-          f"busy/span={total/max(span,1):.2f}" + (f"  steps={args.steps:g} -> busy {total/1000/steps:.2f} ms/step, span {span/1000/steps:.2f} ms/step" if args.steps else ""))
-    fams = collections.defaultdict(lambda: [0.0, 0])
-    for nm, (d, c) in by_name.items():
-        fams[family(nm)][0] += d
-        fams[family(nm)][1] += c
-    print("families (" + unit + "):")
-    for fam, (d, c) in sorted(fams.items(), key=lambda kv: -kv[1][0]):
-        print(f"  {fam:<18} {d/1000/steps:>9.3f}  {100*d/max(total,1):>5.1f}%  n={c/steps:g}")
-    print(f"top {args.top} kernels ({unit}, count/step, mean us):")
-    for nm, (d, c) in sorted(by_name.items(), key=lambda kv: -kv[1][0])[: args.top]:
-        print(f"  {d/1000/steps:>9.3f} {c/steps:>8g} {d/c:>9.1f}  [{family(nm)}] {short(nm)}")
+    ap = argparse.ArgumentParser(); ap.add_argument("paths", nargs="+"); ap.add_argument("--top", type=int, default=30)
+    ap.add_argument("--steps", type=int, default=0); ap.add_argument("--json", default="")
+    a = ap.parse_args()
+    files = []
+    for p in a.paths:
+        if os.path.isdir(p):
+            files += [os.path.join(p, f) for f in sorted(os.listdir(p)) if ".trace.json" in f or f.endswith(".json") or f.endswith(".json.gz")]
+        else:
+            files.append(p)
+    if not files:
+        print("no trace files", file=sys.stderr); sys.exit(2)
+    merged = collections.defaultdict(lambda: dict(count=0, total_ms=0.0)); out = {}
+    for f in files:
+        try:
+            s = summarize(load(f))
+        except Exception as ex:  # a partial/corrupt trace should not hide the others
+            print(f"== {f}: unreadable ({ex})"); continue
+        out[os.path.basename(f)] = {k: v for k, v in s.items() if k != "table"} | dict(top=sorted(s["table"].items(), key=lambda kv: -kv[1]["total_ms"])[: a.top])
+        print_table(os.path.basename(f), s, a.top, a.steps)
+        for k, v in s["table"].items():
+            merged[k]["count"] += v["count"]; merged[k]["total_ms"] += v["total_ms"]
+    if len(files) > 1:
+        tot = sum(v["total_ms"] for v in merged.values())
+        print_table("ALL RANKS merged", dict(span_ms=0, kernels=sum(v["count"] for v in merged.values()), kernel_time_ms=tot, graph_launches=0, table=merged), a.top, a.steps)
+    if a.json:
+        json.dump(out, open(a.json, "w"), indent=1)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

@@ -1,9 +1,0 @@
-# Build: sudo docker build -f Dockerfile.embed -t vllm-qwen38:v0290rc1-nvfp4kv-revival-prs-embed .
-FROM vllm-qwen38:v0290rc1-nvfp4kv-revival-prs
-COPY 0135-embed-uva-offload-v0290.diff /tmp/
-RUN set -eux; cd "$(python3 -c 'import os, vllm; print(os.path.dirname(os.path.dirname(vllm.__file__)))')"; \
-    patch --batch --forward -p1 --fuzz=0 < /tmp/0135-embed-uva-offload-v0290.diff; \
-    python3 -m py_compile vllm/entrypoints/llm.py vllm/model_executor/model_loader/utils.py \
-      vllm/model_executor/offloader/base.py vllm/model_executor/offloader/uva.py; \
-    grep -q maybe_offload_embeddings vllm/model_executor/model_loader/utils.py; \
-    rm -f /tmp/0135-embed-uva-offload-v0290.diff; echo EMBED-0135-APPLIED

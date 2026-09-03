@@ -1,0 +1,21 @@
+# R168 (2026-09-03) FlashInfer-swap layer for the rc1 nvfp4 deep-context decode regression (R167: 30K-context decode 29
+# tok/s on the rc1 chain vs 144 on v0.28, short context normal, both on the FA2 fallback). torch is 2.13.0+cu130 on both
+# chains; FlashInfer is the one library delta (v0.28 chain 0.6.16.post3, rc1 chain 0.6.18). This layer pins a different
+# FlashInfer on top of an existing image so one boot per cell attributes the regression to the library or to vLLM:
+#   BASE=vllm-qwen38:v0280-nvfp4kv-revival-graphs-ws FI_VER=0.6.18       -> v0.28 chain + the rc1 library
+#   BASE=vllm-qwen38:v0290rc1-nvfp4kv-revival-prs-embed FI_VER=0.6.16.post3 -> rc1 chain + the v0.28 library (mirror)
+# flashinfer-python + flashinfer-cubin come from the flashinfer.ai root index (PyPI carries flashinfer-python but NOT the
+# cubin wheels past 0.6.8: first build failed on that), flashinfer-jit-cache (+cu130 precompiled kernels) from the cu130
+# index, the way vLLM's own docker/Dockerfile does it; --no-deps so torch/vllm cannot drift. If the jit-cache wheel for FI_VER is not on the index
+# the layer keeps going WITHOUT it (kernels JIT on first use into the mounted /root/.cache/flashinfer; the boot is slower,
+# the numbers are the same) and says so in the marker. Nothing else changes.
+ARG BASE
+FROM ${BASE}
+ARG FI_VER
+RUN set -eux; test -n "${FI_VER}"; \
+    python3 -m pip uninstall -y -q flashinfer-python flashinfer-cubin flashinfer-jit-cache || true; \
+    python3 -m pip install --no-cache-dir --no-deps --index-url https://flashinfer.ai/whl --extra-index-url https://pypi.org/simple "flashinfer-python==${FI_VER}" "flashinfer-cubin==${FI_VER}"; \
+    if python3 -m pip install --no-cache-dir --no-deps --index-url https://flashinfer.ai/whl/cu130 "flashinfer-jit-cache==${FI_VER}"; then JC=with-jit-cache; else JC=JIT-ONLY-no-jit-cache-wheel; fi; \
+    python3 -c "import os, flashinfer, torch, vllm; assert flashinfer.__version__ == os.environ['FI_VER'], flashinfer.__version__; print('vllm', vllm.__version__, 'torch', torch.__version__, 'flashinfer', flashinfer.__version__)"; \
+    python3 -m pip list 2>/dev/null | grep -i flashinfer; \
+    echo "FISWAP-${FI_VER}-APPLIED (${JC})"
