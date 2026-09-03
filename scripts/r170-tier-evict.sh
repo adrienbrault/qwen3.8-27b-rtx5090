@@ -10,7 +10,7 @@
 #     bytes_used <= cap; df(eval-l2) <= cap + 8 GB (in-flight stores); (2) CONCURRENCY: two needle_depth processes in parallel
 #     (different seeds, --evict 6 each) so lookups, loads, stores and evictions interleave — the pin logic is what keeps a file
 #     from being unlinked between lookup and load (the offloading worker's `assert success` would kill the engine);
-#     (3) RESTART: docker restart → the startup scan repopulates the LRU (bytes_used ≈ du) → the (1) seed again with
+#     (3) RESTART: teardown + fresh boot over the existing tier → the startup scan repopulates the LRU (bytes_used ≈ du) → the (1) seed again with
 #     --evict-reasks 2 → hits; (4) plain 9K/131K needles as the sanity tail. PASS per arm = all hits, evicted_files > 0,
 #     usage bounded, 0 error lines, engine alive at the end.
 # Unit (RuntimeMaxSec counts from unit start INCLUDING the flock wait — size it for the queue ahead): sudo systemd-run --unit=r170-tier-evict --collect -p User=adrienbrault -p RuntimeMaxSec=28800 -p TimeoutStopSec=900 -E GPU_QUEUE_NAME=r170-tier-evict bash /srv/qwen5090/r170-tier-evict.sh
@@ -87,16 +87,20 @@ arm(){ local A=$1 fail=0 ev bu
   curl -sf -m 5 $U/health >/dev/null || { log "[$A] FAIL: engine dead after the concurrent floods"; fail=1; }
   tmetrics "$A after-conc"; usage "$A after-conc"; errlines "$A after-conc" || fail=1
   # (3) restart revisit: startup scan must repopulate the accounting
+  # r170 first run (22:26 UTC): `docker restart` of the rc2 candidate faulted in capture_model (Xid 31 on both GPUs) and crash-looped
+  # under restart=unless-stopped, while fresh boots of the same image never fail; the daily's real restart is a fresh container
+  # (launch-daily.sh) anyway. So the restart phase = teardown + fresh boot over the EXISTING tier (no wipe): the 0137 startup
+  # scan over ~21 GB of files is what is under test here.
   sudo docker logs vllm-exp > "$R/engine-$A-prerestart.log" 2>&1
-  SINCE=$(date -u +%Y-%m-%dT%H:%M:%S); sudo docker restart vllm-exp >/dev/null 2>&1; ok=0   # post-restart error lines exclude the old engine's shutdown output
-  for i in $(seq 120); do sleep 5; curl -sf -m 3 $U/health >/dev/null && { ok=1; break; }; done
+  teardown; ok=0; SINCE=$(date -u +%Y-%m-%dT%H:%M:%S)
+  if boot_$A; then ok=1; fi
   if [ $ok = 1 ]; then
-    log "[$A] restarted; engine up after $((i*5)) s"
+    log "[$A] fresh boot over the existing tier OK"
     tmetrics "$A after-restart"; usage "$A after-restart"
     nd "$A-restart" r170 --depths 131000 --samples 2 --evict 12 --evict-ctx 90000 --evict-reasks 2 --evict-reask-gap 15 || fail=1
     tmetrics "$A after-restart-flood"; usage "$A after-restart-flood"; errlines "$A after-restart" || fail=1
     nd "$A-tail" r170t --depths 9000 131000 --samples 2 --warm || fail=1
-  else log "[$A] FAIL: engine did not come back after docker restart"; fail=1; fi
+  else log "[$A] FAIL: fresh boot over the existing tier failed"; fail=1; fi
   curl -sf -m 5 $U/health >/dev/null || { log "[$A] FAIL: engine dead at the end"; fail=1; }
   sudo docker logs vllm-exp 2>&1 | grep -ai "evict\|tier\|ENOSPC\|No space" | grep -av "^$" | cut -c1-200 | tail -20 | sed "s/^/[$A tier-log] /" >> "$R/audit.log"
   SINCE=""
