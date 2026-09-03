@@ -22,8 +22,9 @@ ARG SM_ARCH=120a
 #    would silently drift torch/flashinfer. Asserts are GPU-free (ARGs are env vars in RUN).
 RUN set -eux; \
     if [ -n "${VLLM_WHEEL_URL}" ]; then \
-      python3 -c 'import sys, urllib.request; urllib.request.urlretrieve(sys.argv[1], "/tmp/vllm.whl")' "${VLLM_WHEEL_URL}"; \
-      python3 -m pip install --no-cache-dir --no-deps /tmp/vllm.whl; rm -f /tmp/vllm.whl; \
+      W="/tmp/${VLLM_WHEEL_URL##*/}"; \
+      python3 -c 'import sys, urllib.request; urllib.request.urlretrieve(sys.argv[1], sys.argv[2])' "${VLLM_WHEEL_URL}" "$W"; \
+      python3 -m pip install --no-cache-dir --no-deps "$W"; rm -f "$W"; \
     fi; \
     python3 -c 'import os, torch, vllm, flashinfer; \
 print("vllm", vllm.__version__, "torch", torch.__version__, "cuda", torch.version.cuda, "flashinfer", flashinfer.__version__); \
