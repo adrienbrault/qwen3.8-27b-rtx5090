@@ -75,7 +75,7 @@ wipe_l2(){ sudo find "$L2" -mindepth 1 -maxdepth 1 -name '_model_*' -exec rm -rf
 sudo docker logs vllm-27b > "$R/daily-predown.log" 2>&1 || true
 teardown; wipe_l2
 
-SKIP_R=${SKIP_R:-0}
+SKIP_R=${SKIP_R:-0}; SKIP_B=${SKIP_B:-0}   # third pass (0132 fix: dropped assert) runs only the C cells: SKIP_R=1 SKIP_B=1
 # ---- R: the ruler's same-checkpoint baseline on the v0.28 image (RedHat, fp8 KV), util 0.90 (never on the daily at 0.92)
 if [ "$SKIP_R" = 1 ]; then log "[R-v028-fp8] skipped (SKIP_R=1, done in the first pass)"
 elif boot R-v028-fp8 "$V028_ENV" "$FP8_SPEC" "$FP8_X" 8; then
@@ -89,16 +89,19 @@ else log "[R-v028-fp8] skipped"; fi
 teardown
 
 # ---- B: nvfp4 candidate shape, Bug C on upstream accounting
-if boot B-nv-s16 "$NV_ENV" "$NV_SPEC" "$NV_X" 16; then
+if [ "$SKIP_B" = 1 ]; then log "[B cells] skipped (SKIP_B=1, done in the second pass)"
+elif boot B-nv-s16 "$NV_ENV" "$NV_SPEC" "$NV_X" 16; then
   needles B-nv-s16 "131000 262000"; python3 /srv/qwen5090/probes/warm-revisit.py --url $U --model qwen3.8-27b --ctx 32000 > "$R/warm-revisit-B.log" 2>&1; tail -1 "$R/warm-revisit-B.log" | cut -c1-200 | sed "s/^/[B-nv-s16 revisit] /" | tee -a "$R/audit.log"
   benchy B-nv-s16-c1c8c16 "1 8 16" 2; dss B-nv-s16 code 8; errlines B-nv-s16
 else log "[B-nv-s16] skipped"; fi
 teardown
-if boot B-nv-s32 "$NV_ENV" "$NV_SPEC" "$NV_X" 32; then
+if [ "$SKIP_B" = 1 ]; then :
+elif boot B-nv-s32 "$NV_ENV" "$NV_SPEC" "$NV_X" 32; then
   needles B-nv-s32 "262000"; benchy B-nv-s32-c8c32 "8 32" 2; curl -s -m 5 $U/metrics | grep -aE "^vllm:num_preemptions_total" | sed "s/^/[B-nv-s32] /" | tee -a "$R/audit.log"; errlines B-nv-s32
 else log "[B-nv-s32] skipped"; fi
 teardown
-if boot B-nv-s16-ws0 "$NV_ENV" "$NV_SPEC" "$NV_X -e VLLM_SM12X_POOLED_INT_WS_MIB=0" 16; then benchy B-nv-s16-ws0-c1 "1" 2; errlines B-nv-s16-ws0; else log "[B-nv-s16-ws0] skipped"; fi
+if [ "$SKIP_B" = 1 ]; then :
+elif boot B-nv-s16-ws0 "$NV_ENV" "$NV_SPEC" "$NV_X -e VLLM_SM12X_POOLED_INT_WS_MIB=0" 16; then benchy B-nv-s16-ws0-c1 "1" 2; errlines B-nv-s16-ws0; else log "[B-nv-s16-ws0] skipped"; fi
 teardown
 
 # ---- C: 0132 masked NVFP4 XQA A/B (XQA on + verify)
