@@ -4,9 +4,14 @@
 # shape with the same probe. Why: R166b's restart revisit had a cold TTFT (7.98 s) while the connector log showed fs-tier
 # reads in the same interval as the boot pre-warm; the old probe only read GPU prefix-cache counters, so hits could not be
 # attributed. warm-revisit.py now reports external_prefix_cache_hits and the tier's chunk-hit/read-bytes deltas per send.
-# Per arm (eval-l2 wiped first): boot → run 1 (salt S, --flood 12x90K between sends: send1 cold, send2 = tier after GPU
-# eviction) → `docker restart` → health → run 2 (salt S, no flood: send1 = restart revisit, send2 = GPU) → run 3 fresh
-# salt (cold control). Pass = tier-served sends show ext_hits ≈ prompt tokens and TTFT well under the cold value.
+# G12 is a CORRECTNESS gate, so the pass criterion is an EXACT-MATCH needle through the tier path, not TTFT: every
+# revisit that passed before R166c was a GPU prefix-cache hit — no test had ever checked that nvfp4 blocks read back
+# from CPU/disk decode to the right secret. needle_depth.py --evict (R166c) re-asks the needle after a 12 x 90K flood
+# evicts it from the GPU pool; the same seed after `docker restart` re-asks byte-identical prompts (restart revisit).
+# Per arm (eval-l2 wiped first): boot → needles 131K x2 --evict 12 (cold HIT + evicted HIT, /metrics ext-hit deltas)
+# → warm-revisit run 1 (salt S, --flood 12x90K: TTFT + counters) → `docker restart` → health → needles again, same seed
+# (cold pass = restart revisit, must HIT with ext hits) → warm-revisit run 2 (salt S) → run 3 fresh salt (cold control).
+# Pass = 4/4 needle hits per arm (2 evicted + 2 restart) with ext_hits > 0 on the tier-served passes; TTFT is diagnostic.
 # Queue-registered; restores the daily at the end unless another unit is queued.
 # Unit: sudo systemd-run --unit=r166c-tier --collect -p User=adrienbrault -p RuntimeMaxSec=60000 -p TimeoutStopSec=900 bash /srv/qwen5090/r166c-tier-gate.sh
 set -uo pipefail
@@ -36,6 +41,12 @@ boot(){ # $1 arm (F|N)
   else env -i PATH="$PATH" HOME="$HOME" USER="$USER" EXP=1 SEQS=8 bash $CAND > "$R/boot-$1.log" 2>&1; rc=$?; fi
   if [ $rc -eq 0 ] && curl -sf -m 5 $U/health >/dev/null; then log "[$1] BOOT OK $(grep -aoE 'KV pool: [0-9]+ tokens|Pool [0-9]+, min free VRAM [0-9]+ MiB' "$R/boot-$1.log" | tail -1)"; return 0; fi
   log "[$1] BOOT FAILED rc=$rc: $(grep -aE 'FAILED|Error' "$R/boot-$1.log" | tail -1 | cut -c1-160)"; return 1; }
+nd(){ # $1 tag, rest = probe args (seed fixed → identical prompts across invocations)
+  local tag=$1; shift
+  python3 /srv/qwen5090/probes/needle_depth.py --url $U/v1 --model qwen3.8-27b --depths 131000 --samples 2 --seed r166c "$@" \
+    --out "$R/needles-$tag.jsonl" > "$R/needles-$tag.out" 2>&1; local rc=$?
+  grep -a "^\[" "$R/needles-$tag.out" | cut -c1-300 | sed "s/^/[$tag] /" | tee -a "$R/audit.log"
+  log "[$tag] $(grep -a SUMMARY "$R/needles-$tag.out" | cut -c1-200) rc=$rc"; return $rc; }
 rv(){ # $1 tag, rest = probe args
   local tag=$1; shift
   python3 /srv/qwen5090/probes/warm-revisit.py --url $U --model qwen3.8-27b --ctx 32000 "$@" > "$R/rv-$tag.log" 2>&1
@@ -44,12 +55,14 @@ arm(){ # $1 = F|N
   local A=$1 S; S=$(python3 -c 'import uuid; print(uuid.uuid4().hex)')
   wipe_l2
   boot $A || { log "[$A] arm skipped"; teardown; return 1; }
+  nd "$A-evict" --evict 12 --evict-ctx 90000                          # cold HIT + evicted re-ask HIT (tier, in-session)
   rv "$A-insession" --salt "$S" --flood 12 --flood-ctx 90000        # send1 cold, send2 after eviction = tier (in-session)
   sudo docker logs vllm-exp 2>&1 | grep -a "KV Transfer metrics" | tail -3 | sed "s/.*KV Transfer metrics: //" | cut -c1-400 > "$R/kvt-$A-pre-restart.txt"
   log "[$A] docker restart"; sudo docker restart vllm-exp >/dev/null 2>&1; sleep 20
   for i in $(seq 90); do curl -sf -m 5 $U/health >/dev/null && break; sleep 10; done
   curl -sf -m 5 $U/health >/dev/null || { log "[$A] FAILED: engine did not come back after docker restart"; teardown; return 1; }
   log "[$A] engine back; pool $(sudo docker logs vllm-exp 2>&1 | grep -a 'GPU KV cache size' | tail -1 | grep -oE 'size: [0-9,]+' | tr -dc 0-9)"
+  nd "$A-restart"                                                    # same seed → restart revisit exact-match (tier)
   rv "$A-restart" --salt "$S"                                        # send1 = restart revisit (tier), send2 = GPU
   rv "$A-cold-control"                                               # fresh salt
   sudo docker logs vllm-exp 2>&1 | grep -ac "illegal memory\|CUDA error\|Traceback\|OutOfMemoryError" | sed "s/^/[$A engine error-lines] /" | tee -a "$R/audit.log"
