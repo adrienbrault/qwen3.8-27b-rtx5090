@@ -1,0 +1,11 @@
+# R164 (2026-09-03): Bug C fix candidate — revival-graphs + 0131 (pooled FlashInfer wrappers keep a 1 MiB int
+# workspace instead of 8 MiB; the capture ledger showed 5 builders x 22 shapes x 8 MiB retained on the target).
+# Env VLLM_SM12X_POOLED_INT_WS_MIB (default 1, 0 = upstream 8 MiB).
+# Build: sudo docker build -t vllm-qwen38:v0280-nvfp4kv-revival-graphs-ws -f Dockerfile.v0280-nvfp4kv-revival-graphs-ws patches-v0280/
+# BASE is a build arg so the same layer rebases onto another generation (v0.29.0rc1: see scripts/build-v0290rc1.sh).
+ARG BASE=vllm-qwen38:v0280-nvfp4kv-revival-graphs
+FROM ${BASE}
+COPY 0131-nvfp4-pooled-int-workspace.diff /tmp/0131.diff
+RUN cd "$(python3 -c 'import os, vllm; print(os.path.dirname(os.path.dirname(vllm.__file__)))')" && \
+    patch -p1 --fuzz=0 < /tmp/0131.diff && \
+    python3 -m py_compile vllm/v1/attention/backends/flashinfer.py && rm /tmp/0131.diff && echo 0131-APPLIED

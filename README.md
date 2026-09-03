@@ -78,6 +78,7 @@ sudo bash scripts/setup-native-l2.sh
 
 # 3. the image: vLLM v0.28.0 + the sm120 patches (no GPU needed to build)
 docker build -f patches-v0280/Dockerfile.v0280-nvfp4kv -t vllm-qwen38:v0280-nvfp4kv patches-v0280
+#    (a v0.29.0rc1 build of the same chain: scripts/build-v0290rc1.sh — not yet auditioned)
 
 # 4a. two cards (the served configuration)
 bash scripts/serve-r156-daily.sh

@@ -10,6 +10,8 @@ Hardware since 2026-08-31: two RTX 5090 32 GB (`sm_120`), Ryzen 7 9800X3D, 64 GB
 
 ## Index
 
+- [R165 prep, a vLLM v0.29.0rc1 image: every patch applies unchanged, recipe made version-agnostic (2026-09-03, `scripts/build-v0290rc1.sh`, `patches-v0280/`)](#r165-prep-a-vllm-v0290rc1-image-every-patch-applies-unchanged-recipe-made-version-agnostic-2026-09-03-scriptsbuild-v0290rc1sh-patches-v0280)
+- [R164, the graph-capture OOM on the nvfp4 candidate: five pooled FlashInfer wrappers per captured shape; patch 0131 halves graph memory, the pool sizing is the rest (2026-09-03, `results/2026-09-03-r164-bugc`, `results/2026-09-03-r164c-ws`, patch 0131)](#r164-the-graph-capture-oom-on-the-nvfp4-candidate-five-pooled-flashinfer-wrappers-per-captured-shape-patch-0131-halves-graph-memory-the-pool-sizing-is-the-rest-2026-09-03-results2026-09-03-r164-bugc-results2026-09-03-r164c-ws-patch-0131)
 - [R163, nvfp4 KV candidate vs the fp8 daily, paired: fidelity, pool and c8 gates pass; single-stream jitter and a graph-capture OOM block promotion (2026-09-03, `results/2026-09-03-r163-paired`, `scripts/r163-paired.sh`)](#r163-nvfp4-kv-candidate-vs-the-fp8-daily-paired-fidelity-pool-and-c8-gates-pass-single-stream-jitter-and-a-graph-capture-oom-block-promotion-2026-09-03-results2026-09-03-r163-paired-scriptsr163-pairedsh)
 - [R160, SWE-Bench Verified with mini-SWE-agent on the fp8 daily: 386/500 = 77.2% (2026-09-02→03, `results/2026-09-02-miniswe-rh`, `scripts/miniswe-full.sh`)](#r160-swe-bench-verified-with-mini-swe-agent-on-the-fp8-daily-386500--772-2026-09-0203-results2026-09-02-miniswe-rh-scriptsminiswe-fullsh)
 - [Post-teardown settle: 60 seconds is enough on a healthy box (2026-09-03, `results/2026-09-03-r162-settle`, `scripts/r162-settle-ladder.sh`)](#post-teardown-settle-60-seconds-is-enough-on-a-healthy-box-2026-09-03-results2026-09-03-r162-settle-scriptsr162-settle-laddersh)
@@ -64,6 +66,31 @@ Hardware since 2026-08-31: two RTX 5090 32 GB (`sm_120`), Ryzen 7 9800X3D, 64 GB
 - [Correction (2026-07-19): util 0.98 retired after a serve-time autotune OOM, deep-concurrency numbers re-based](#correction-2026-07-19-util-098-retired-after-a-serve-time-autotune-oom-deep-concurrency-numbers-re-based)
 - [Promotion (2026-07-19): natfii NVFP4 W4A4 is the daily, util 0.98, pool 239,436](#promotion-2026-07-19-natfii-nvfp4-w4a4-is-the-daily-util-098-pool-239436)
 - [Complete llama-benchy matrix on the promoted daily (2026-07-19, util 0.98)](#complete-llama-benchy-matrix-on-the-promoted-daily-2026-07-19-util-098)
+
+## R165 prep, a vLLM v0.29.0rc1 image: every patch applies unchanged, recipe made version-agnostic (2026-09-03, `scripts/build-v0290rc1.sh`, `patches-v0280/`)
+
+v0.29.0rc1 (2026-09-02, commit `33898f83`, 598 commits past v0.28.0, `main@f5c3cc240` plus five release-branch cherry-picks) has no official Docker image. What was verified without a GPU:
+
+- All 19 patches of this stack (0101–0113, 0116–0119, 0129, 0131) dry-run clean against the rc1 tree, no fuzz, no offsets. `csrc/libtorch_stable/nvfp4_kv_cache_kernels.cu` is byte-identical to v0.28.0, so the writer still swizzles V scales and 0102 plus the overlay remain required. The patched Python files did change upstream (flashinfer.py 238 lines, the V2 model runner 282, the DFlash speculator 66), so clean hunks are not a correctness statement; the audition is.
+- No CLI flag or `VLLM_*` variable the launcher passes was removed; the release only adds flags. Pins: flashinfer 0.6.16.post3 → 0.6.18, transformers ≥ 5.10.4, new `instanttensor ≥ 0.1.9`, torch unchanged at 2.13.0+cu130.
+- Recipe: base `vllm/vllm-openai:nightly-7c5dc571cbd1064ecc8a9b1045637ff647aa22cb` (2026-09-01, 27 commits past rc1's merge-base with no requirements change, the same pin set as rc1), then the per-commit rc1 wheel from `wheels.vllm.ai/<sha>/` installed `--no-deps` so Python and the compiled extensions are exactly rc1, then the unchanged patch chain. [`Dockerfile.v0280-nvfp4kv`](../patches-v0280/Dockerfile.v0280-nvfp4kv) is now driven by build args (`VLLM_BASE`, `VLLM_REF`, `VLLM_WHEEL_URL`, `VLLM_EXPECT_VER`, `EXPECT_FLASHINFER`, `OVERLAY_JOBS`; defaults reproduce the v0.28.0 image) and asserts version, flashinfer version, CUDA 13 and that the compiled extensions load. The revival layers take `BASE` as a build arg. [`scripts/build-v0290rc1.sh`](../scripts/build-v0290rc1.sh) builds the four tags (`v0290rc1-nvfp4kv`, `-revival`, `-revival-graphs`, `-revival-graphs-ws`), mirroring the v0280 chain so an audition pairs like with like.
+
+What the new image has to answer first, in order: the graph-capture accounting (vLLM #53306, #53955 and #54418 now reserve CUDA-graph memory in the V2 runner's KV sizing, which is the upstream form of the R164 finding below; nvfp4 at SEQS 16/32, util 0.90, with and without 0131), then the fp8 daily shape (pool, needles, decode, the fidelity ruler, tool-eval ×4). Changes to watch on the way: V2 runner default for all models (#53183), DFlash draft RoPE layout taken from the draft's own config (#54373), the `DFlash2DraftModel` local-convolution architecture (#52816), Mamba prefix-cache internal checkpoints (#52789), deterministic prefix-cache seed (#51875), the kv-offload metric rename (#52812), and per-request acceptance stats (#48915). The stable tag is what gets promoted; the rc is the head start.
+
+## R164, the graph-capture OOM on the nvfp4 candidate: five pooled FlashInfer wrappers per captured shape; patch 0131 halves graph memory, the pool sizing is the rest (2026-09-03, `results/2026-09-03-r164-bugc`, `results/2026-09-03-r164c-ws`, patch 0131)
+
+R163 left the nvfp4 candidate unable to boot at `--max-num-seqs 32` (OOM during CUDA-graph capture) and marginal at 16. A capture ledger (a diagnostic patch that logs free/allocated/reserved memory around every captured descriptor) found the owner: vLLM sizes the KV pool before graph capture and the profile run skips attention on this path, so all graph memory has to fit in the `1 − util` headroom; on the NVFP4 FA2 route every graph-bound target descriptor creates five `BatchPrefillWithPagedKVCacheWrapper` objects (one per attention-group metadata builder), each with an 8 MiB integer workspace, 40.6 MiB per captured shape, plus 8.1 MiB on the drafter. At SEQS 16 the target manager retained 1,950 MiB against 786 MiB on fp8; graph memory 2.04 GiB against 0.80.
+
+Capping the capture list (`--cudagraph-capture-sizes 10 20 40 80`) boots but costs about 25% at 16 streams on both KV dtypes, so it was rejected. Patch [0131](../patches-v0280/0131-nvfp4-pooled-int-workspace.diff) keeps a 1 MiB integer workspace on the pooled wrappers (`VLLM_SM12X_POOLED_INT_WS_MIB`, 0 restores upstream's 8 MiB); the planner raises if it is ever short.
+
+| cell (candidate shape, util 0.90) | graph memory | pool | outcome |
+|---|---|---|---|
+| SEQS 16, before 0131 | 2.04 GiB | 984,411 | boots, first 131K prefill OOMs |
+| SEQS 16, 0131 | **1.20 GiB** | 984,411 | boots on the second attempt (first died in the pre-warm), then clean: needles 4/4, benchy c1 244.9 ± 27 / c8 640 / c16 698 t/s, decode_ss code c8 1,027 (128/stream) and c16 1,485 (93/stream) aggregate, 0 preemptions |
+| SEQS 32, before 0131 | OOM during capture | — | no boot |
+| SEQS 32, 0131 | **1.70 GiB** | 983,314 | boots with 67 MiB free; the first requests OOM |
+
+The pool does not move because it is computed before capture; the fix cuts the graph memory but nothing hands the saving back to the pool. The remaining step is the accounting, and upstream has now done it (R165 above), which is the clean path rather than a per-SEQS utilization table in the launcher. Analysis of the ledger was done with codex (gpt-5.6-sol) on source dumps; every launch and measurement ran here.
 
 ## R163, nvfp4 KV candidate vs the fp8 daily, paired: fidelity, pool and c8 gates pass; single-stream jitter and a graph-capture OOM block promotion (2026-09-03, `results/2026-09-03-r163-paired`, `scripts/r163-paired.sh`)
 

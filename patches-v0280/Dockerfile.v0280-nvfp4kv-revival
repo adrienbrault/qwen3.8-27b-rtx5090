@@ -1,9 +1,11 @@
 # R155: v0280-nvfp4kv + 0116 (non-causal NVFP4 FA2 gate reconciliation + VPE tp1 mask) +
 # 0117 (selector-gather clamps + out-of-compile draft embedding). Ladder in NOTES-REVIVAL.md.
 # Build: sudo docker build -t vllm-qwen38:v0280-nvfp4kv-revival patches-v0280/ (with the 0116-0119 diffs alongside)
-FROM vllm-qwen38:v0280-nvfp4kv
+# BASE is a build arg so the same layer rebases onto another generation (v0.29.0rc1: see scripts/build-v0290rc1.sh).
+ARG BASE=vllm-qwen38:v0280-nvfp4kv
+FROM ${BASE}
 COPY 0116-dflash-nvfp4-revival.diff 0117-dflash-nvfp4-warmup.diff 0118b-dflash-eager-escape-rebased.diff 0119-dflash-nvfp4-fullgraph-width.diff /tmp/
-RUN cd /usr/local/lib/python3.12/dist-packages && \
+RUN cd "$(python3 -c 'import os, vllm; print(os.path.dirname(os.path.dirname(vllm.__file__)))')" && \
     patch -p1 --fuzz=0 < /tmp/0116-dflash-nvfp4-revival.diff && \
     patch -p1 --fuzz=0 < /tmp/0117-dflash-nvfp4-warmup.diff && \
     patch -p1 --fuzz=0 < /tmp/0118b-dflash-eager-escape-rebased.diff && \

@@ -13,19 +13,50 @@
 # Build (on flan):
 #   cd /srv/qwen5090/patches-v0280 && sudo docker build -f Dockerfile.v0280-nvfp4kv \
 #       -t vllm-qwen38:v0280-nvfp4kv .
+# Rebase onto another vLLM version (R165, 2026-09-03: v0.29.0rc1 — every diff below applies
+# unchanged, verified by dry-run against the rc1 tree): the recipe is ARG-driven.
+#   VLLM_BASE        docker base (an official image whose dependency pins match VLLM_REF; rc tags
+#                    have no official image, so use the nightly nearest the tag's merge-base)
+#   VLLM_REF         git ref for the csrc checkout (0102 + overlay headers)
+#   VLLM_WHEEL_URL   optional: a vLLM wheel installed --no-deps over the base BEFORE anything
+#                    else, so python + compiled .so are exactly VLLM_REF (per-commit wheels live at
+#                    https://wheels.vllm.ai/<sha>/, cu130 at the root index)
+#   VLLM_EXPECT_VER  version prefix the image must report after the wheel step (fail-closed)
+#   EXPECT_FLASHINFER optional flashinfer-python version to assert (rc1 pins 0.6.18)
+#   OVERLAY_JOBS     MAX_JOBS for the overlay nvcc build (lower it when the box is measuring)
+# See ../build-v0290rc1.sh for the v0.29.0rc1 invocation.
 ARG VLLM_BASE=vllm/vllm-openai:v0.28.0
 FROM ${VLLM_BASE}
 
 ARG VLLM_REF=v0.28.0
+ARG VLLM_WHEEL_URL=
+ARG VLLM_EXPECT_VER=0.28.0
+ARG EXPECT_FLASHINFER=
+ARG OVERLAY_JOBS=4
 ARG WITH_DFLASH_NC=0
 ARG SM_ARCH=120a
+
+# 0) optional exact-version wheel over the base (rc tags). --no-deps: the base's pins are the
+#    ref's pins by construction (checked in build-v0290rc1.sh); a dependency re-resolve here
+#    would silently drift torch/flashinfer. Asserts are GPU-free (ARGs are env vars in RUN).
+RUN set -eux; \
+    if [ -n "${VLLM_WHEEL_URL}" ]; then \
+      python3 -c 'import sys, urllib.request; urllib.request.urlretrieve(sys.argv[1], "/tmp/vllm.whl")' "${VLLM_WHEEL_URL}"; \
+      python3 -m pip install --no-cache-dir --no-deps /tmp/vllm.whl; rm -f /tmp/vllm.whl; \
+    fi; \
+    python3 -c 'import os, torch, vllm, flashinfer; \
+print("vllm", vllm.__version__, "torch", torch.__version__, "cuda", torch.version.cuda, "flashinfer", flashinfer.__version__); \
+exp = os.environ["VLLM_EXPECT_VER"]; assert vllm.__version__.startswith(exp), ("vllm", vllm.__version__, "expected", exp); \
+efi = os.environ.get("EXPECT_FLASHINFER", ""); assert not efi or flashinfer.__version__ == efi, ("flashinfer", flashinfer.__version__, "expected", efi); \
+assert torch.version.cuda.startswith("13."), ("wheel/base CUDA mismatch", torch.version.cuda); \
+import vllm._C, vllm._C_stable_libtorch; print("compiled extensions load OK")'
 
 # 1) vLLM csrc at the release tag (headers + the writer .cu), patched (0102)
 COPY 0102-nvfp4-writer-linear-vscale-sm12x-v0280.diff /tmp/0102.diff
 RUN set -eux; \
     apt-get update -qq && apt-get install -y -qq git patch >/dev/null && rm -rf /var/lib/apt/lists/*; \
     IMG_VER="$(python3 -c 'import vllm; print(vllm.__version__)')"; echo "image vllm $IMG_VER"; \
-    case "$IMG_VER" in 0.28.0*) ;; *) echo "FATAL: image vllm $IMG_VER != 0.28.0"; exit 1;; esac; \
+    case "$IMG_VER" in ${VLLM_EXPECT_VER}*) ;; *) echo "FATAL: image vllm $IMG_VER != ${VLLM_EXPECT_VER}"; exit 1;; esac; \
     rm -rf /opt/vllm-src; \
     git clone -q --filter=blob:none --no-checkout https://github.com/vllm-project/vllm /opt/vllm-src; \
     git -C /opt/vllm-src checkout -q ${VLLM_REF} -- csrc cmake/patches; \
@@ -50,7 +81,7 @@ ENV VLLM_SM12X_SHADOW_INC=/opt/vllm-sm12x/shadow-include \
     VLLM_SM12X_ARCH=${SM_ARCH} \
     PYTHONPATH=/opt/vllm-sm12x:${PYTHONPATH:-}
 RUN set -eux; \
-    export TORCH_CUDA_ARCH_LIST="12.0a" MAX_JOBS=4; \
+    export TORCH_CUDA_ARCH_LIST="12.0a" MAX_JOBS=${OVERLAY_JOBS}; \
     which nvcc || export PATH="/usr/local/cuda/bin:$PATH"; nvcc --version | tail -1; \
     cd /opt/vllm-sm12x && python3 build_overlay.py; \
     ls -la /opt/vllm-sm12x/build/*.so
@@ -89,4 +120,4 @@ RUN set -eux; \
     for f in v1/attention/backends/flashinfer.py v1/worker/gpu_worker.py v1/spec_decode/llm_base_proposer.py v1/worker/gpu_model_runner.py v1/worker/gpu/spec_decode/dflash2/speculator.py model_executor/models/qwen3_dflash.py v1/attention/backends/gdn_attn.py model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py; do python3 -m py_compile "$VROOT/$f"; done; \
     grep -q "use_fa2_nvfp4_kv" "$VROOT/v1/attention/backends/flashinfer.py"; \
     python3 -c "import torch; torch.ops.load_library('/opt/vllm-sm12x/build/vllm_sm12x_nvfp4kv.so'); assert hasattr(torch.ops.vllm_sm12x, 'reshape_and_cache_nvfp4'); print('overlay op registered')"; \
-    echo "V0280-NVFP4KV IMAGE OK (WITH_DFLASH_NC=${WITH_DFLASH_NC})"
+    echo "NVFP4KV IMAGE OK (vllm $(python3 -c 'import vllm; print(vllm.__version__)'), WITH_DFLASH_NC=${WITH_DFLASH_NC})"

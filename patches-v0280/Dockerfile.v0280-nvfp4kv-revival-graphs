@@ -2,8 +2,10 @@
 # (VLLM_SM12X_DFLASH_GRAPHS=1). Default behaviour unchanged (eager drafter) so the image is a
 # drop-in for the revival tag.
 # Build: sudo docker build -t vllm-qwen38:v0280-nvfp4kv-revival-graphs -f Dockerfile.v0280-nvfp4kv-revival-graphs patches-v0280/
-FROM vllm-qwen38:v0280-nvfp4kv-revival
+# BASE is a build arg so the same layer rebases onto another generation (v0.29.0rc1: see scripts/build-v0290rc1.sh).
+ARG BASE=vllm-qwen38:v0280-nvfp4kv-revival
+FROM ${BASE}
 COPY 0129-dflash-nvfp4-drafter-graphs.diff /tmp/0129.diff
-RUN cd /usr/local/lib/python3.12/dist-packages && \
+RUN cd "$(python3 -c 'import os, vllm; print(os.path.dirname(os.path.dirname(vllm.__file__)))')" && \
     patch -p1 --fuzz=0 < /tmp/0129.diff && \
     python3 -m py_compile vllm/v1/attention/backends/flashinfer.py && rm /tmp/0129.diff && echo 0129-APPLIED

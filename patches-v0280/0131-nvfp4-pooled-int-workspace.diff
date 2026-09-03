@@ -1,0 +1,59 @@
+--- a/vllm/v1/attention/backends/flashinfer.py
++++ b/vllm/v1/attention/backends/flashinfer.py
+@@ -121,6 +121,40 @@
+ 
+ 
+ @cache
++def _shrink_pooled_int_workspace(wrapper):
++    """R164/0131 (Bug C): FlashInfer gives EVERY BatchPrefillWithPagedKVCacheWrapper an
++    8 MiB device integer workspace (+ an 8 MiB pinned mirror). The SM12x NVFP4 route
++    keeps one graph-bound wrapper per captured batch size per metadata builder (5
++    attention groups on Qwen3.8 + 1 drafter builder), so a SEQS=16 boot retains
++    ~22 x 5 x 8 MiB on the target alone (ledger: results/2026-09-03-r164-bugc) and
++    the KV pool, sized before capture with a zero graph reserve, leaves no headroom.
++    The FA2 planner needs a few KiB of that workspace for these decode-sized batches
++    and raises loudly at plan() if it runs out, so shrink the pooled wrappers' buffers
++    right after construction (before any plan). VLLM_SM12X_POOLED_INT_WS_MIB: MiB per
++    pooled wrapper, default 1; 0 keeps FlashInfer's 8 MiB."""
++    import os
++
++    try:
++        mib = int(os.environ.get("VLLM_SM12X_POOLED_INT_WS_MIB", "1"))
++    except ValueError:
++        mib = 1
++    if mib <= 0:
++        return wrapper
++    n = mib * 1024 * 1024
++    buf = getattr(wrapper, "_int_workspace_buffer", None)
++    if buf is None or buf.numel() <= n:
++        return wrapper
++    wrapper._int_workspace_buffer = torch.empty((n,), dtype=torch.uint8, device=buf.device)
++    wrapper._pin_memory_int_workspace_buffer = torch.empty(
++        (n,), dtype=torch.uint8, device="cpu", pin_memory=True
++    )
++    logger.info_once(
++        "SM12x pooled FlashInfer wrappers: int workspace shrunk 8 MiB -> %d MiB each "
++        "(VLLM_SM12X_POOLED_INT_WS_MIB)", mib
++    )
++    return wrapper
++
++
+ def _sm12x_dflash_graphs_enabled() -> bool:
+     """R158/0129: let the DFlash drafter capture FULL graphs on the SM12x NVFP4 route."""
+     import os
+@@ -1320,6 +1354,7 @@
+                         ),
+                         backend=noncausal_backend,
+                     )
++                    _shrink_pooled_int_workspace(wrapper)
+                     self._noncausal_prefill_wrappers_cudagraph[batch_size] = wrapper
+                 return wrapper
+             if self._noncausal_prefill_wrapper is None:
+@@ -1363,6 +1398,7 @@
+                     ),
+                     backend="auto",
+                 )
++                _shrink_pooled_int_workspace(wrapper)
+                 self._prefill_wrappers_cudagraph[batch_size] = wrapper
+             return wrapper
+ 
