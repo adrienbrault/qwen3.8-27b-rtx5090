@@ -32,6 +32,22 @@ EB='--extra-body {"temperature":0.6}'
 L2=/srv/qwen5090/eval-l2
 FD=/srv/qwen5090/results/2026-08-23-fidelity
 FP8_RUN=/srv/qwen5090/results/2026-09-03-r165c-audition/run-v0280-redhat-fp8kv.jsonl
+# bf16 comparison (user, 2026-09-03 21:55 UTC): the R156 dense teacher-forced ladder (693 docs, 724,781 positions, ~3.5 min at c1)
+# scored against the bf16 dump (arm A of the R156 ladder) with fidelity_compare.py — top-1 flip rate, PPL delta and truncated KL
+# vs bf16 per bucket. The fidelity.py ruler above is vs an FP8 reference; this is the bf16 ruler the R156 promotion used.
+BF16_DIR=/srv/qwen5090/results/2026-09-01-r156-bf16-ladder; BF16_REF=$BF16_DIR/dump-a1-dense.jsonl; LADDER_CORPUS=/srv/qwen5090/r156-corpus.jsonl
+bf16_ladder(){ local T=$1
+  [ -f "$BF16_REF" ] && [ -f "$LADDER_CORPUS" ] || { log "[$T bf16] SKIPPED: reference dump or corpus missing"; return; }
+  timeout 3600 python3 /srv/qwen5090/probes/fidelity_ladder.py --url $U --model qwen3.8-27b --corpus "$LADDER_CORPUS" --out "$R/dump-$T-dense.jsonl" --logprobs 20 --mode dense > "$R/score-$T-dense.out" 2>&1
+  log "[$T bf16 dense] $(tail -1 "$R/score-$T-dense.out" | cut -c1-160)"
+  python3 /srv/qwen5090/probes/fidelity_compare.py --ref "$BF16_REF" --arm "$R/dump-$T-dense.jsonl" --label "$T" --json "$R/bf16-$T.json" 2>&1 | tee "$R/bf16-$T.txt" | grep -aE "overall|ALL|agent|code|prose|PPL|KL|top-1" | cut -c1-200 | sed "s/^/[$T vs bf16] /" | tee -a "$R/audit.log"; }
+# 0136 split-KV on arm N: SPLIT_N=auto reads r168b's verdict (needles ON all hit AND ON-vs-OFF ΔNLL within ±0.5%) so N is
+# measured in the configuration that would ship; SPLIT_N=0|1 forces it.
+R168B=/srv/qwen5090/results/2026-09-03-r168b-splitkv; SPLIT_N=${SPLIT_N:-auto}
+split_auto(){ local d miss hits
+  [ -f "$R168B/fidelity-ON-vs-OFF.txt" ] && [ -f "$R168B/needles-ON.out" ] || { echo 0; return; }
+  d=$(awk '$2=="ALL"{print $5; exit}' "$R168B/fidelity-ON-vs-OFF.txt"); miss=$(grep -ac MISS "$R168B/needles-ON.out"); hits=$(grep -ac "^\[HIT " "$R168B/needles-ON.out")
+  python3 -c "import sys; d=float('$d' or 'nan'); print(1 if abs(d)<=0.5 and $miss==0 and $hits>0 else 0)" 2>/dev/null || echo 0; }
 settle(){ for i in $(seq 36); do busy=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | awk '$1>1024{c++} END{print c+0}'); [ "$busy" = 0 ] && break; sleep 5; done; sleep "${1:-60}"; }
 teardown(){ for c in vllm-27b vllm-exp vllm-eval; do sudo docker ps -a --format '{{.Names}}' | grep -qx "$c" || continue; sudo docker logs "$c" > "$R/engine-$c-$(date +%H%M%S).log" 2>&1; sudo docker rm -f "$c" >/dev/null 2>&1; done; settle; }
 finish(){ teardown; log "restoring daily (skipped if another unit is queued: $(gpu_queue_others | tr '\n' ' '))"; bash /srv/qwen5090/daily-restore-retry.sh 2>&1 | grep -aE "DAILY|FAILED|KV pool|attempt|SKIPPED" | cut -c1-160 | tee -a "$R/audit.log"; log "=== R169 rc2 audition $1 ==="; }
@@ -46,10 +62,11 @@ FP8_X="-e NCCL_P2P_LEVEL=SYS"
 EMBED_ARGS="--offload-backend uva --cpu-offload-gb 1 --cpu-offload-params embed_tokens"
 bootfacts(){ sudo docker logs vllm-exp 2>&1 | grep -aE "Offloader set to|CPU offloaded parameters|matched no parameters|Available KV cache memory|GPU KV cache size|Graph capturing finished|Capturing dflash|running the draft eagerly|decode_backend=|kv_cache_memory_bytes" | cut -c1-220 > "$R/bootfacts-$1.txt"; }
 boot_N(){ local kv rc
+  [ "$SPLIT_N" = auto ] && { SPLIT_N=$(split_auto); log "[N] SPLIT_KV auto-decided from r168b: $SPLIT_N (ΔNLL ON-vs-OFF: $(awk '$2=="ALL"{print $5; exit}' "$R168B/fidelity-ON-vs-OFF.txt" 2>/dev/null), needle misses: $(grep -ac MISS "$R168B/needles-ON.out" 2>/dev/null))"; }
   for kv in "" 14000000000 13500000000; do
-    env -i PATH="$PATH" HOME="$HOME" USER="$USER" EXP=1 SEQS=8 ${kv:+KV_BYTES=$kv} bash $CAND > "$R/boot-N.log" 2>&1; rc=$?
+    env -i PATH="$PATH" HOME="$HOME" USER="$USER" EXP=1 SEQS=8 SPLIT_KV=$SPLIT_N ${kv:+KV_BYTES=$kv} bash $CAND > "$R/boot-N.log" 2>&1; rc=$?
     bootfacts N
-    if [ $rc -eq 0 ] && curl -sf -m 5 $U/health >/dev/null; then log "[N] BOOT OK ${kv:+(retry KV_BYTES=$kv) }$(grep -aoE 'Pool [0-9]+, min free VRAM [0-9]+ MiB' "$R/boot-N.log" | tail -1) $(grep -a 'CPU offloaded parameters' "$R/bootfacts-N.txt" | tail -1 | sed 's/.*INFO[^]]*] //' | cut -c1-60)"; return 0; fi
+    if [ $rc -eq 0 ] && curl -sf -m 5 $U/health >/dev/null; then log "[N] BOOT OK split_kv=$SPLIT_N ${kv:+(retry KV_BYTES=$kv) }$(grep -aoE 'Pool [0-9]+, min free VRAM [0-9]+ MiB' "$R/boot-N.log" | tail -1) $(grep -a 'CPU offloaded parameters' "$R/bootfacts-N.txt" | tail -1 | sed 's/.*INFO[^]]*] //' | cut -c1-60)"; return 0; fi
     log "[N] boot attempt ${kv:-default pin} FAILED rc=$rc: $(grep -aE 'FAILED' "$R/boot-N.log" | tail -1 | cut -c1-200)"
     grep -aq "Bug C headroom missing" "$R/boot-N.log" || break   # only the free-VRAM guard is worth a lower pin
     teardown
@@ -105,6 +122,7 @@ errlines(){ sudo docker logs vllm-exp 2>&1 | grep -ac "illegal memory\|CUDA erro
 measure(){ local T=$1
   needles $T "9000 131000"
   fidelity $T
+  bf16_ladder $T
   benchy $T 1 3; benchy $T 8 2
   dss $T code 1; dss $T code 8; dss $T prose 8
   deep30k $T
@@ -118,5 +136,5 @@ wipe_l2; if boot_F; then measure F
   [ -f "$R/run-N.jsonl" ] && python3 /srv/qwen5090/probes/fidelity.py compare --ref "$R/run-F.jsonl" "$R/run-N.jsonl" 2>&1 | tee "$R/fidelity-N-vs-F.txt" | cut -c1-200 | sed "s/^/[N fidelity vs F (direct, same hour)] /" | tee -a "$R/audit.log"
 fi; teardown
 if [ "${SKIP_D:-0}" != 1 ]; then wipe_l2; if boot_D; then measure D; fi; teardown; fi
-log "SHEET:"; grep -aE "BOOT OK|benchy c[18]\]|decode_ss|fidelity|needles|TIER (PASS|FAIL|INCONCLUSIVE|SHEET)|error-lines" "$R/audit.log" | grep -av "^.*SHEET:$" | cut -c1-200 > "$R/sheet.txt"; wc -l "$R/sheet.txt" | tee -a "$R/audit.log"
+log "SHEET:"; grep -aE "BOOT OK|benchy c[18]\]|decode_ss|fidelity|bf16|needles|TIER (PASS|FAIL|INCONCLUSIVE|SHEET)|error-lines" "$R/audit.log" | grep -av "^.*SHEET:$" | cut -c1-200 > "$R/sheet.txt"; wc -l "$R/sheet.txt" | tee -a "$R/audit.log"
 finish DONE
