@@ -50,7 +50,7 @@ print("vllm", vllm.__version__, "torch", torch.__version__, "cuda", torch.versio
 exp = os.environ["VLLM_EXPECT_VER"]; assert vllm.__version__.startswith(exp), ("vllm", vllm.__version__, "expected", exp); \
 efi = os.environ.get("EXPECT_FLASHINFER", ""); assert not efi or flashinfer.__version__ == efi, ("flashinfer", flashinfer.__version__, "expected", efi); \
 assert torch.version.cuda.startswith("13."), ("wheel/base CUDA mismatch", torch.version.cuda); \
-import vllm._C, vllm._C_stable_libtorch; print("compiled extensions load OK")'
+import importlib.util as iu; assert iu.find_spec("vllm._C_stable_libtorch") and iu.find_spec("vllm._moe_C_stable_libtorch"), "compiled extensions missing from the wheel"; print("compiled extensions present (load test needs the driver: build script)")'
 
 # 1) vLLM csrc at the release tag (headers + the writer .cu), patched (0102)
 COPY 0102-nvfp4-writer-linear-vscale-sm12x-v0280.diff /tmp/0102.diff

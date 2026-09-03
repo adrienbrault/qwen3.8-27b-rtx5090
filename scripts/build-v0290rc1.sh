@@ -44,9 +44,12 @@ build "$TAG" /srv/qwen5090/patches-v0290 Dockerfile --build-arg OVERLAY_JOBS=4
 build "$TAG-revival" /srv/qwen5090/patches-v0290 Dockerfile.revival --build-arg BASE="$TAG"
 build "$TAG-revival-prs" /srv/qwen5090/patches-v0290 Dockerfile.prs --build-arg BASE="$TAG-revival"
 
-# GPU-free identity check of the final layer: version, overlay op registered, patch markers present
-sudo docker run --rm --entrypoint python3 "$TAG-revival-prs" -c '
+# Identity check of the final layer: version, compiled extensions load and register their ops (needs libcuda,
+# hence --runtime nvidia; nothing runs on the GPU), overlay op registered, patch markers present
+sudo docker run --rm --runtime nvidia --gpus all --entrypoint python3 "$TAG-revival-prs" -c '
 import os, torch, vllm, flashinfer
+import vllm._C_stable_libtorch, vllm._moe_C_stable_libtorch
+assert hasattr(torch.ops._C, "rotary_embedding") and hasattr(torch.ops._moe_C, "topk_softmax"), "compiled ops not registered"
 torch.ops.load_library("/opt/vllm-sm12x/build/vllm_sm12x_nvfp4kv.so"); assert hasattr(torch.ops.vllm_sm12x, "reshape_and_cache_nvfp4")
 root = os.path.dirname(vllm.__file__); fi = open(os.path.join(root, "v1/attention/backends/flashinfer.py")).read()
 for m in ("use_fa2_nvfp4_kv", "_shrink_pooled_int_workspace", "VLLM_SM12X_DFLASH_GRAPHS", "VLLM_FLASHINFER_XQA_USE_ISOLATED_STREAM"): assert m in fi, m
