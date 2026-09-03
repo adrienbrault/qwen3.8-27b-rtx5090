@@ -77,7 +77,7 @@
          )
          # Adaptive verification trims drafts on device, so decode query lengths
          # must come from the device qo_indptr; only trtllm-gen supports that
-@@ -2437,10 +2471,9 @@
+@@ -2437,11 +2471,10 @@
          decode_with_dedicated_xqa = (
              decode_with_xqa
              and current_platform.is_device_capability_family(120)
@@ -89,6 +89,7 @@
 -            assert not self.is_kvcache_nvfp4
              assert self.o_sf_scale is None
              assert output.dtype != FP4_DTYPE
+ 
 @@ -2789,23 +2823,35 @@
                      )
                      q_len_per_req: int | None = attn_metadata.decode.q_len_per_req
