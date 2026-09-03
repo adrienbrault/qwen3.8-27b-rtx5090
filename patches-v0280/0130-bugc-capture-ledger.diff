@@ -1,0 +1,187 @@
+--- a/vllm/v1/worker/gpu/cudagraph_utils.py
++++ b/vllm/v1/worker/gpu/cudagraph_utils.py
+@@ -1,5 +1,6 @@
+ # SPDX-License-Identifier: Apache-2.0
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++import os
+ from collections import defaultdict
+ from collections.abc import Callable
+ from dataclasses import dataclass
+@@ -318,6 +319,102 @@
+                 because attention backends may mutate or lazily initialize
+                 metadata during warmup.
+         """
++        bugc_ledger = os.environ.get("VLLM_BUGC_LEDGER", "0") == "1"
++
++        def memory_snapshot() -> tuple[int, int, int]:
++            torch.accelerator.synchronize()
++            free_bytes = torch.accelerator.get_memory_info()[0]
++            allocated_bytes = torch.cuda.memory_allocated(self.device)
++            reserved_bytes = torch.cuda.memory_reserved(self.device)
++            return free_bytes, allocated_bytes, reserved_bytes
++
++        def reachable_wrapper_ids(forward_fn: Callable) -> str:
++            """Best-effort IDs for attention wrappers captured by the closure."""
++            wrapper_ids: set[int] = set()
++            seen: set[int] = set()
++
++            def visit(value: Any, depth: int = 0) -> None:
++                if depth > 4 or id(value) in seen:
++                    return
++                seen.add(id(value))
++                if isinstance(value, dict):
++                    for item in value.values():
++                        visit(item, depth + 1)
++                    return
++                if isinstance(value, (list, tuple)):
++                    for item in value:
++                        visit(item, depth + 1)
++                    return
++
++                # Attention metadata objects expose phase records whose
++                # ``wrapper`` field is the graph-bound FlashInfer wrapper.
++                module = type(value).__module__
++                if not module.startswith("vllm.v1.attention"):
++                    return
++                for phase_name in ("prefill", "decode"):
++                    phase = getattr(value, phase_name, None)
++                    wrapper = getattr(phase, "wrapper", None)
++                    if wrapper is not None:
++                        wrapper_ids.add(id(wrapper))
++
++            for cell in forward_fn.__closure__ or ():
++                try:
++                    visit(cell.cell_contents)
++                except ValueError:
++                    # Empty closure cell.
++                    continue
++            return ",".join(hex(x) for x in sorted(wrapper_ids)) or "unreachable"
++
++        def log_descriptor(
++            desc: BatchExecutionDescriptor,
++            wrapper_ids: set[str],
++            previous: tuple[int, int, int],
++            before: tuple[int, int, int],
++            after_create: tuple[int, int, int],
++            after_warmup: tuple[int, int, int],
++            after_capture: tuple[int, int, int],
++        ) -> None:
++            def delta(
++                current: tuple[int, int, int],
++                prior: tuple[int, int, int],
++            ) -> tuple[int, int]:
++                return current[1] - prior[1], current[2] - prior[2]
++
++            before_delta = delta(before, previous)
++            create_delta = delta(after_create, before)
++            warmup_delta = delta(after_warmup, after_create)
++            capture_delta = delta(after_capture, after_warmup)
++            logger.info(
++                "BUGC_LEDGER descriptor manager=%#x kind=%s mode=%s "
++                "num_reqs=%s num_tokens=%d wrappers=%s "
++                "before_free=%d before_alloc_delta=%+d before_reserved_delta=%+d "
++                "after_create_free=%d after_create_alloc_delta=%+d "
++                "after_create_reserved_delta=%+d after_warmup_free=%d "
++                "after_warmup_alloc_delta=%+d after_warmup_reserved_delta=%+d "
++                "after_capture_free=%d after_capture_alloc_delta=%+d "
++                "after_capture_reserved_delta=%+d",
++                id(self),
++                type(self).__name__,
++                desc.cg_mode.name,
++                desc.num_reqs,
++                desc.num_tokens,
++                ";".join(sorted(wrapper_ids)),
++                before[0],
++                before_delta[0],
++                before_delta[1],
++                after_create[0],
++                create_delta[0],
++                create_delta[1],
++                after_warmup[0],
++                warmup_delta[0],
++                warmup_delta[1],
++                after_capture[0],
++                capture_delta[0],
++                capture_delta[1],
++            )
++
++        manager_start = memory_snapshot() if bugc_ledger else None
++        previous_snapshot = manager_start
+         with graph_capture(device=self.device):
+             # Capture in order: PIECEWISE first, then FULL. PIECEWISE has larger
+             # activations so FULL activations should fit in already allocated
+@@ -330,11 +427,19 @@
+                 if is_global_first_rank():
+                     descs = tqdm(descs, desc=f"{progress_bar_desc} ({mode.name})")
+                 for desc in descs:
++                    if bugc_ledger:
++                        assert previous_snapshot is not None
++                        before = memory_snapshot()
+                     # Prepare inputs and get forward function
+                     forward_fn = create_forward_fn(desc, warmup=True)
++                    if bugc_ledger:
++                        wrapper_ids = {reachable_wrapper_ids(forward_fn)}
++                        after_create = memory_snapshot()
+ 
+                     # Warmup
+                     forward_fn(CUDAGraphMode.NONE)
++                    if bugc_ledger:
++                        after_warmup = memory_snapshot()
+ 
+                     # Capture
+                     logger.debug(
+@@ -348,8 +453,22 @@
+                     else:
+                         # Capture with fresh attention state.
+                         forward_fn = create_forward_fn(desc, warmup=False)
++                        if bugc_ledger:
++                            wrapper_ids.add(reachable_wrapper_ids(forward_fn))
+                         if desc.cg_mode == CUDAGraphMode.PIECEWISE:
+                             forward_fn(CUDAGraphMode.PIECEWISE)
++                            if bugc_ledger:
++                                after_capture = memory_snapshot()
++                                log_descriptor(
++                                    desc,
++                                    wrapper_ids,
++                                    previous_snapshot,
++                                    before,
++                                    after_create,
++                                    after_warmup,
++                                    after_capture,
++                                )
++                                previous_snapshot = after_capture
+                             continue
+                         assert desc not in self.graphs, (
+                             f"Graph already captured for {desc}"
+@@ -371,7 +490,31 @@
+                             get_offloader().join_after_forward()
+                         self.graphs[desc] = graph
+                         compilation_counter.num_cudagraph_captured += 1
++                    if bugc_ledger:
++                        after_capture = memory_snapshot()
++                        log_descriptor(
++                            desc,
++                            wrapper_ids,
++                            previous_snapshot,
++                            before,
++                            after_create,
++                            after_warmup,
++                            after_capture,
++                        )
++                        previous_snapshot = after_capture
+         self._graphs_captured = True
++        if bugc_ledger:
++            assert manager_start is not None
++            manager_end = memory_snapshot()
++            logger.info(
++                "BUGC_LEDGER summary manager=%#x kind=%s retained_bytes=%d "
++                "retained_alloc_delta=%+d retained_reserved_delta=%+d",
++                id(self),
++                type(self).__name__,
++                manager_start[0] - manager_end[0],
++                manager_end[1] - manager_start[1],
++                manager_end[2] - manager_start[2],
++            )
+ 
+     def captured_token_counts(self) -> list[int]:
+         """Sorted token counts with a captured graph, ignoring LoRA variants."""

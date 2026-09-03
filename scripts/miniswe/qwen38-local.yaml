@@ -1,0 +1,17 @@
+# mini-SWE-agent overlay for the flan daily served through vLLM's OpenAI-compatible API.
+# Merged AFTER the builtin benchmarks/swebench.yaml (the leaderboard's "bash-only" setting: one bash
+# tool via tool calls, step_limit 250) — serving plumbing only, no prompt/limit changes.
+# Sampling (temperature 0.6, top_p 0.95, top_k 20) is the engine's --override-generation-config.
+model:
+  model_name: openai/qwen3.8-27b
+  cost_tracking: ignore_errors      # local model: litellm has no price entry (would raise otherwise)
+  model_kwargs:
+    api_base: http://127.0.0.1:8030/v1
+    api_key: local
+    timeout: 1800                   # litellm default 600 s; a long thinking turn at c16 (~96 t/s/stream) can exceed it
+    max_tokens: 32768               # runaway thinking loops release their slot; mini-swe recovers from finish_reason=length
+    drop_params: true
+    parallel_tool_calls: true
+environment:
+  pull_timeout: 900                 # `docker run` includes the pull; images are pre-pulled — this is the fallback
+  run_args: ["--rm", "--memory=3g", "--memory-swap=3g"]   # per-task cap: 16 uncapped test runs + the scorer OOM-panicked flan (2026-09-02); list merge REPLACES, keep --rm

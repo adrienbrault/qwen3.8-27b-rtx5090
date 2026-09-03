@@ -19,7 +19,7 @@ The served configuration (two cards, since 2026-09-02):
 | perplexity gap vs the bf16 model | +0.38% |
 | warm revisit of a 32K context from the disk tier | 0.45 s instead of 7.5 s |
 
-Agentic benchmarks, measured on earlier one-card configurations: SWE-Bench Verified 331/500 = 66.2% (2026-08-21, saka checkpoint, NVFP4 KV with LMCache tiers, R2E-Gym scaffold, official harness) and Terminal-Bench 2.1 50/89 = 56.2% (2026-08-23, gittensor checkpoint, same one-card stack, Harbor with terminus-2). Details in [bench/RESULTS.md](bench/RESULTS.md).
+Agentic benchmarks: SWE-Bench Verified **386/500 = 77.2%** on the current two-card daily (2026-09-03, mini-SWE-agent 2.4.6, official harness, one attempt); earlier one-card configurations scored 331/500 = 66.2% (2026-08-21, saka checkpoint, R2E-Gym scaffold) and Terminal-Bench 2.1 50/89 = 56.2% (2026-08-23, gittensor checkpoint, Harbor with terminus-2). Details in [bench/RESULTS.md](bench/RESULTS.md).
 
 ## Hardware
 

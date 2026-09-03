@@ -10,6 +10,8 @@ Hardware since 2026-08-31: two RTX 5090 32 GB (`sm_120`), Ryzen 7 9800X3D, 64 GB
 
 ## Index
 
+- [R163, nvfp4 KV candidate vs the fp8 daily, paired: fidelity, pool and c8 gates pass; single-stream jitter and a graph-capture OOM block promotion (2026-09-03, `results/2026-09-03-r163-paired`, `scripts/r163-paired.sh`)](#r163-nvfp4-kv-candidate-vs-the-fp8-daily-paired-fidelity-pool-and-c8-gates-pass-single-stream-jitter-and-a-graph-capture-oom-block-promotion-2026-09-03-results2026-09-03-r163-paired-scriptsr163-pairedsh)
+- [R160, SWE-Bench Verified with mini-SWE-agent on the fp8 daily: 386/500 = 77.2% (2026-09-02→03, `results/2026-09-02-miniswe-rh`, `scripts/miniswe-full.sh`)](#r160-swe-bench-verified-with-mini-swe-agent-on-the-fp8-daily-386500--772-2026-09-0203-results2026-09-02-miniswe-rh-scriptsminiswe-fullsh)
 - [Post-teardown settle: 60 seconds is enough on a healthy box (2026-09-03, `results/2026-09-03-r162-settle`, `scripts/r162-settle-ladder.sh`)](#post-teardown-settle-60-seconds-is-enough-on-a-healthy-box-2026-09-03-results2026-09-03-r162-settle-scriptsr162-settle-laddersh)
 - [Image limit per request: raising the count is free, a pixel cap is not (2026-09-03, `results/2026-09-03-r161-images`, `scripts/r161-images.sh`, `scripts/mm_probe.py`)](#image-limit-per-request-raising-the-count-is-free-a-pixel-cap-is-not-2026-09-03-results2026-09-03-r161-images-scriptsr161-imagessh-scriptsmm_probepy)
 - [R159, the served shape at concurrency 8/16/32/64: aggregate saturates at c16 and the pool caps admission at ~18 short requests (2026-09-02, `results/2026-09-02-r159-conc-b`, `scripts/r159-conc.sh` + `r159c-live.sh`)](#r159-the-served-shape-at-concurrency-8163264-aggregate-saturates-at-c16-and-the-pool-caps-admission-at-18-short-requests-2026-09-02-results2026-09-02-r159-conc-b-scriptsr159-concsh--r159c-livesh)
@@ -62,6 +64,45 @@ Hardware since 2026-08-31: two RTX 5090 32 GB (`sm_120`), Ryzen 7 9800X3D, 64 GB
 - [Correction (2026-07-19): util 0.98 retired after a serve-time autotune OOM, deep-concurrency numbers re-based](#correction-2026-07-19-util-098-retired-after-a-serve-time-autotune-oom-deep-concurrency-numbers-re-based)
 - [Promotion (2026-07-19): natfii NVFP4 W4A4 is the daily, util 0.98, pool 239,436](#promotion-2026-07-19-natfii-nvfp4-w4a4-is-the-daily-util-098-pool-239436)
 - [Complete llama-benchy matrix on the promoted daily (2026-07-19, util 0.98)](#complete-llama-benchy-matrix-on-the-promoted-daily-2026-07-19-util-098)
+
+## R163, nvfp4 KV candidate vs the fp8 daily, paired: fidelity, pool and c8 gates pass; single-stream jitter and a graph-capture OOM block promotion (2026-09-03, `results/2026-09-03-r163-paired`, `scripts/r163-paired.sh`)
+
+The R158c candidate (RedHatAI NVFP4 weights, **nvfp4 KV**, DFlash2 ns9 TP=2 with drafter FULL graphs: patches 0116–0119 + 0129, `VLLM_SM12X_DFLASH_GRAPHS=1`, XQA decode off, FlashInfer workspace 512 MiB) against the fp8-KV daily shape, same box, same hour, same boot order and probes, both on :8029 at util 0.90, SEQS=8, MNBT 8192, disk tier on (wiped before each arm). Gates are the promotion sheet's.
+
+| gate | fp8 daily shape | nvfp4 candidate | verdict |
+|---|---|---|---|
+| pool, 3 boots | 629,840 / 627,756 / 627,756 (bimodal, known) | 985,507 ×3 | +57%, no bimodality |
+| needles 9K/20K/131K/220K ×2 | 8/8 | 8/8 | pass |
+| tier warm-revisit 32K | 7.48 s → 0.45 s | 7.58 s → 0.68 s | pass |
+| tool-eval 69×4 | 88.5 ±3.1 | 89.8 ±0.5 | pass |
+| llama-benchy c8 (T=0.6, pp2048 tg256) | 636.7 ±13.1 | 648.2 ±3.1 | parity |
+| decode_ss code c8 | 1,167.5 (acc 0.288) | 1,153.1 (acc 0.298) | parity |
+| decode_ss prose c8 | 955.2 | 869.2 | −9% |
+| decode_ss prose c1 @30K ctx | 142.2 [141.6, 142.8] | 142.9 [132.3, 153.4] | parity, jittery |
+| llama-benchy c1 | 276.5 ±1.2 | 213.8 ±25.2 | **fail, −23% and jittery** |
+| boot at SEQS=32 | pool 601,021; c8/16/32 = 643/640/667 | **OOM twice** | **fail** |
+| engine error lines | 0 | 0 | pass |
+
+Extras on the candidate (SEQS=8, needles 131K+220K all hit): ns7 pool 1,030,986, c1 237.8 ±26.8, code c8 **1,262** (+9% over ns9); ns11 pool 946,928, c1 265.7 ±13.0, code c8 1,045. Fewer speculative tokens buys c8 on this KV; the single-stream jitter is present at every ns. A drafter-fp8-under-nvfp4-target cell is not viable: the pool collapses to 290K and the drafter's KV update crashes on the layout mismatch (`ValueError` in `do_kv_cache_update`); mixed KV dtypes are not a supported cell on this overlay.
+
+**The graph-capture OOM ("Bug C").** The candidate's pool does not shrink with `--max-num-seqs` (985,507 / 984,411 / 983,314 at 8/16/32; fp8 drops 627,756 → 601,021) and the engine OOMs at util 0.90: SEQS=16 in the first 131K prefill, SEQS=32 during FULL graph capture with 8.5 MiB free. Source-grounded mechanism: vLLM sizes the KV pool before graph capture and its pre-capture graph estimate is hard-coded to zero, so no graph reserve is subtracted (upstream behaviour, fp8 survives because its graphs, 0.48 GiB at SEQS=8 and 1.11 at 32, fit inside the util headroom); the profile run skips attention on both target and drafter, so the graph-bound non-causal wrapper path is never profiled; the candidate's graphs cost about 2.4x fp8's per captured shape (1.15 GiB at SEQS=8, 2.05 at 16). Both graph managers share the global graph pool, so private pools are ruled out; whether the retained memory is FlashInfer per-wrapper plan storage or capture-time storage is what the next round measures with a per-descriptor allocation ledger (`patches-v0280/0130-bugc-capture-ledger.diff`, env-gated, a no-op by default) and a zero-patch cap on captured shapes (`--cudagraph-capture-sizes 10 20 40 80`, which bounds both managers). Interim workaround: util 0.86 at SEQS=16 (pool ≈ 840K).
+
+Instrument notes: the 262K needle depth is a probe bug (prompt plus answer exceed 262,144 → HTTP 400 on both arms; the true edge needs ≈258K); decode_ss finds no steady-state window at c32 with 512-token generations, use llama-benchy peaks there; the fp8 shape's c1 was 276.5 today against 318.8 on 09-02 with clocks and the memory OC intact, so a jitter-isolation ladder (tier off, eager drafter, CPU governor performance, fp8 control) runs next. Status: fidelity and capacity gates pass; promotion is blocked on the single-stream jitter and on Bug C, both in flight; the candidate's own SWE-Bench Verified run (same 500, util 0.86) is queued to pair per-instance against R160.
+
+## R160, SWE-Bench Verified with mini-SWE-agent on the fp8 daily: 386/500 = 77.2% (2026-09-02→03, `results/2026-09-02-miniswe-rh`, `scripts/miniswe-full.sh`)
+
+Leaderboard-shaped run: mini-swe-agent 2.4.6 (its builtin `swebench.yaml` plus the local model config in `scripts/miniswe/`), litellm 1.99.0, the official swebench 4.1.0 harness in the official `sweb.eval` images, the full Verified 500, one attempt each. Engine: the daily stack on :8030 (RedHatAI NVFP4 weights, fp8 KV, DFlash2 ns9 TP=2, util 0.90, SEQS 16, disk tier on), 16 then 12 agent workers, chunks of 40 scored as they finished (`scripts/miniswe-full.sh`, `scripts/miniswe-score.sh`).
+
+| | |
+|---|---|
+| resolved | **386 / 500 = 77.2%** |
+| completed / empty patches / scoring errors | 498 / 2 / 0 |
+| exits | 499 Submitted, 1 RepeatedFormatError |
+| per repo | django 179/231 (77.5%), sympy 59/75 (78.7%), sphinx 34/44 (77.3%), matplotlib 23/34 (67.6%), scikit-learn 27/32 (84.4%), astropy 16/22, pydata 16/22 (72.7%), pytest 18/19 (94.7%), pylint 5/10, psf 7/8, mwaskom 1/2, pallets 1/1 |
+| pace | ≈2.2 instances/min at 12 workers (a chunk of 40 in 17–42 min), ≈5.5 h of agent time for the 500 |
+| engine | 0 runtime error lines; 35 preemptions on the last engine; the disk tier filled to 100% twice and was cycled (wipe + reboot, 4.5 min each) |
+
+Reference points for the number: the same scaffold on Qwen3.6-27B-FP8 scored 67.8% (QwenLM discussion 1846); public SOTA on the leaderboard is 79.2%, engineered multi-attempt stacks report 88–90. This rig's earlier R2E-scaffold runs (66.2% on the saka checkpoint, above) used a different scaffold and are not comparable one-to-one. The run survived an OOM-panic reboot (earlyoom installed since), two heavy-TP2 boot failures at a 45 s settle (see the settle ladder), and a user pause; 23 mid-run scoring errors (Docker Hub 500s on image pulls) cleared on re-score. This is the fp8 half of a pair: the nvfp4-KV candidate runs the identical 500 next and the comparison is per instance.
 
 ## Post-teardown settle: 60 seconds is enough on a healthy box (2026-09-03, `results/2026-09-03-r162-settle`, `scripts/r162-settle-ladder.sh`)
 
