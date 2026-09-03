@@ -54,7 +54,7 @@
 +                        paged_kv_indptr_buf=self.paged_kv_indptr.gpu[
 +                            : batch_size + 1
 +                        ],
-+                        paged_kv_indices_buf=self.paged_kv_indices.gpu,
++                        paged_kv_indices_buf=self.paged_kv_indices,
 +                        paged_kv_last_page_len_buf=(
 +                            self.paged_kv_last_page_len.gpu[:batch_size]
 +                        ),

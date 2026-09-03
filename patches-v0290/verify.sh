@@ -56,11 +56,13 @@ done
 
 apply_tree_patch "$OUT_DIR/0132-masked-nvfp4-xqa-sm120-v0290.diff"
 apply_tree_patch "$OUT_DIR/0133-gdn-packed-decode-bv16-v0290.diff"
+apply_tree_patch "$OUT_DIR/0134-dflash-no-eagle-block-drop-v0290.diff"
 
 for file in $(
     for patch_path in "$PATCH_DIR"/*.diff \
         "$OUT_DIR/0132-masked-nvfp4-xqa-sm120-v0290.diff" \
-        "$OUT_DIR/0133-gdn-packed-decode-bv16-v0290.diff"
+        "$OUT_DIR/0133-gdn-packed-decode-bv16-v0290.diff" \
+        "$OUT_DIR/0134-dflash-no-eagle-block-drop-v0290.diff"
     do
         sed -n 's@^+++ b/@@p' "$patch_path"
     done | sed 's@^vllm/@@' | sort -u
@@ -74,4 +76,4 @@ do
     esac
 done
 
-echo "VERIFIED: phase 1 + 0132 + 0133"
+echo "VERIFIED: phase 1 + 0132 + 0133 + 0134"

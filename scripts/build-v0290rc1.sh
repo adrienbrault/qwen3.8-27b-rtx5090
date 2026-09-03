@@ -13,7 +13,7 @@
 #          sha256 23ba38f22cc21fa99ee60265f5500b46f1953ef7c999672b4cb297bd4b993508 (copy in builds/v0290rc1/).
 #   tags   vllm-qwen38:v0290rc1-nvfp4kv              = 0101-0113 rebased (daily-equivalent of v0280-nvfp4kv)
 #          vllm-qwen38:v0290rc1-nvfp4kv-revival      = + 0116-0119 + 0129 + 0131 (candidate-equivalent of ...-revival-graphs-ws)
-#          vllm-qwen38:v0290rc1-nvfp4kv-revival-prs  = + 0132 (PR #53543 masked NVFP4 XQA) + 0133 (PR #54181 GDN BV knob), defaults inert
+#          vllm-qwen38:v0290rc1-nvfp4kv-revival-prs  = + 0132 (PR #53543 masked NVFP4 XQA) + 0133 (PR #54181 GDN BV knob), defaults inert, + 0134 (PR #54163 DFlash prefix-cache fix)
 #   diffs  flan/patches-v0290/ (codex rebase, NOTES16.md; 10 rebased / 7 verbatim; verify.sh = --fuzz=0 chain + py_compile)
 # No GPU needed. Waits for the TB 2.1 ladder unit (it times cmd-bound work on the shared cores) and then
 # takes the GPU-exclusive flock so it never overlaps a measurement. Nothing here touches the engines.
@@ -53,6 +53,7 @@ assert hasattr(torch.ops._C, "rotary_embedding") and hasattr(torch.ops._moe_C, "
 torch.ops.load_library("/opt/vllm-sm12x/build/vllm_sm12x_nvfp4kv.so"); assert hasattr(torch.ops.vllm_sm12x, "reshape_and_cache_nvfp4")
 root = os.path.dirname(vllm.__file__); fi = open(os.path.join(root, "v1/attention/backends/flashinfer.py")).read()
 for m in ("use_fa2_nvfp4_kv", "_shrink_pooled_int_workspace", "VLLM_SM12X_DFLASH_GRAPHS", "VLLM_FLASHINFER_XQA_USE_ISOLATED_STREAM"): assert m in fi, m
+assert "use_eagle_preserves_target_kv_cache" in open(os.path.join(root, "v1/core/sched/scheduler.py")).read(), "0134 marker"
 print("IDENTITY OK", vllm.__version__, torch.__version__, flashinfer.__version__)' 2>&1 | tail -1 | tee -a "$R/audit.log"
 sudo docker images --format '{{.Repository}}:{{.Tag}} {{.ID}} {{.Size}}' | grep v0290rc1 | tee "$R/images.txt" | sed 's/^/[image] /' | tee -a "$R/audit.log"
 log "=== R165 build DONE — next: audition on :8029 (fp8 daily shape + nvfp4 SEQS 16/32 with and without 0131; fidelity ruler) ==="

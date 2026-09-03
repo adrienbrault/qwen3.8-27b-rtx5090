@@ -1,13 +1,18 @@
 # R165 phase 2: PR #53543 (masked NVFP4 XQA on SM120, opt-in isolated stream VLLM_FLASHINFER_XQA_USE_ISOLATED_STREAM=0 default)
-# as 0132, and PR #54181 (SM120 packed GDN decode BV=16; unforced selector never fires for H=16/HV=48, knob
-# VLLM_SM12X_GDN_PACKED_BV=16|32 forces it) as 0133. Defaults leave behaviour unchanged, so the image is a drop-in.
+# as 0132, PR #54181 (SM120 packed GDN decode BV=16; unforced selector never fires for H=16/HV=48, knob
+# VLLM_SM12X_GDN_PACKED_BV=16|32 forces it) as 0133, and PR #54163 (DFlash never drops the last prefix-cache block;
+# without it rc1 + DFlash2 on this hybrid gets 0 prefix-cache hits and the disk tier never serves, R165 cell A) as 0134.
+# 0132/0133 are inert by default; 0134 changes scheduling for dflash only.
 # Build: sudo docker build -f Dockerfile.prs --build-arg BASE=vllm-qwen38:v0290rc1-nvfp4kv-revival -t vllm-qwen38:v0290rc1-nvfp4kv-revival-prs .
 ARG BASE=vllm-qwen38:v0290rc1-nvfp4kv-revival
 FROM ${BASE}
-COPY 0132-masked-nvfp4-xqa-sm120-v0290.diff 0133-gdn-packed-decode-bv16-v0290.diff /tmp/
+COPY 0132-masked-nvfp4-xqa-sm120-v0290.diff 0133-gdn-packed-decode-bv16-v0290.diff 0134-dflash-no-eagle-block-drop-v0290.diff /tmp/
 RUN set -eux; cd "$(python3 -c 'import os, vllm; print(os.path.dirname(os.path.dirname(vllm.__file__)))')"; \
     patch --batch --forward -p1 --fuzz=0 < /tmp/0132-masked-nvfp4-xqa-sm120-v0290.diff; \
     patch --batch --forward -p1 --fuzz=0 < /tmp/0133-gdn-packed-decode-bv16-v0290.diff; \
-    python3 -m py_compile vllm/envs.py vllm/v1/attention/backends/flashinfer.py vllm/third_party/flash_linear_attention/ops/fused_recurrent.py; \
+    patch --batch --forward -p1 --fuzz=0 < /tmp/0134-dflash-no-eagle-block-drop-v0290.diff; \
+    python3 -m py_compile vllm/envs.py vllm/v1/attention/backends/flashinfer.py vllm/third_party/flash_linear_attention/ops/fused_recurrent.py \
+      vllm/config/speculative.py vllm/v1/core/sched/scheduler.py; \
     grep -q VLLM_FLASHINFER_XQA_USE_ISOLATED_STREAM vllm/envs.py; grep -q VLLM_SM12X_GDN_PACKED_BV vllm/envs.py; \
-    rm -f /tmp/013*.diff; echo PRS-0132-0133-APPLIED
+    grep -q use_eagle_preserves_target_kv_cache vllm/v1/core/sched/scheduler.py; \
+    rm -f /tmp/013*.diff; echo PRS-0132-0133-0134-APPLIED

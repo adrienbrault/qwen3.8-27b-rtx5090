@@ -1,0 +1,119 @@
+0134 — DFlash/DSpark drafters must not get eagle KV-cache block handling (rc1-native port of the idea in vllm-project/vllm
+PR #54163 by Ledgero, which targets a newer main with #53388's use_eagle_block_drop; rc1 lacks that helper, so this
+carries the predicate to every rc1 site that keys KV handling on use_eagle(): the scheduler's KVCacheManager(use_eagle=…)
+and Mamba back-off, the offloading connector's draft-group fallback, and kv_cache_utils' eagle-group annotation/warning).
+Mechanism on rc1 + Qwen3.8-27B + DFlash2 (R165 cell A): no KV group is annotated as the draft's, so every group is
+treated as a draft group; rc1's MambaManager now honours drop_eagle_block and needs two consecutive chunks that align-mode
+checkpointing never produces -> prefix-cache hits 0 on identical re-sends (v0.28.0 same shape: 51,584 hits, TTFT 0.45 s).
+Tree-root relative (-p1 from site-packages). Verified: verify.sh (apply + py_compile); metal: r165b warm revisit.
+
+diff --color -u -r a/vllm/config/speculative.py b/vllm/config/speculative.py
+--- a/vllm/config/speculative.py	2026-09-03 12:43:19
++++ b/vllm/config/speculative.py	2026-09-03 12:43:19
+@@ -1846,6 +1846,15 @@
+         # TODO(ben): Refactor this so the naming is clearer
+         return self.method in ("eagle", "eagle3", "mtp", "dflash", "dspark")
+ 
++    def use_eagle_preserves_target_kv_cache(self) -> bool:
++        # Only eagle-family drafters share (and pollute via their lookahead KV
++        # write) the target's full-attention KV cache groups. DFlash/DSpark draft
++        # from their own KV cache and never write target blocks, so the KV cache
++        # manager must not apply eagle block handling to them (vllm-project/vllm
++        # #53477, #54163): on a hybrid model in align mode it turns prefix-cache
++        # reuse off entirely.
++        return self.method in ("eagle", "eagle3", "mtp")
++
+     def use_dflash(self) -> bool:
+         return self.method == "dflash"
+ 
+diff --color -u -r a/vllm/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py b/vllm/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py
+--- a/vllm/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py	2026-09-03 12:43:19
++++ b/vllm/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py	2026-09-03 12:43:19
+@@ -225,7 +225,7 @@
+ 
+         use_eagle = (
+             vllm_config.speculative_config is not None
+-            and vllm_config.speculative_config.use_eagle()
++            and vllm_config.speculative_config.use_eagle_preserves_target_kv_cache()
+         )
+         if use_eagle and not eagle_groups:
+             eagle_groups = set(range(len(kv_cache_config.kv_cache_groups)))
+diff --color -u -r a/vllm/v1/core/kv_cache_utils.py b/vllm/v1/core/kv_cache_utils.py
+--- a/vllm/v1/core/kv_cache_utils.py	2026-09-03 12:43:19
++++ b/vllm/v1/core/kv_cache_utils.py	2026-09-03 12:43:19
+@@ -1798,7 +1798,7 @@
+ 
+ def _is_deepseek_v4_eagle(vllm_config: VllmConfig) -> bool:
+     spec_config = vllm_config.speculative_config
+-    if spec_config is None or not spec_config.use_eagle():
++    if spec_config is None or not spec_config.use_eagle_preserves_target_kv_cache():
+         return False
+     model_config = vllm_config.model_config
+     return (
+@@ -1841,7 +1841,7 @@
+         use_deepseek_v4_fallback: Enable rule 2 for a DeepseekV4 packed group.
+     """
+     spec_config = vllm_config.speculative_config
+-    if spec_config is None or not spec_config.use_eagle():
++    if spec_config is None or not spec_config.use_eagle_preserves_target_kv_cache():
+         return
+ 
+     for group in kv_cache_groups:
+@@ -1876,7 +1876,7 @@
+         kv_cache_groups: Groups as they will be handed to consumers.
+     """
+     spec_config = vllm_config.speculative_config
+-    if spec_config is None or not spec_config.use_eagle():
++    if spec_config is None or not spec_config.use_eagle_preserves_target_kv_cache():
+         return
+     if any(group.is_eagle_group for group in kv_cache_groups):
+         return
+diff --color -u -r a/vllm/v1/core/sched/scheduler.py b/vllm/v1/core/sched/scheduler.py
+--- a/vllm/v1/core/sched/scheduler.py	2026-09-03 12:43:19
++++ b/vllm/v1/core/sched/scheduler.py	2026-09-03 12:43:19
+@@ -255,6 +255,9 @@
+         )
+         speculative_config = vllm_config.speculative_config
+         self.use_eagle = False
++        # Eagle block handling in the KV cache manager (drop of the volatile
++        # trailing block, Mamba back-off): eagle-family drafters only.
++        self.use_eagle_kv_block_drop = False
+         self.num_spec_tokens = vllm_config.num_speculative_tokens
+         self.num_lookahead_tokens = vllm_config.num_lookahead_tokens
+         # Positions past the computed tokens that the drafter reads mid-prefill.
+@@ -273,6 +276,9 @@
+                     vllm_num_speculative_tokens=self.num_spec_tokens,
+                 )
+             self.use_eagle = speculative_config.use_eagle()
++            self.use_eagle_kv_block_drop = (
++                speculative_config.use_eagle_preserves_target_kv_cache()
++            )
+             if self.use_eagle:
+                 self.num_prefill_lookahead = (
+                     self.num_spec_tokens
+@@ -289,7 +295,7 @@
+             max_model_len=self.max_model_len,
+             max_in_flight_tokens=vllm_config.max_in_flight_tokens,
+             enable_caching=self.cache_config.enable_prefix_caching,
+-            use_eagle=self.use_eagle,
++            use_eagle=self.use_eagle_kv_block_drop,
+             num_prefill_lookahead=self.num_prefill_lookahead,
+             log_stats=self.log_stats,
+             enable_kv_cache_events=self.enable_kv_cache_events,
+@@ -410,11 +416,12 @@
+             return num_new_tokens
+ 
+         block_size = self.cache_config.block_size
+-        # The last block-aligned position whose state can be cached. With
+-        # Eagle, FullAttn prunes the last matching block, so back off one
+-        # block to avoid a Mamba cache miss.
++        # The last block-aligned position whose state can be cached. With an
++        # eagle-family drafter, FullAttn prunes the last matching block, so back
++        # off one block to avoid a Mamba cache miss. DFlash/DSpark never write
++        # target blocks, so no back-off for them.
+         last_cache_position = request.num_tokens - request.num_tokens % block_size
+-        if self.use_eagle:
++        if self.use_eagle_kv_block_drop:
+             last_cache_position = max(last_cache_position - block_size, 0)
+ 
+         end = start + num_new_tokens
