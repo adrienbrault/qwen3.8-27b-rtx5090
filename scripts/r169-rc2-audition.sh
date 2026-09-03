@@ -5,7 +5,7 @@
 #       (retries with KV_BYTES −0.5 / −1.0 GB if the 384 MiB free guard trips, and says so), needles 9K/131K, fidelity vs
 #       the FP8 reference (+ direct vs the fp8 arm), benchy c1/c8, decode_ss code c1/c8, deep30k (R167: 29 tok/s on rc1
 #       — r168 isolates it; this arm records where rc2 stands), then the TIER CHECK: needles 131K x2 --evict 12 (flood
-#       12 x 90K > pool) --evict-reasks 3 → docker restart → same seed again (restart revisit). Pass = every hit AND
+#       12 x 90K > pool) --evict-reasks 3 (15 s apart: the fs lookup promotes asynchronously) → docker restart → same seed again (restart revisit). Pass = every hit AND
 #       tier_served > 0 on at least one pass (rc1 served a fresh-boot first touch in R167; v0.28 never did, R166c).
 #   F = fp8 daily shape on the rc2 prs image + embed offload (0134 + 0135): the shortest path to ANY 0.29 daily
 #       (R165b: rc1 fp8 at parity; R167: +8.4% pool). Same measurements incl. the tier check; fidelity vs the v0.28 fp8 run.
@@ -80,11 +80,11 @@ nd_tier(){ # $1 tag — fixed seed → identical prompts across invocations (res
 served(){ python3 -c "import json,sys; s=json.loads(open('$1').read().split('SUMMARY',1)[1].strip().splitlines()[0]) if 'SUMMARY' in open('$1').read() else {}; print(int(bool(s.get('tier_served'))), int(s.get('tier_served_hits',0)), int(s.get('total',0)), int(s.get('cold_hits',0)), int(s.get('evict_hits',0) or 0))" 2>/dev/null || echo "0 0 0 0 0"; }
 tier_check(){ # $1 arm: in-session eviction + restart revisit on this engine
   local A=$1 a b
-  nd_tier "$A-evict" --evict 12 --evict-ctx 90000 --evict-reasks 3
+  nd_tier "$A-evict" --evict 12 --evict-ctx 90000 --evict-reasks 3 --evict-reask-gap 15
   log "[$A] docker restart"; sudo docker restart vllm-exp >/dev/null 2>&1; sleep 20
   for i in $(seq 90); do curl -sf -m 5 $U/health >/dev/null && break; sleep 10; done
   curl -sf -m 5 $U/health >/dev/null || { log "[$A] TIER FAILED: engine did not come back after docker restart"; return 1; }
-  nd_tier "$A-restart" --evict-reasks 3
+  nd_tier "$A-restart" --evict-reasks 3 --evict-reask-gap 15
   a=$(served "$R/needles-$A-evict.out"); b=$(served "$R/needles-$A-restart.out")
   log "[$A] TIER SHEET evict(served,served_hits,total,cold_hits,evict_hits)=$a restart=$b"
   set -- $a; local s1=$1 h1=$2; set -- $b; local s2=$1 h2=$2 t2=$3 c2=$4

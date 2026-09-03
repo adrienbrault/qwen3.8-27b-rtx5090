@@ -134,7 +134,9 @@ def one_probe(args, depth, sample, warm_pass=False):
             # ext_hits 0 on both KV dtypes, 2.7-3.5 GB read in the background); the SECOND touch is the one the tier
             # can serve — that pass (ext_hits > 0) is the exact-match check of tier-served blocks.
             reasks = []
-            for _ in range(max(1, args.evict_reasks)):
+            for i_re in range(max(1, args.evict_reasks)):
+                if i_re and args.evict_reask_gap > 0:
+                    time.sleep(args.evict_reask_gap)  # R169: give the async fs->CPU promotion time to land before the next re-ask
                 c0 = counters(args)
                 out3, dt3, _ = chat(args.url, args.model, messages, 64, args.timeout, extra)
                 reasks.append(dict(s=round(dt3, 2), hit=sec in out3, answer=out3.strip()[:120], counters=delta(c0, counters(args))))
@@ -171,6 +173,7 @@ def main():
     ap.add_argument("--warm", action="store_true")
     ap.add_argument("--evict", type=int, default=0, help="flood N unique prompts after the cold pass, then re-ask (tier path)")
     ap.add_argument("--evict-ctx", type=int, default=90000, help="tokens per flood prompt (N x ctx must exceed the GPU pool)")
+    ap.add_argument("--evict-reask-gap", type=float, default=0.0, help="seconds to wait between re-asks (the fs tier promotes asynchronously; R169 uses 15)")
     ap.add_argument("--evict-reasks", type=int, default=1, help="re-ask the evicted prompt this many times in a row (2+: the tier's async promotion can serve the later ones)")
     ap.add_argument("--metrics", default="auto", help="/metrics URL for hit-counter deltas ('auto' = derive from --url, '' = off)")
     ap.add_argument("--effort", default=None, help="reasoning_effort template kwarg (low|medium|xhigh)")
