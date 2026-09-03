@@ -17,6 +17,8 @@
 # Rollback: bash /srv/qwen5090/launch-daily.sh (fp8 daily, v0.28, unchanged).
 set -uo pipefail
 EXP=${EXP:-0}; EXP_SEQS=${SEQS:-8}; KV_BYTES=${KV_BYTES:-}; MIN_FREE_MIB=${MIN_FREE_MIB:-384}; OFFLOAD=${OFFLOAD:-1}; SPLIT_KV=${SPLIT_KV:-0}
+# R168/0137 tier-eviction knobs: honoured for experiments (EXP≠0) or DAILY_ALLOW_ENV=1; the daily boots with the launcher defaults (unset = no cap).
+if [ "$EXP" != 0 ] || [ "${DAILY_ALLOW_ENV:-0}" = 1 ]; then T_CAP=${TIER_CAP_GB:-}; T_SCOPE=${TIER_EVICT_SCOPE:-}; T_MINFREE=${TIER_MIN_FREE_GB:-}; else T_CAP=; T_SCOPE=; T_MINFREE=; fi
 IMG=${CAND_IMG:-vllm-qwen38:v0290rc2-nvfp4kv-revival-prs}
 if [ "${DAILY_ALLOW_ENV:-0}" != 1 ]; then
   unset MODEL_DIR IMAGE KVD_OVERRIDE MAXLEN UTIL NS SPEC_JSON NOSPEC EXTRA_ENV EXTRA_MOUNT EXTRA_ARGS \
@@ -42,7 +44,7 @@ SPLIT_ENV=""; [ "$SPLIT_KV" = 1 ] && SPLIT_ENV="-e VLLM_SM12X_NVFP4_PREFILL_SPLI
 XARGS=""; XMOUNT=""; if [ "$EXP" != 0 ]; then XARGS="${EXTRA_ARGS_APPEND:-}"; XMOUNT="${EXTRA_MOUNT_APPEND:-}"; fi
 [ -f "$MODEL/model.safetensors.index.json" ] || { echo "FAILED: checkpoint missing at $MODEL"; exit 1; }
 sudo docker image inspect "$IMG" >/dev/null 2>&1 || { echo "FAILED: image $IMG missing (build: build-v0290rc2.sh)"; exit 1; }
-env PORT=$PORT NAME=$NAME BIND_ADDR=$BIND MODEL_DIR="$MODEL" TP=2 L2MNT="$L2" \
+env PORT=$PORT NAME=$NAME BIND_ADDR=$BIND MODEL_DIR="$MODEL" TP=2 L2MNT="$L2" ${T_CAP:+TIER_CAP_GB=$T_CAP} ${T_SCOPE:+TIER_EVICT_SCOPE=$T_SCOPE} ${T_MINFREE:+TIER_MIN_FREE_GB=$T_MINFREE} \
     IMAGE="$IMG" KVD_OVERRIDE=nvfp4 ALLOW_NO_XQA=1 \
     NO_TIER=0 FIWS=536870912 MNBT=8192 SEQS=$SEQS UTIL=0.88 MAXLEN=262144 POOL_MIN=850000 POOL_MAX=1000000 \
     EXTRA_MOUNT="-v $DRAFT:/draft:ro $XMOUNT" \

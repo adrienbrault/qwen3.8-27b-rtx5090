@@ -13,8 +13,9 @@
 #     (3) RESTART: docker restart → the startup scan repopulates the LRU (bytes_used ≈ du) → the (1) seed again with
 #     --evict-reasks 2 → hits; (4) plain 9K/131K needles as the sanity tail. PASS per arm = all hits, evicted_files > 0,
 #     usage bounded, 0 error lines, engine alive at the end.
-# Unit: sudo systemd-run --unit=r170-tier-evict --collect -p User=adrienbrault -p RuntimeMaxSec=10800 -p TimeoutStopSec=900 -E GPU_QUEUE_NAME=r170-tier-evict bash /srv/qwen5090/r170-tier-evict.sh
+# Unit (RuntimeMaxSec counts from unit start INCLUDING the flock wait — size it for the queue ahead): sudo systemd-run --unit=r170-tier-evict --collect -p User=adrienbrault -p RuntimeMaxSec=28800 -p TimeoutStopSec=900 -E GPU_QUEUE_NAME=r170-tier-evict bash /srv/qwen5090/r170-tier-evict.sh
 set -uo pipefail
+SINCE=""
 export PATH="$HOME/.local/bin:$PATH"
 R=/srv/qwen5090/results/2026-09-03-r170-tier-evict; mkdir -p "$R"
 log(){ echo "$(date -Is) $*" | tee -a "$R/audit.log"; }
@@ -59,14 +60,15 @@ tier_cfg(){ sudo docker logs vllm-exp 2>&1 | grep -aoE 'max_capacity_gb[^,}]*|ev
 tmetrics(){ curl -s -m 5 $U/metrics | grep -a "^vllm:kv_offload_tiering_fs_" | sed 's/{[^}]*}//' | sed "s/^/[$1 tier-metrics] /" | tee -a "$R/audit.log"; }
 tm_val(){ curl -s -m 5 $U/metrics | grep -a "^vllm:kv_offload_tiering_fs_$1" | awk '{s+=$2} END{printf "%d", s}'; }
 usage(){ log "[$1 usage] df=$(df -B1 --output=used "$L2" | tail -1 | awk '{printf "%.1fG",$1/1e9}') du=$(sudo du -sb "$L2" 2>/dev/null | awk '{printf "%.1fG",$1/1e9}') namespaces=$(ls "$L2" | tr '\n' ' ')"; }
-errlines(){ local n; n=$(sudo docker logs vllm-exp 2>&1 | grep -ac "illegal memory\|CUDA error\|Traceback\|OutOfMemoryError\|block I/O failed\|AssertionError\|Failed to evict\|Failed to account"); echo "[$1 engine error-lines] $n" | tee -a "$R/audit.log"; [ "$n" = 0 ]; }
+errlines(){ local n; n=$(sudo docker logs ${SINCE:+--since $SINCE} vllm-exp 2>&1 | grep -ac "illegal memory\|CUDA error\|Traceback\|OutOfMemoryError\|block I/O failed\|AssertionError\|Failed to evict\|Failed to account"); echo "[$1 engine error-lines] $n" | tee -a "$R/audit.log"; [ "$n" = 0 ]; }
 nd(){ # $1 tag, $2 seed, rest = args
   local tag=$1 seed=$2; shift 2
   python3 /srv/qwen5090/probes/needle_depth.py --url $U/v1 --model qwen3.8-27b --seed "$seed" "$@" --out "$R/needles-$tag.jsonl" > "$R/needles-$tag.out" 2>&1; local rc=$?
   grep -a "^\[" "$R/needles-$tag.out" | cut -c1-260 | sed "s/^/[$tag] /" >> "$R/audit.log"
   log "[$tag] hits=$(grep -ac '^\[HIT ' "$R/needles-$tag.out") miss=$(grep -ac MISS "$R/needles-$tag.out") rc=$rc $(grep -a SUMMARY "$R/needles-$tag.out" | cut -c1-200)"; return $rc; }
 arm(){ local A=$1 fail=0 ev bu
-  log "[$A] tier config seen by the engine: $(tier_cfg)"
+  local cfg; cfg=$(sudo docker inspect vllm-exp --format '{{join .Args " "}}' 2>/dev/null | grep -oE '"max_capacity_gb":[0-9.]+,"evict_scope":"[a-z]+","min_free_gb":[0-9.]+'); log "[$A] tier config on the container: ${cfg:-NONE}"
+  [ -n "$cfg" ] || { log "[$A] FAIL: the engine was not given max_capacity_gb (launcher dropped the knob)"; fail=1; }
   usage "$A start"; tmetrics "$A start"
   # (1) flood
   nd "$A-flood" r170 --depths 131000 --samples 2 --evict 12 --evict-ctx 90000 --evict-reasks 3 --evict-reask-gap 15 || fail=1
@@ -86,7 +88,7 @@ arm(){ local A=$1 fail=0 ev bu
   tmetrics "$A after-conc"; usage "$A after-conc"; errlines "$A after-conc" || fail=1
   # (3) restart revisit: startup scan must repopulate the accounting
   sudo docker logs vllm-exp > "$R/engine-$A-prerestart.log" 2>&1
-  sudo docker restart vllm-exp >/dev/null 2>&1; ok=0
+  SINCE=$(date -u +%Y-%m-%dT%H:%M:%S); sudo docker restart vllm-exp >/dev/null 2>&1; ok=0   # post-restart error lines exclude the old engine's shutdown output
   for i in $(seq 120); do sleep 5; curl -sf -m 3 $U/health >/dev/null && { ok=1; break; }; done
   if [ $ok = 1 ]; then
     log "[$A] restarted; engine up after $((i*5)) s"
@@ -97,6 +99,7 @@ arm(){ local A=$1 fail=0 ev bu
   else log "[$A] FAIL: engine did not come back after docker restart"; fail=1; fi
   curl -sf -m 5 $U/health >/dev/null || { log "[$A] FAIL: engine dead at the end"; fail=1; }
   sudo docker logs vllm-exp 2>&1 | grep -ai "evict\|tier\|ENOSPC\|No space" | grep -av "^$" | cut -c1-200 | tail -20 | sed "s/^/[$A tier-log] /" >> "$R/audit.log"
+  SINCE=""
   log "[$A] VERDICT: $([ $fail = 0 ] && echo PASS || echo FAIL)"; echo "$A $([ $fail = 0 ] && echo PASS || echo FAIL)" >> "$R/verdicts.txt"; }
 teardown
 wipe_l2; if boot_N; then arm N; else echo "N BOOT-FAILED" >> "$R/verdicts.txt"; fi; teardown
