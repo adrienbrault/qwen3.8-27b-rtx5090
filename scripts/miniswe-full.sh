@@ -11,7 +11,9 @@
 # empty patch, so a plain resume would skip them), the final cumulative score, and the daily restore.
 # Images come through mirror.gcr.io (Google's Hub pull-through cache, own quota) tagged with their docker.io
 # names; Docker Hub (anonymous ~100 manifest requests / 1 h / IP, probed 2026-09-02) is only the fallback.
-# A running campaign can be fed ahead by miniswe-prepull-mirror.sh (separate unit). Disk: root holds <=3 chunks of ~4G images (pre-pull waits for >=200G free).
+# Scoring uses --cache_level instance (miniswe-score.sh): the harness must NOT delete images it did not see at its start,
+# or the next chunk (pre-pulled in parallel) loses its images and re-pulls from Hub (2026-09-03 R166: 58 agent-phase
+# CalledProcessError + 16 scoring errors before the fix). # A running campaign can be fed ahead by miniswe-prepull-mirror.sh (separate unit). Disk: root holds <=3 chunks of ~4G images (pre-pull waits for >=200G free).
 # Resumable: rerun == resume (preds.json). Smoke gate (slice 0:1, w1) runs first on a fresh output dir.
 #   usage: miniswe-full.sh [K]   (K of 500, default 500; env CHUNK=40 W=16 START=0 RUN_SUFFIX= SKIP_SMOKE=0
 #          BOOT=<engine boot script, default boot-daily-miniswe.sh> GATE=<script run "pre"/"post" with $R, e.g. probes/needle_gate.sh>)
@@ -73,6 +75,9 @@ N=$(wc -l < "$R/instances.txt"); [ "$N" -ge 500 ] || { log "dataset load FAILED 
 ((K>N)) && K=$N
 ids(){ sed -n "$(($1+1)),${2}p" "$R/instances.txt"; }   # $1=start (0-based) $2=end (exclusive)
 img(){ echo "docker.io/swebench/sweb.eval.x86_64.${1//__/_1776_}:latest" | tr 'A-Z' 'a-z'; }
+pull_mirror(){ # $1=docker.io image name — pull through mirror.gcr.io and tag with the docker.io name (2026-09-03: the retry pass went to Hub directly)
+  local im=$1 m="${MIRROR:-mirror.gcr.io}/${1#docker.io/}"
+  sudo docker pull -q "$m" >/dev/null 2>"$R/pull-retry.err" && sudo docker tag "$m" "$im" && { sudo docker rmi "$m" >/dev/null 2>&1; return 0; }; return 1; }
 prepull(){ # $1=start $2=end — pull missing images; 429 => sleep 10 min; waits for >=200G free on /
   local s=$1 e=$2 iid im tries err="$R/pull-$1.err"
   for iid in $(ids "$s" "$e"); do
@@ -200,7 +205,7 @@ PYEOF
 )
 if [ -n "$RETRY" ]; then
   NR=$(echo "$RETRY" | wc -w); log "### RETRY pass: $NR infra-exit instances: $(echo "$RETRY" | cut -c1-300) ###"
-  for iid in $RETRY; do im=$(img "$iid"); t=0; sudo docker image inspect "$im" >/dev/null 2>&1 || { until sudo docker pull -q "$im" >/dev/null 2>"$R/pull-retry.err"; do t=$((t+1)); echo "$(date -Is) [retry-pull] $iid: $(head -c 120 "$R/pull-retry.err")" >> "$R/audit.log"; [ $t -ge 6 ] && break; sleep 600; done; }; done
+  for iid in $RETRY; do im=$(img "$iid"); t=0; sudo docker image inspect "$im" >/dev/null 2>&1 || { until pull_mirror "$im" || sudo docker pull -q "$im" >/dev/null 2>"$R/pull-retry.err"; do t=$((t+1)); echo "$(date -Is) [retry-pull] $iid: $(head -c 120 "$R/pull-retry.err")" >> "$R/audit.log"; [ $t -ge 6 ] && break; sleep 600; done; }; done
   FILT="^($(echo "$RETRY" | tr ' ' '|'))$"
   [ -f "$R/ENGINE_DEAD" ] || run_slice "0:$K" "$W" --filter "$FILT" --redo-existing; log "[retry] rc=$?"
   for iid in $RETRY; do rm -rf "$R/logs/run_evaluation/$RUNID/$SMODEL/$iid"; done   # force re-evaluation

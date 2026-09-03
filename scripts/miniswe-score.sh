@@ -8,6 +8,11 @@
 #   report.json under logs/run_evaluation/RUN_ID/MODEL/) and regenerates the summary from the
 #   predictions passed — so the final call must pass the FULL preds (it does: preds.json is cumulative).
 #   To re-evaluate an instance, delete its logs/run_evaluation/RUN_ID/MODEL/<iid> dir first.
+# - --cache_level instance (2026-09-03, R166 campaign): with `env` the harness deletes every sweb.eval image that
+#   was not present when it started (clean_images/should_remove) — and chunk scoring runs in the background while
+#   the NEXT chunk pre-pulls, so the next chunk's images vanished right before it ran; mini-swe then pulled them
+#   implicitly from Docker Hub, burned the anonymous quota (toomanyrequests), and 16+ instances errored in scoring
+#   and 58 in the agent phase. The campaign's own prune (per chunk, after scoring) is what bounds disk use.
 set -uo pipefail
 R=${1:?results dir}; RUNID=${2:-miniswe}
 SV=/srv/qwen5090/swebench-eval; MODEL=qwen3.8-27b-miniswe
@@ -28,7 +33,7 @@ cd "$R" || exit 1
 "$SV/.venv/bin/python" -m swebench.harness.run_evaluation \
   --dataset_name princeton-nlp/SWE-bench_Verified --split test \
   --predictions_path "$R/preds.jsonl" --max_workers "${SCORE_WORKERS:-6}" --run_id "$RUNID" --namespace swebench \
-  --cache_level env --timeout 1800 >> "$R/score.log" 2>&1 || { echo "swebench harness non-zero — tail score.log:"; tail -8 "$R/score.log"; }
+  --cache_level instance --timeout 1800 >> "$R/score.log" 2>&1 || { echo "swebench harness non-zero — tail score.log:"; tail -8 "$R/score.log"; }
 python3 - "$R" "$MODEL" "$RUNID" <<'PYEOF'
 import json,glob,sys
 R,model,runid=sys.argv[1:4]
