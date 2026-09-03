@@ -1,0 +1,10 @@
+# R165: the revival chain (0116-0119 + 0129 drafter graphs + 0131 pooled int workspace) on the rc1 base, one layer.
+# Build: sudo docker build -f Dockerfile.revival --build-arg BASE=vllm-qwen38:v0290rc1-nvfp4kv -t vllm-qwen38:v0290rc1-nvfp4kv-revival .
+ARG BASE=vllm-qwen38:v0290rc1-nvfp4kv
+FROM ${BASE}
+COPY 0116-dflash-nvfp4-revival.diff 0117-dflash-nvfp4-warmup.diff 0118b-dflash-eager-escape-rebased.diff 0119-dflash-nvfp4-fullgraph-width.diff 0129-dflash-nvfp4-drafter-graphs.diff 0131-nvfp4-pooled-int-workspace.diff /tmp/
+RUN set -eux; cd "$(python3 -c 'import os, vllm; print(os.path.dirname(os.path.dirname(vllm.__file__)))')"; \
+    for p in 0116-dflash-nvfp4-revival 0117-dflash-nvfp4-warmup 0118b-dflash-eager-escape-rebased 0119-dflash-nvfp4-fullgraph-width 0129-dflash-nvfp4-drafter-graphs 0131-nvfp4-pooled-int-workspace; do patch --batch --forward -p1 --fuzz=0 < /tmp/$p.diff; done; \
+    python3 -m py_compile vllm/v1/attention/backends/flashinfer.py vllm/model_executor/layers/vocab_parallel_embedding.py vllm/model_executor/models/qwen3_dflash2.py vllm/v1/worker/gpu/spec_decode/dflash/speculator.py; \
+    grep -q _shrink_pooled_int_workspace vllm/v1/attention/backends/flashinfer.py; grep -q VLLM_SM12X_DFLASH_GRAPHS vllm/v1/attention/backends/flashinfer.py; \
+    rm -f /tmp/01*.diff; echo REVIVAL-GRAPHS-WS-APPLIED

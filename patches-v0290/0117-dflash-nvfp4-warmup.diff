@@ -1,0 +1,56 @@
+diff --git a/vllm/model_executor/models/qwen3_dflash2.py b/vllm/model_executor/models/qwen3_dflash2.py
+--- a/vllm/model_executor/models/qwen3_dflash2.py
++++ b/vllm/model_executor/models/qwen3_dflash2.py
+@@ -170,7 +170,10 @@
+     anchor_token_ids: torch.Tensor,
+     top_k: int,
+ ) -> torch.Tensor:
+-    successors = successor_table[candidate_ids]
++    # Dummy warmup/cudagraph rows can carry sentinel ids. Keep both compiled
++    # codebook gathers in bounds; real serving ids are unchanged by the clamp.
++    vocab_size = successor_table.shape[0]
++    successors = successor_table[candidate_ids.clamp(0, vocab_size - 1)]
+     predecessor_ids = torch.cat(
+         (
+             anchor_token_ids[:, None, None].expand(-1, 1, top_k),
+@@ -178,7 +181,7 @@
+         ),
+         dim=1,
+     )
+-    predecessors = predecessor_table[predecessor_ids]
++    predecessors = predecessor_table[predecessor_ids.clamp(0, vocab_size - 1)]
+     return unary_logits[:, :, None] + torch.einsum(
+         "blpr,blcr->blpc", predecessors * hidden[:, :, None], successors
+     )
+diff --git a/vllm/v1/worker/gpu/spec_decode/dflash/speculator.py b/vllm/v1/worker/gpu/spec_decode/dflash/speculator.py
+--- a/vllm/v1/worker/gpu/spec_decode/dflash/speculator.py
++++ b/vllm/v1/worker/gpu/spec_decode/dflash/speculator.py
+@@ -38,6 +38,11 @@
+         self.hidden_states = torch.zeros(
+             self.max_num_tokens, self.hidden_size, dtype=self.dtype, device=device
+         )
++        # Persistent storage lets draft ids be embedded before entering the
++        # compiled model while retaining stable addresses for CUDA graphs.
++        self.inputs_embeds = torch.zeros(
++            self.max_num_tokens, self.hidden_size, dtype=self.dtype, device=device
++        )
+ 
+         # Multimodal inputs not currently supported.
+         self.supports_mm_inputs = False
+@@ -235,10 +240,13 @@
+             slot_mapping=slot_mappings,
+             batch_descriptor=batch_descriptor,
+         ):
+-            last_hidden_states = self.model(
+-                input_ids=self.input_buffers.input_ids[:num_tokens],
++            self.inputs_embeds[:num_tokens] = self.model.embed_input_ids(
++                self.input_buffers.input_ids[:num_tokens]
++            )
++            last_hidden_states = self.model(
++                input_ids=None,
+                 positions=self.input_buffers.positions[:num_tokens],
+-                inputs_embeds=None,
++                inputs_embeds=self.inputs_embeds[:num_tokens],
+             )
+         return last_hidden_states
+ 

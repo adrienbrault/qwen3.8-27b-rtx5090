@@ -1,0 +1,31 @@
+--- a/v1/attention/backends/flashinfer.py
++++ b/v1/attention/backends/flashinfer.py
+@@ -1197,10 +1197,16 @@
+                 raise NotImplementedError(
+                     "FlashInfer non-causal prefill is not supported with DCP yet."
+                 )
+-            if self.is_kvcache_nvfp4:
++            # NVFP4 pages are readable only by the fa2 prefill backend on sm12x
++            # (no sm120 trtllm-gen FMHA; backend="auto" can select a non-fa2
++            # path that misreads nvfp4 pages -> CUDA illegal memory access,
++            # measured R109b). Port of seanyourhighness's overlay approach
++            # (vllm-sm12x-nvfp4-dflash2). Sinks+nvfp4 stays unsupported.
++            noncausal_backend = "fa2" if self.is_kvcache_nvfp4 else "auto"
++            if self.is_kvcache_nvfp4 and self.has_sinks:
+                 raise NotImplementedError(
+-                    "FlashInfer non-causal attention is not supported with "
+-                    "NVFP4 KV cache."
++                    "FlashInfer non-causal attention with sinks is not "
++                    "supported with NVFP4 KV cache."
+                 )
+             if self._noncausal_prefill_wrapper is None:
+                 if self.has_sinks and current_platform.is_device_capability_family(120):
+@@ -1221,7 +1227,7 @@
+                         BatchPrefillWithPagedKVCacheWrapper(
+                             self._get_workspace_buffer(),
+                             get_flashinfer_layout_string(self.kv_cache_layout),
+-                            backend="auto",
++                            backend=noncausal_backend,
+                         )
+                     )
+             return self._noncausal_prefill_wrapper

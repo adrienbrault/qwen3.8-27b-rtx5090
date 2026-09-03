@@ -1,0 +1,79 @@
+--- a/v1/attention/backends/flashinfer.py
++++ b/v1/attention/backends/flashinfer.py
+@@ -718,6 +718,9 @@
+         self._noncausal_prefill_wrapper: BatchPrefillWithPagedKVCacheWrapper | None = (
+             None  # Wrapper for non-causal prefill (DFlash)
+         )
++        self._noncausal_prefill_wrappers_cudagraph: dict[
++            int, BatchPrefillWithPagedKVCacheWrapper
++        ] = {}
+         self._decode_wrapper = None  # Wrapper for decode (general shape)
+ 
+         if envs.VLLM_BATCH_INVARIANT:
+@@ -999,6 +1002,10 @@
+         self.paged_kv_last_page_len = CpuGpuBuffer(
+             max_num_reqs, dtype=torch.int32, device=self.device, pin_memory=False
+         )
++        if self.enable_cuda_graph:
++            self._noncausal_qo_indptr_gpu = torch.zeros(
++                max_num_reqs + 1, dtype=torch.int32, device=self.device
++            )
+         if self.enable_cuda_graph and self.use_fa2_nvfp4_kv:
+             self._prefill_qo_indptr_gpu = torch.zeros(
+                 max_num_reqs + 1, dtype=torch.int32, device=self.device
+@@ -1064,6 +1071,14 @@
+         if current_platform.is_device_capability(90):
+             return AttentionCGSupport.UNIFORM_SINGLE_TOKEN_DECODE
+ 
++        # Native FlashInfer prefill supports non-causal uniform batches when
++        # the wrapper is bound to persistent metadata buffers. DCP remains
++        # excluded because the non-causal prefill path does not support it.
++        if vllm_config.attention_config.use_non_causal:
++            if vllm_config.parallel_config.decode_context_parallel_size > 1:
++                return AttentionCGSupport.UNIFORM_SINGLE_TOKEN_DECODE
++            return AttentionCGSupport.UNIFORM_BATCH
++
+         is_sm12x = current_platform.is_device_capability_family(120)
+         # XQA does not return LSE and therefore does not support DCP.
+         if is_sm12x and vllm_config.parallel_config.decode_context_parallel_size > 1:
+@@ -1208,6 +1223,28 @@
+                     "FlashInfer non-causal attention with sinks is not "
+                     "supported with NVFP4 KV cache."
+                 )
++            if self.enable_cuda_graph and not self.has_sinks:
++                assert batch_size > 0
++                wrapper = self._noncausal_prefill_wrappers_cudagraph.get(batch_size)
++                if wrapper is None:
++                    wrapper = BatchPrefillWithPagedKVCacheWrapper(
++                        self._get_workspace_buffer(),
++                        get_flashinfer_layout_string(self.kv_cache_layout),
++                        use_cuda_graph=True,
++                        qo_indptr_buf=self._noncausal_qo_indptr_gpu[
++                            : batch_size + 1
++                        ],
++                        paged_kv_indptr_buf=self.paged_kv_indptr.gpu[
++                            : batch_size + 1
++                        ],
++                        paged_kv_indices_buf=self.paged_kv_indices.gpu,
++                        paged_kv_last_page_len_buf=(
++                            self.paged_kv_last_page_len.gpu[:batch_size]
++                        ),
++                        backend=noncausal_backend,
++                    )
++                    self._noncausal_prefill_wrappers_cudagraph[batch_size] = wrapper
++                return wrapper
+             if self._noncausal_prefill_wrapper is None:
+                 if self.has_sinks and current_platform.is_device_capability_family(120):
+                     self._noncausal_prefill_wrapper = (
+@@ -1683,7 +1720,10 @@
+                 )
+                 prefill_wrapper = self._get_prefill_wrapper(
+                     causal=attn_metadata.causal,
+-                    batch_size=num_prefills if prefill_use_cudagraph else 0,
++                    # Non-causal wrappers are pooled by request count whenever
++                    # FULL graphs are enabled; causal wrappers retain their
++                    # existing token-shape predicate below.
++                    batch_size=num_prefills,
+                     use_cudagraph=prefill_use_cudagraph,
+                 )
+                 # Slicing CPU buffers that are only needed for FI native prefills

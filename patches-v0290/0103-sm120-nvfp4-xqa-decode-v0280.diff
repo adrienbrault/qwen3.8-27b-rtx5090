@@ -1,0 +1,173 @@
+--- a/v1/attention/backends/flashinfer.py
++++ b/v1/attention/backends/flashinfer.py
+@@ -109,6 +109,20 @@
+     return trtllm_workspace_buffer
+ 
+ 
++@cache
++def _sm12x_nvfp4_xqa_enabled() -> bool:
++    """Whether SM12x NVFP4 single-token decode should use XQA."""
++    import os
++
++    enabled = os.environ.get("VLLM_SM12X_NVFP4_XQA", "1") != "0"
++    if not enabled:
++        logger.warning_once(
++            "VLLM_SM12X_NVFP4_XQA=0: SM12x NVFP4 decode uses the "
++            "FlashInfer FA2 fallback."
++        )
++    return enabled
++
++
+ def _pack_draft_block_bool_mask(
+     bool_mask: torch.Tensor, num_packed: int
+ ) -> torch.Tensor:
+@@ -843,6 +857,14 @@
+         # must be selected statically for FULL cudagraph capture.
+         can_use_xqa_or_trtllm_gen_decode = can_use_trtllm_attention(
+             self.num_qo_heads, self.num_kv_heads, is_prefill=False
++        )
++        self.use_xqa_nvfp4_decode = (
++            self.use_fa2_nvfp4_kv
++            and can_use_xqa_or_trtllm_gen_decode
++            and not self.use_dcp
++            and self.head_dim % 16 == 0
++            and self.head_dim <= 256
++            and _sm12x_nvfp4_xqa_enabled()
+         )
+         # Page sizes >= 128 require the trtllm-gen GQA/MQA path (guaranteed by
+         # get_supported_kernel_block_sizes).
+@@ -874,9 +896,9 @@
+             )
+             self.use_trtllm_decode_attention = False
+             self.flashinfer_trtllm_api_decode_kernel = None
+-        if self.use_fa2_nvfp4_kv:
+-            # NVFP4KV-SM120: neither XQA nor trtllm-gen read NVFP4 KV here;
+-            # decode (including speculative verification) uses native FA2.
++        if self.use_fa2_nvfp4_kv and not self.use_xqa_nvfp4_decode:
++            # NVFP4KV-SM120: the env-off/unsupported fallback sends decode
++            # (including spec verification) through native FA2 wrappers.
+             self.use_trtllm_decode_attention = False
+             self.flashinfer_trtllm_api_decode_kernel = None
+         if (
+@@ -893,6 +915,7 @@
+         self.use_dedicated_xqa = (
+             current_platform.is_device_capability_family(120)
+             and self.flashinfer_trtllm_api_decode_kernel == FlashInferDecodeKernel.XQA
++            and not self.is_kvcache_nvfp4
+         )
+         # Adaptive verification trims drafts on device, so decode query lengths
+         # must come from the device qo_indptr; only trtllm-gen supports that
+@@ -1941,6 +1964,13 @@
+             )
+         else:
+             self._nvfp4_fp8_out = None
++
++        if self.use_fa2_nvfp4_kv:
++            # XQA NVFP4 scale-factor views are carved from the persistent global
++            # workspace. They hold metadata only and allocate no device memory.
++            self._nvfp4_xqa_sf_shape: tuple[int, ...] | None = None
++            self._nvfp4_xqa_workspace: torch.Tensor | None = None
++            self._nvfp4_xqa_sf_scratch: tuple[torch.Tensor, torch.Tensor] | None = None
+ 
+         dcp_a2a = (
+             vllm_config is not None
+@@ -2009,6 +2039,47 @@
+             return query_quantized.view(num_tokens, num_heads, head_size)
+ 
+         return query
++
++    def _prepare_nvfp4_xqa_sf(
++        self,
++        workspace_buffer: torch.Tensor,
++        kv_cache_sf: tuple[torch.Tensor, torch.Tensor],
++    ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
++        """Copy packed-page SF views to compact, graph-stable workspace views."""
++        k_sf, v_sf = kv_cache_sf
++        assert k_sf.shape == v_sf.shape
++        assert k_sf.dtype == v_sf.dtype == torch.float8_e4m3fn
++        assert k_sf.element_size() == workspace_buffer.element_size() == 1
++
++        shape = tuple(k_sf.shape)
++        sf_bytes = 2 * k_sf.numel()
++        prefix_bytes = workspace_buffer.numel() - sf_bytes
++        semaphore_bytes = 8 * 1024 * 1024
++        if prefix_bytes <= semaphore_bytes:
++            raise RuntimeError(
++                "VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE is too small for "
++                "XQA NVFP4 scale scratch; enlarge it or set "
++                "VLLM_SM12X_NVFP4_XQA=0."
++            )
++
++        # The shape changes between minimal graph profiling and the real KV
++        # pool. Rebuild only tensor metadata; the workspace backing is persistent.
++        if self._nvfp4_xqa_sf_shape != shape:
++            scratch = (
++                workspace_buffer[prefix_bytes:]
++                .view(k_sf.dtype)
++                .view(2, *shape)
++            )
++            self._nvfp4_xqa_workspace = workspace_buffer[:prefix_bytes]
++            self._nvfp4_xqa_sf_scratch = (scratch[0], scratch[1])
++            self._nvfp4_xqa_sf_shape = shape
++
++        assert self._nvfp4_xqa_workspace is not None
++        assert self._nvfp4_xqa_sf_scratch is not None
++        k_scratch, v_scratch = self._nvfp4_xqa_sf_scratch
++        k_scratch.copy_(k_sf)
++        v_scratch.copy_(v_sf)
++        return self._nvfp4_xqa_workspace, (k_scratch, v_scratch)
+ 
+     def forward(
+         self,
+@@ -2184,7 +2255,9 @@
+ 
+         use_dcp = self.dcp_world_size > 1
+         decode_with_dedicated_xqa = (
+-            decode_with_xqa and current_platform.is_device_capability_family(120)
++            decode_with_xqa
++            and current_platform.is_device_capability_family(120)
++            and not self.is_kvcache_nvfp4
+         )
+         if decode_with_dedicated_xqa:
+             assert not use_dcp
+@@ -2490,6 +2563,14 @@
+                 workspace_buffer = _get_trtllm_workspace_buffer()
+                 block_tables_decode = attn_metadata.decode.block_tables
+                 seq_lens_decode = attn_metadata.decode.seq_lens
++                decode_kv_block_scales = nvfp4_kv_block_scales
++                if decode_with_xqa and self.is_kvcache_nvfp4:
++                    assert nvfp4_kv_block_scales is not None
++                    workspace_buffer, decode_kv_block_scales = (
++                        self._prepare_nvfp4_xqa_sf(
++                            workspace_buffer, nvfp4_kv_block_scales
++                        )
++                    )
+ 
+                 # trtllm-gen needs HND layout on SM100. XQA is selected
+                 # separately on SM90 and does not use this SM100 layout gate.
+@@ -2559,9 +2640,14 @@
+                     assert self.o_sf_scale is None
+                     out = output[:num_decode_tokens]
+ 
+-                # NVFP4 trtllm kernel only supports FP8 output.
++                # NVFP4 trtllm-gen only supports FP8 output; XQA writes the
++                # model dtype directly.
+                 # Use a pre-allocated FP8 buffer and dequantize afterwards.
+-                needs_fp8_out = self.is_kvcache_nvfp4 and output.dtype != FP8_DTYPE
++                needs_fp8_out = (
++                    self.is_kvcache_nvfp4
++                    and decode_with_trtllm_gen
++                    and output.dtype != FP8_DTYPE
++                )
+                 if needs_fp8_out:
+                     out = self._nvfp4_fp8_out[:num_decode_tokens]
+ 
+@@ -2625,7 +2711,7 @@
+                     max_q_len=max_q_len,
+                     cum_seq_lens_q=q_cu_seq_lens,
+                     kv_cache_sf=(
+-                        nvfp4_kv_block_scales if self.is_kvcache_nvfp4 else None
++                        decode_kv_block_scales if self.is_kvcache_nvfp4 else None
+                     ),
+                     lse=lse,
+                     return_lse=self.need_to_return_lse_for_decode,

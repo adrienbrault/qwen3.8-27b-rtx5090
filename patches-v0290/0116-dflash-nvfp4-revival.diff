@@ -1,0 +1,83 @@
+--- a/vllm/v1/attention/backends/flashinfer.py
++++ b/vllm/v1/attention/backends/flashinfer.py
+@@ -1088,6 +1088,17 @@
+         # excluded because the non-causal prefill path does not support it.
+         if vllm_config.attention_config.use_non_causal:
+             if vllm_config.parallel_config.decode_context_parallel_size > 1:
++                return AttentionCGSupport.UNIFORM_SINGLE_TOKEN_DECODE
++            cache_config = vllm_config.cache_config
++            if (
++                current_platform.is_device_capability_family(120)
++                and cache_config is not None
++                and str(cache_config.cache_dtype).startswith("nvfp4")
++            ):
++                # Keep the FA2-NVFP4 non-causal path off the custom 0109
++                # uniform graph route. The validated upstream path uses the
++                # ordinary paged wrapper; an eager drafter also isolates it
++                # from the local XQA decode graph.
+                 return AttentionCGSupport.UNIFORM_SINGLE_TOKEN_DECODE
+             return AttentionCGSupport.UNIFORM_BATCH
+ 
+@@ -1224,18 +1235,29 @@
+                 raise NotImplementedError(
+                     "FlashInfer non-causal prefill is not supported with DCP yet."
+                 )
+-            # NVFP4 pages are readable only by the fa2 prefill backend on sm12x
+-            # (no sm120 trtllm-gen FMHA; backend="auto" can select a non-fa2
+-            # path that misreads nvfp4 pages -> CUDA illegal memory access,
+-            # measured R109b). Port of seanyourhighness's overlay approach
+-            # (vllm-sm12x-nvfp4-dflash2). Sinks+nvfp4 stays unsupported.
+-            noncausal_backend = "fa2" if self.is_kvcache_nvfp4 else "auto"
++            if self.is_kvcache_nvfp4 and not self.use_fa2_nvfp4_kv:
++                # Only the FA2 paged reader (consumer Blackwell sm120/sm121) can
++                # express non-causal attention over NVFP4 KV pages; trtllm-gen
++                # (sm100f) is causal-only. The FA2 path below shares the exact
++                # forward run + V-scale (nvfp4_kv_block_scales) handling as the
++                # causal FA2-NVFP4 prefill, so the non-causal DFlash drafter
++                # reads V-scales identically.
++                raise NotImplementedError(
++                    "FlashInfer non-causal attention with NVFP4 KV cache requires "
++                    "the FA2 paged reader (consumer Blackwell sm120/sm121); "
++                    "trtllm-gen is causal-only."
++                )
++            noncausal_backend = "fa2" if self.use_fa2_nvfp4_kv else "auto"
+             if self.is_kvcache_nvfp4 and self.has_sinks:
+                 raise NotImplementedError(
+                     "FlashInfer non-causal attention with sinks is not "
+                     "supported with NVFP4 KV cache."
+                 )
+-            if self.enable_cuda_graph and not self.has_sinks:
++            if (
++                self.enable_cuda_graph
++                and not self.has_sinks
++                and not self.use_fa2_nvfp4_kv
++            ):
+                 assert batch_size > 0
+                 wrapper = self._noncausal_prefill_wrappers_cudagraph.get(batch_size)
+                 if wrapper is None:
+@@ -1259,6 +1281,7 @@
+                 return wrapper
+             if self._noncausal_prefill_wrapper is None:
+                 if self.has_sinks and current_platform.is_device_capability_family(120):
++                    assert not self.is_kvcache_nvfp4
+                     self._noncausal_prefill_wrapper = (
+                         BatchAttentionWithAttentionSinkWrapper(
+                             self._get_workspace_buffer(),
+--- a/vllm/model_executor/layers/vocab_parallel_embedding.py
++++ b/vllm/model_executor/layers/vocab_parallel_embedding.py
+@@ -498,7 +498,14 @@
+ 
+     def forward(self, input_):
+         if self.tp_size == 1:
+-            return self.quant_method.embedding(self, input_.long())
++            # Speculative decode can feed padded slots containing invalid ids.
++            input_mask = (input_ < 0) | (
++                input_ >= self.num_embeddings_per_partition
++            )
++            masked_input = input_.masked_fill(input_mask, 0)
++            output = self.quant_method.embedding(self, masked_input.long())
++            output.masked_fill_(input_mask.unsqueeze(-1), 0)
++            return output
+ 
+         if self.use_fused_embedding:
+             output_parallel = ops.vocab_parallel_embedding(
