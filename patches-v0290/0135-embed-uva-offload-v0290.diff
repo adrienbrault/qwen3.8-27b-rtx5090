@@ -1,0 +1,185 @@
+diff --git a/vllm/entrypoints/llm.py b/vllm/entrypoints/llm.py
+index e3d0b2f1e520..c177876c2d89 100644
+--- a/vllm/entrypoints/llm.py
++++ b/vllm/entrypoints/llm.py
+@@ -124,6 +124,9 @@ class LLM(BeamSearchOfflineMixin, PoolingOfflineMixin, OfflineInferenceMixin):
+             the model weights. This virtually increases the GPU memory space
+             you can use to hold the model weights, at the cost of CPU-GPU data
+             transfer for every forward pass.
++        cpu_offload_params: UVA offloading: Set of parameter name segments to
++            selectively offload. If None or empty, parameters are offloaded
++            non-selectively until `cpu_offload_gb` is reached.
+         offload_group_size: Prefetch offloading: Group every N layers
+             together. Offload last `offload_num_in_group` layers of each group.
+             Default is 0 (disabled).
+@@ -197,6 +200,7 @@ def __init__(
+         seed: int = 0,
+         gpu_memory_utilization: float = 0.92,
+         cpu_offload_gb: float = 0,
++        cpu_offload_params: set[str] | None = None,
+         offload_group_size: int = 0,
+         offload_num_in_group: int = 1,
+         offload_prefetch_step: int = 1,
+@@ -314,6 +318,7 @@ def _make_config(value: Any, cls: type[_R]) -> _R:
+             gpu_memory_utilization=gpu_memory_utilization,
+             kv_cache_memory_bytes=kv_cache_memory_bytes,
+             cpu_offload_gb=cpu_offload_gb,
++            cpu_offload_params=cpu_offload_params or set(),
+             offload_group_size=offload_group_size,
+             offload_num_in_group=offload_num_in_group,
+             offload_prefetch_step=offload_prefetch_step,
+diff --git a/vllm/model_executor/model_loader/utils.py b/vllm/model_executor/model_loader/utils.py
+index 8fbd31ab4e02..405c7f194183 100644
+--- a/vllm/model_executor/model_loader/utils.py
++++ b/vllm/model_executor/model_loader/utils.py
+@@ -57,6 +57,7 @@ def initialize_model(
+         # new-style model class
+         with set_current_vllm_config(vllm_config, check_compile=True, prefix=prefix):
+             model = model_class(vllm_config=vllm_config, prefix=prefix)
++            maybe_offload_embeddings(model, prefix=prefix)
+             record_metadata_for_reloading(model)
+             return model
+ 
+@@ -89,11 +90,37 @@ def initialize_model(
+         kwargs["scheduler_config"] = vllm_config.scheduler_config
+     with set_current_vllm_config(vllm_config, check_compile=True, prefix=prefix):
+         model = model_class(**kwargs)
++        maybe_offload_embeddings(model, prefix=prefix)
+         record_metadata_for_reloading(model)
+ 
+     return model
+ 
+ 
++def maybe_offload_embeddings(model: nn.Module, prefix: str = "") -> None:
++    """Route directly-constructed embeddings through compatible offloaders.
++
++    ``make_layers`` is the normal offloader entry point, but embeddings are
++    commonly created directly by model constructors. Do this before checkpoint
++    loading so offloaded parameters never need a full device-resident copy.
++    """
++    from vllm.model_executor.layers.vocab_parallel_embedding import (
++        VocabParallelEmbedding,
++    )
++    from vllm.model_executor.offloader import get_offloader
++
++    offloader = get_offloader()
++    if not offloader.supports_direct_module_offload:
++        return
++
++    for name, module in model.named_modules():
++        if isinstance(module, VocabParallelEmbedding):
++            module_prefix = f"{prefix}.{name}" if prefix and name else prefix or name
++            offloader.wrap_modules(
++                (direct_module for direct_module in [module]),
++                prefix=module_prefix,
++            )
++
++
+ def process_weights_after_loading(
+     model: nn.Module, model_config: ModelConfig, target_device: torch.device
+ ) -> None:
+diff --git a/vllm/model_executor/offloader/base.py b/vllm/model_executor/offloader/base.py
+index cb9c35b79c50..21ef8f981763 100644
+--- a/vllm/model_executor/offloader/base.py
++++ b/vllm/model_executor/offloader/base.py
+@@ -60,6 +60,14 @@ class BaseOffloader(ABC):
+     circular layer stack) must keep this `False`.
+     """
+ 
++    supports_direct_module_offload: bool = False
++    """Whether ``wrap_modules`` accepts non-layer modules.
++
++    Some model components, such as token embeddings, are constructed directly
++    instead of through ``make_layers``. Offloaders that depend on a sequential
++    decoder-layer layout must keep this ``False``.
++    """
++
+     @abstractmethod
+     def wrap_modules(
+         self,
+diff --git a/vllm/model_executor/offloader/uva.py b/vllm/model_executor/offloader/uva.py
+index 5107870ffa3f..2ecfeb8f6bf5 100644
+--- a/vllm/model_executor/offloader/uva.py
++++ b/vllm/model_executor/offloader/uva.py
+@@ -44,11 +44,16 @@ def __init__(
+         self.cpu_offload_max_bytes = cpu_offload_max_bytes
+         self.cpu_offload_bytes = 0
+         self.cpu_offload_params = cpu_offload_params or set()
++        self._matched_cpu_offload_params: set[str] = set()
+ 
+         self.pin_memory = should_pin_memory()
+         self.uva_offloading = (
+             is_uva_available() and not envs.VLLM_WEIGHT_OFFLOADING_DISABLE_UVA
+         )
++        # Directly-constructed embeddings are only safe to offload through
++        # UVA. The functional_call fallback does not support all embedding
++        # users (for example, tied input/output embeddings).
++        self.supports_direct_module_offload = self.uva_offloading
+ 
+     def wrap_modules(
+         self,
+@@ -78,17 +83,22 @@ def _maybe_offload_to_cpu(self, module: nn.Module, prefix: str = "") -> nn.Modul
+         if device == torch.device("cpu"):
+             return module
+ 
+-        if self.cpu_offload_bytes >= self.cpu_offload_max_bytes:
++        if (
++            self.cpu_offload_bytes >= self.cpu_offload_max_bytes
++            and not self.cpu_offload_params
++        ):
+             return module
+ 
+         # offload parameters to CPU
+         # use pin_memory if possible, which helps cudagraph capture speed
+         offloaded_parameters = False
+         for name, p in module.named_parameters():
+-            if self.cpu_offload_bytes >= self.cpu_offload_max_bytes:
+-                # we use per-parameter offloading
+-                # one module might have some parameters offloaded and some not
+-                break
++            matched_params = {
++                param
++                for param in self.cpu_offload_params
++                if f".{param}." in f".{prefix}{name}."
++            }
++            self._matched_cpu_offload_params.update(matched_params)
+ 
+             # Skip parameters an earlier wrap_modules call already offloaded.
+             # The UVA path leaves p.device as the accelerator (a view of CPU
+@@ -96,17 +106,13 @@ def _maybe_offload_to_cpu(self, module: nn.Module, prefix: str = "") -> nn.Modul
+             if p.device.type == "cpu" or getattr(p, "_vllm_is_uva_offloaded", False):
+                 continue
+ 
+-            if self.cpu_offload_params:
+-                # Check if parameter belongs to the offloading set
+-                # Add dots here to ensure we match full segments only
+-                # e.g., "experts.w2_weight" matches "mlp.experts.w2_weight"
+-                # but not "mlp.experts.w2_weight_scale"
+-                should_offload = any(
+-                    f".{param}." in f".{prefix}{name}."
+-                    for param in self.cpu_offload_params
+-                )
+-                if not should_offload:
+-                    continue
++            if self.cpu_offload_params and not matched_params:
++                continue
++
++            if self.cpu_offload_bytes >= self.cpu_offload_max_bytes:
++                # We offload whole parameters, so one parameter may exceed the
++                # remaining budget. Continue scanning to validate selectors.
++                continue
+ 
+             cpu_data = p.data.to(device="cpu")
+             if self.pin_memory:
+@@ -149,3 +155,11 @@ def forward(*args, **kwargs):
+             module.forward = forward
+ 
+         return module
++
++    def post_init(self):
++        unmatched_params = self.cpu_offload_params - self._matched_cpu_offload_params
++        if unmatched_params:
++            logger.warning(
++                "CPU offload parameter selector(s) matched no parameters: %s",
++                ", ".join(sorted(unmatched_params)),
++            )
