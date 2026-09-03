@@ -21,8 +21,10 @@ WORDS = ("alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo li
 
 
 def filler(n_tokens: int, rng: random.Random) -> str:
-    # ~1.3 tokens/word for this tokenizer family -> aim low, length is measured from usage anyway
-    n_words = int(n_tokens / 1.3)
+    # 1.45 tokens/word, calibrated on the served tokenizer (R166, 2026-09-03: at 1.3 every depth came out at
+    # 1.117x its request — "220K" was 245K real, 258K was 288K and overran the 262,144 window with HTTP 400).
+    # Depths in results BEFORE R166 are therefore ~12% deeper in real tokens than their labels.
+    n_words = int(n_tokens / 1.45)
     out = []
     for i in range(n_words):
         out.append(rng.choice(WORDS))
