@@ -8,9 +8,9 @@
 #   graphs (1.20 GiB @SEQS 16 / ~1.7 @32 with 0131; 2.04/OOM without) must fit in the util headroom — at util 0.90 the
 #   candidate booted with 3 MiB free (R164c) and could not boot at SEQS 32. `--kv-cache-memory-bytes` skips that
 #   profiling and takes the pool size verbatim (gpu_worker.py:489). Measured basis (R164c, util 0.90): 14.18 GiB
-#   available → 984,411 tokens = 15,466 B/token/GPU. Pin 13.41 GiB (14,400,000,000 B) → pool ≈ 931K tokens (+42% over
-#   the fp8 daily's 657K), leaving ≈0.77 GiB more headroom than util 0.90 did: ≈0.8 GiB free after pre-warm at
-#   SEQS 8/16, ≈0.4 GiB at 32. MIN_FREE_MIB below fails the boot if that headroom is not there (the Bug C guard).
+#   available → 984,411 tokens = 15,466 B/token/GPU. Pin 12.85 GiB at SEQS 8 (table below) → pool ≈ 892K tokens
+#   (+36% over the fp8 daily's 657K) with ≈650 MiB free after pre-warm (the fp8 daily runs with ≈370).
+#   MIN_FREE_MIB below fails the boot if that headroom is not there (the Bug C guard).
 #   The pool is deterministic by construction (no bimodal sizing).
 # Shape constraints (R155 Bug B dodge, still required, ASSERTED below — G11): XQA OFF (VLLM_SM12X_NVFP4_XQA=0 +
 #   ALLOW_NO_XQA=1), --max-num-batched-tokens 8192, 512 MiB FlashInfer workspace, 0131 pooled int workspace shrunk.
@@ -18,7 +18,7 @@
 #   overridable; everything else identical, so what the battery measures is this launcher, asserts included.
 # Rollback: bash /srv/qwen5090/launch-daily.sh (fp8 daily, unchanged).
 set -uo pipefail
-EXP=${EXP:-0}; EXP_SEQS=${SEQS:-8}; KV_BYTES=${KV_BYTES:-14400000000}; MIN_FREE_MIB=${MIN_FREE_MIB:-384}
+EXP=${EXP:-0}; EXP_SEQS=${SEQS:-8}; KV_BYTES=${KV_BYTES:-}; MIN_FREE_MIB=${MIN_FREE_MIB:-384}
 if [ "${DAILY_ALLOW_ENV:-0}" != 1 ]; then
   unset MODEL_DIR IMAGE KVD_OVERRIDE MAXLEN UTIL NS SPEC_JSON NOSPEC EXTRA_ENV EXTRA_MOUNT EXTRA_ARGS \
         POOL_MIN POOL_MAX TP PP FIWS NO_TIER PIP_ARM CGMODE FUSIONS MNBT SEQS PREFIX_CACHE EAGER MMLIMIT MMKW CPUB \
@@ -29,11 +29,17 @@ DRAFT=/srv/qwen5090/models/dflash2-qwen38-syvai-w4a16
 MODEL=/srv/qwen5090/models/qwen3.8-27b-redhat-nvfp4
 if [ "$EXP" = 1 ]; then PORT=8029; NAME=vllm-exp; BIND=127.0.0.1; L2=/srv/qwen5090/eval-l2; SEQS=$EXP_SEQS
 else PORT=8020; NAME=vllm-27b; BIND=0.0.0.0; L2=/srv/qwen5090/native-l2; SEQS=8; fi
+# Pin per SEQS (R166 boot 1: 13.41 GiB at SEQS 8 → pool 931,214, graphs 0.72 GiB, only 101 MiB free after pre-warm —
+# the pinned path skips the profiler's activation-peak reserve too, so the pin must absorb graphs AND pre-warm peak).
+# 12.85 GiB at SEQS 8 targets ≈650 MiB free; 16/32 subtract R164c's graph increments (+0.48 / +0.50 GiB).
+if [ -z "$KV_BYTES" ]; then case "$SEQS" in
+  8) KV_BYTES=13800000000;; 16) KV_BYTES=13280000000;; 32) KV_BYTES=12740000000;;
+  *) echo "FAILED: no pinned KV budget for SEQS=$SEQS (set KV_BYTES)"; exit 1;; esac; fi
 [ -f "$MODEL/model.safetensors.index.json" ] || { echo "FAILED: checkpoint missing at $MODEL"; exit 1; }
 sudo docker image inspect "$IMG" >/dev/null 2>&1 || { echo "FAILED: image $IMG missing (build: dflash-nvfp4-revival/Dockerfile.ws)"; exit 1; }
 env PORT=$PORT NAME=$NAME BIND_ADDR=$BIND MODEL_DIR="$MODEL" TP=2 L2MNT="$L2" \
     IMAGE="$IMG" KVD_OVERRIDE=nvfp4 ALLOW_NO_XQA=1 \
-    NO_TIER=0 FIWS=536870912 MNBT=8192 SEQS=$SEQS UTIL=0.90 MAXLEN=262144 POOL_MIN=900000 POOL_MAX=960000 \
+    NO_TIER=0 FIWS=536870912 MNBT=8192 SEQS=$SEQS UTIL=0.90 MAXLEN=262144 POOL_MIN=800000 POOL_MAX=920000 \
     EXTRA_MOUNT="-v $DRAFT:/draft:ro" \
     EXTRA_ARGS="--kv-cache-memory-bytes $KV_BYTES" \
     SPEC_JSON='{"method":"dflash","model":"/draft","num_speculative_tokens":9,"draft_tensor_parallel_size":2,"attention_backend":"FLASHINFER","kv_cache_dtype":"nvfp4"}' \

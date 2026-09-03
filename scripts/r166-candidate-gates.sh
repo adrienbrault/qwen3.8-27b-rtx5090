@@ -16,7 +16,7 @@
 #          (max num_requests_running = admission, G8; fp8 reference = R159's 17 on 624K), preemptions.
 # Boot order F -> N (plan rule). Every boot's pool/free is a gate line. Takes the GPU-exclusive flock, registers in the
 # gpu-queue, takes the daily down, restores it at the end unless another unit is queued (OPERATIONS §12).
-# Unit: sudo systemd-run --unit=r166-gates --collect -p User=adrienbrault -p RuntimeMaxSec=18000 -p TimeoutStopSec=900 bash /srv/qwen5090/r166-candidate-gates.sh
+# Unit: sudo systemd-run --unit=r166-gates --collect -p User=adrienbrault -p RuntimeMaxSec=18000 -p TimeoutStopSec=900 [-E SKIP_F=1 -E GPU_QUEUE_NAME=r166-gates-2] bash /srv/qwen5090/r166-candidate-gates.sh
 set -uo pipefail
 export PATH="$HOME/.local/bin:$PATH"
 R=/srv/qwen5090/results/2026-09-03-r166-gates; mkdir -p "$R"
@@ -89,10 +89,12 @@ core(){ # $1 tag: the shared SEQS-8 probe set (G1 G12 G6 G7 G4 G10)
 
 log "taking the daily down"; teardown
 
-# ---- arm F: fp8 daily shape ----
-wipe_l2
-if boot_fp8; then core F; else log "[F] arm skipped (boot failed twice)"; fi
-teardown
+# ---- arm F: fp8 daily shape ---- (SKIP_F=1: results already on disk from an earlier pass of this unit)
+if [ "${SKIP_F:-0}" != 1 ]; then
+  wipe_l2
+  if boot_fp8; then core F; else log "[F] arm skipped (boot failed twice)"; fi
+  teardown
+else log "[F] arm skipped by SKIP_F=1 (earlier pass)"; fi
 
 # ---- arm N8: candidate, SEQS 8 ----
 wipe_l2
