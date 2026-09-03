@@ -40,7 +40,13 @@ bf16_ladder(){ local T=$1
   [ -f "$BF16_REF" ] && [ -f "$LADDER_CORPUS" ] || { log "[$T bf16] SKIPPED: reference dump or corpus missing"; return; }
   timeout 3600 python3 /srv/qwen5090/probes/fidelity_ladder.py --url $U --model qwen3.8-27b --corpus "$LADDER_CORPUS" --out "$R/dump-$T-dense.jsonl" --logprobs 20 --mode dense > "$R/score-$T-dense.out" 2>&1
   log "[$T bf16 dense] $(tail -1 "$R/score-$T-dense.out" | cut -c1-160)"
-  python3 /srv/qwen5090/probes/fidelity_compare.py --ref "$BF16_REF" --arm "$R/dump-$T-dense.jsonl" --label "$T" --json "$R/bf16-$T.json" 2>&1 | tee "$R/bf16-$T.txt" | grep -aE "overall|ALL|agent|code|prose|PPL|KL|top-1" | cut -c1-200 | sed "s/^/[$T vs bf16] /" | tee -a "$R/audit.log"; }
+  python3 /srv/qwen5090/probes/fidelity_compare.py --ref "$BF16_REF" --arm "$R/dump-$T-dense.jsonl" --label "$T" --json "$R/bf16-$T.json" 2>&1 | tee "$R/bf16-$T.txt" | grep -aE "overall|ALL|agent|code|prose|PPL|KL|top-1" | cut -c1-200 | sed "s/^/[$T vs bf16 dense] /" | tee -a "$R/audit.log"
+  # agentic regime (R156e, the ruler that decided the RedHat promotion): bf16 GENERATED the turns (dump-a1-agentic), the arm
+  # scores the same token ids teacher-forced; scored in the deployed regime (spec ON, prefix cache ON, tier ON).
+  [ -f "$BF16_DIR/agentic-ids.jsonl" ] && [ -f "$BF16_DIR/dump-a1-agentic.jsonl" ] || { log "[$T bf16 agentic] SKIPPED: reference missing"; return; }
+  timeout 3600 python3 /srv/qwen5090/probes/agentic_ref.py score --url $U --model qwen3.8-27b --ids "$BF16_DIR/agentic-ids.jsonl" --out "$R/dump-$T-agentic.jsonl" > "$R/score-$T-agentic.out" 2>&1
+  log "[$T bf16 agentic] $(grep -aE "^DONE|FAIL" "$R/score-$T-agentic.out" | tail -1 | cut -c1-160)"
+  python3 /srv/qwen5090/probes/fidelity_compare.py --ref "$BF16_DIR/dump-a1-agentic.jsonl" --arm "$R/dump-$T-agentic.jsonl" --label "AGENTIC-$T" --json "$R/bf16-$T-agentic.json" 2>&1 | tee "$R/bf16-$T-agentic.txt" | grep -aE "^===|scored positions|top-1 agreement|corpus PPL|certain|confident|moderate|near-tie|FATAL" | cut -c1-200 | sed "s/^/[$T vs bf16 agentic] /" | tee -a "$R/audit.log"; }
 # 0136 split-KV on arm N: SPLIT_N=auto reads r168b's verdict (needles ON all hit AND ON-vs-OFF ΔNLL within ±0.5%) so N is
 # measured in the configuration that would ship; SPLIT_N=0|1 forces it.
 R168B=/srv/qwen5090/results/2026-09-03-r168b-splitkv; SPLIT_N=${SPLIT_N:-auto}
