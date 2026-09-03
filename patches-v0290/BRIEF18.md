@@ -4,7 +4,7 @@ Scope: package vLLM PR #53981 ("Route directly constructed embeddings through CP
 as `0135-embed-uva-offload-v0290.diff` on top of our v0.29.0rc1 chain (…-revival-prs tree = 0101–0134 applied), and
 REVIEW the parts its author did not exercise on our shape. One pass, `reasoning_effort=medium`. Verify ONLY with
 `patch --dry-run -p1 --fuzz=0` + `python3 -m py_compile` on a scratch copy; no tests, no GPU, no model execution.
-Never touch the host 10.76.10.5 (no ssh, no docker). The operator builds the image and runs every launch.
+Never touch the host flan (no ssh, no docker). The operator builds the image and runs every launch.
 
 ## Why
 
@@ -19,7 +19,7 @@ constructed `VocabParallelEmbedding` modules through the UVA offloader after con
 and warns on unmatched selectors. Reference for the same idea in SGLang: PR sgl-project/sglang#37826 (Triton host gather;
 in vLLM the plain `F.embedding` on the UVA view plays that role — do NOT port the Triton kernel).
 
-## Inputs (all local, read-only; `$B` = `/private/tmp/claude-501/-Volumes-Developer-smaft-kubernetes-home/23ee8117-a496-4853-be1a-d87476413a5c/scratchpad/embed-offload`)
+## Inputs (all local, read-only; `$B` = `<scratchpad>/embed-offload`)
 
 - `$B/tree/vllm` — the vLLM package extracted from image `vllm-qwen38:v0290rc1-nvfp4kv-revival-prs` (rc1 + 0101–0134
   applied). Tree root = `$B/tree` (so `patch -p1 -d $B/tree` with `a/vllm/...` paths). Copy it before applying anything.

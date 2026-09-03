@@ -34,8 +34,8 @@ fi
 
 TEST_PREFIX=
 if [ -z "${PYTHON_BIN:-}" ]; then
-  LOCAL_PYTHON=/Volumes/Developer/ai/harness-llm-bench/.venv/bin/python
-  LOCAL_TORCH=/Users/adrienbrault/.cache/uv/archive-v0/mpti-nMnnb5LI4Ab
+  LOCAL_PYTHON=${LOCAL_PYTHON:-python3}   # a local venv with torch (site-specific)
+  LOCAL_TORCH=${LOCAL_TORCH:-}   # site-specific torch cache dir, optional
   LOCAL_BOOTSTRAP="$SCRIPT_DIR/work/test-bootstrap"
   if [ ! -x "$LOCAL_PYTHON" ] || [ ! -d "$LOCAL_TORCH" ] ||
     [ ! -f "$LOCAL_BOOTSTRAP/sitecustomize.py" ]; then

@@ -6,7 +6,7 @@ Scope: a rebased patch set that applies with `patch -p1 --fuzz=0` to the v0.29.0
 
 The v0280 image chain (vLLM v0.28.0 + `patches-v0280/` 0101–0113 + `dflash-nvfp4-revival/` 0116–0119, 0129, 0131) is the daily and the nvfp4 candidate on the RTX 5090 box. v0.29.0rc1 (commit `33898f83`, 598 commits later) carries upstream work that overlaps ours (CUDA-graph memory reserve in the V2 runner, DFlash draft RoPE layout, FlashInfer XQA head_dim fallback, DFlash2 conv/selector architecture, Mamba prefill checkpoints). Applied for real the chain fails: 0101 loses 3/24 hunks in flashinfer.py, then 0103/0105/0109/0112 (same file), 0106 (dflash2/speculator.py), 0107 (qwen3_dflash.py), 0108 + 0111 (gdn_attn.py, mamba/abstract.py, config/cache.py), 0116 (vocab_parallel_embedding.py + flashinfer.py). The same sequence applies clean to v0.28.0 (control). Note that the rejects of a patch stacked on a partially-applied 0101 are partly consequences, not independent conflicts.
 
-## Inputs (all local, read-only; paths under `$BUNDLE` = `/private/tmp/claude-501/-Volumes-Developer-smaft-kubernetes-home/23ee8117-a496-4853-be1a-d87476413a5c/scratchpad`)
+## Inputs (all local, read-only; paths under `$BUNDLE` = `<scratchpad>`)
 
 - `$BUNDLE/v028src/` — pristine vLLM v0.28.0 source tarball. `$BUNDLE/v029src/` — pristine v0.29.0rc1 tarball. (Package root = `<tree>/vllm`.)
 - `$BUNDLE/v028p/` — v0.28.0 with the WHOLE chain applied = the intended end state. `$BUNDLE/rebase-v0290/intended/*.diff` = `diff -u v028src v028p` per touched file (flashinfer.py 869 lines, gdn_attn.py 354, llm_base_proposer.py 192, qwen_gdn_linear_attn.py 170, dflash2/speculator.py 116, …). This is the ground truth of what the chain does.
@@ -42,6 +42,6 @@ The v0280 image chain (vLLM v0.28.0 + `patches-v0280/` 0101–0113 + `dflash-nvf
 
 ## Constraints
 
-- Never touch the host `10.76.10.5` (no ssh, no docker). Everything is local; the operator builds and runs.
+- Never touch the host `flan` (no ssh, no docker). Everything is local; the operator builds and runs.
 - Do not reformat or reflow untouched code; hunks minimal; `--fuzz=0` must hold.
 - If a patch cannot be rebased faithfully without metal evidence, deliver the best mechanical rebase and list the open question in NOTES16 rather than inventing behaviour.
