@@ -5,19 +5,25 @@
 # 0132/0133 are inert by default; 0134 changes scheduling for dflash only. R168 (2026-09-03): PR #53981 (embed-table UVA
 # offload, R167 validated +9.3% pool at zero cost; opt-in via --offload-backend uva --cpu-offload-params embed_tokens) folded
 # in as 0135 — the separate Dockerfile.embed layer is gone; the rc1 image …-revival-prs-embed was its last use.
+# R168 (codex NOTES19): 0136 = opt-in knob VLLM_SM12X_NVFP4_PREFILL_SPLIT_KV=1 that neutralises FlashInfer 0.6.18's
+# _nvfp4_kv_requires_disabled_split_kv guard (forces split-KV OFF for NVFP4 KV in the FA2 prefill wrapper, which is the
+# spec-verification path: q=10 → one KV chunk per tile → the rc1 30K-context decode collapse). Off by default: FlashInfer
+# added the guard after seeing short-Q/long-KV corruption with split-KV — the Bug B family; r168b validates it.
 # Build: sudo docker build -f Dockerfile.prs --build-arg BASE=vllm-qwen38:v0290rc2-nvfp4kv-revival -t vllm-qwen38:v0290rc2-nvfp4kv-revival-prs .
 ARG BASE=vllm-qwen38:v0290rc1-nvfp4kv-revival
 FROM ${BASE}
-COPY 0132-masked-nvfp4-xqa-sm120-v0290.diff 0133-gdn-packed-decode-bv16-v0290.diff 0134-dflash-no-eagle-block-drop-v0290.diff 0135-embed-uva-offload-v0290.diff /tmp/
+COPY 0132-masked-nvfp4-xqa-sm120-v0290.diff 0133-gdn-packed-decode-bv16-v0290.diff 0134-dflash-no-eagle-block-drop-v0290.diff 0135-embed-uva-offload-v0290.diff 0136-opt-in-nvfp4-prefill-split-kv-v0290.diff /tmp/
 RUN set -eux; cd "$(python3 -c 'import os, vllm; print(os.path.dirname(os.path.dirname(vllm.__file__)))')"; \
     patch --batch --forward -p1 --fuzz=0 < /tmp/0132-masked-nvfp4-xqa-sm120-v0290.diff; \
     patch --batch --forward -p1 --fuzz=0 < /tmp/0133-gdn-packed-decode-bv16-v0290.diff; \
     patch --batch --forward -p1 --fuzz=0 < /tmp/0134-dflash-no-eagle-block-drop-v0290.diff; \
     patch --batch --forward -p1 --fuzz=0 < /tmp/0135-embed-uva-offload-v0290.diff; \
+    patch --batch --forward -p1 --fuzz=0 < /tmp/0136-opt-in-nvfp4-prefill-split-kv-v0290.diff; \
     python3 -m py_compile vllm/envs.py vllm/v1/attention/backends/flashinfer.py vllm/third_party/flash_linear_attention/ops/fused_recurrent.py \
       vllm/config/speculative.py vllm/v1/core/sched/scheduler.py vllm/entrypoints/llm.py vllm/model_executor/model_loader/utils.py \
       vllm/model_executor/offloader/base.py vllm/model_executor/offloader/uva.py; \
     grep -q VLLM_FLASHINFER_XQA_USE_ISOLATED_STREAM vllm/envs.py; grep -q VLLM_SM12X_GDN_PACKED_BV vllm/envs.py; \
     grep -q use_eagle_preserves_target_kv_cache vllm/v1/core/sched/scheduler.py; \
     grep -q maybe_offload_embeddings vllm/model_executor/model_loader/utils.py; \
-    rm -f /tmp/013*.diff; echo PRS-0132-0133-0134-0135-APPLIED
+    grep -q _maybe_enable_sm12x_nvfp4_prefill_split_kv vllm/v1/attention/backends/flashinfer.py; \
+    rm -f /tmp/013*.diff; echo PRS-0132-0133-0134-0135-0136-APPLIED

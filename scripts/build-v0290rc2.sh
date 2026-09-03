@@ -15,6 +15,7 @@
 #          vllm-qwen38:v0290rc1-nvfp4kv-revival-prs-embed-fi0616 = the rc1 R167 image + FlashInfer 0.6.16.post3 (mirror)
 #   The swap images are built FIRST (minutes; r168-deep-decode.sh needs them), the rc2 chain after (~1 h).
 #   FISWAP_ONLY=1 builds just the two swap images (re-run after the cubin-index fix while the rc2 chain build continued).
+#   PRS_ONLY=1 FORCE=1 rebuilds just the prs layer (R168: 0136 folded in). FORCE=1 rebuilds existing tags.
 # Unit: sudo systemd-run --unit=r168-build --collect -p User=adrienbrault -p RuntimeMaxSec=10800 -p Nice=19 -p IOSchedulingClass=idle bash /srv/qwen5090/build-v0290rc2.sh
 set -uo pipefail
 R=/srv/qwen5090/results/2026-09-03-r168-v0290rc2-image; mkdir -p "$R"
@@ -34,7 +35,7 @@ build(){ # $1 tag, $2 dockerfile, rest = --build-arg ... ; retries the container
   # "failed to export layer ... failed to commit: rename .../ingest/... no such file or directory", seen 20:39 UTC with
   # the rc2 chain build and the campaign's image prepull running alongside) up to 3 attempts, 60 s apart.
   local tag=$1 df=$2 attempt rc; shift 2
-  if [ "${FISWAP_FORCE:-0}" != 1 ] && sudo docker image inspect "$tag" >/dev/null 2>&1; then log "--- build $tag: image exists, skipped"; return 0; fi
+  if [ "${FORCE:-0}" != 1 ] && sudo docker image inspect "$tag" >/dev/null 2>&1; then log "--- build $tag: image exists, skipped"; return 0; fi
   for attempt in 1 2 3; do
     log "--- build $tag ($df $*) attempt $attempt"
     ( cd "$D" && sudo nice -n 19 ionice -c3 docker build -f "$df" "$@" -t "$tag" . ) > "$R/build-${tag##*:}.log" 2>&1; rc=$?
@@ -46,6 +47,7 @@ build(){ # $1 tag, $2 dockerfile, rest = --build-arg ... ; retries the container
   log "FAILED: build $tag rc=$rc (log $R/build-${tag##*:}.log)"; return 1
 }
 # 1) FlashInfer-swap diagnosis images (independent of rc2)
+if [ "${PRS_ONLY:-0}" = 1 ]; then build "$TAG-revival-prs" Dockerfile.prs --build-arg BASE="$TAG-revival" || exit 1; log "=== prs-only run DONE ==="; exit 0; fi
 build "$V28-fi0618" Dockerfile.fiswap --build-arg BASE="$V28" --build-arg FI_VER=0.6.18 || log "fi0618 swap image FAILED — r168 cell V28F unavailable"
 build "$RC1E-fi0616" Dockerfile.fiswap --build-arg BASE="$RC1E" --build-arg FI_VER=0.6.16.post3 || log "fi0616 swap image FAILED — r168 cell RC1F unavailable"
 touch "$R/FISWAP-DONE"

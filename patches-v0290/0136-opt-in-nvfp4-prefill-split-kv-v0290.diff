@@ -1,0 +1,46 @@
+--- a/vllm/v1/attention/backends/flashinfer.py
++++ b/vllm/v1/attention/backends/flashinfer.py
+@@ -157,6 +157,35 @@ def _sm12x_nvfp4_xqa_enabled() -> bool:
+     return enabled
+ 
+ 
++@cache
++def _maybe_enable_sm12x_nvfp4_prefill_split_kv() -> None:
++    """Opt back into FI split-KV for the SM12x NVFP4 prefill route."""
++    import os
++
++    if os.environ.get("VLLM_SM12X_NVFP4_PREFILL_SPLIT_KV", "0") != "1":
++        return
++
++    import flashinfer.prefill as flashinfer_prefill
++
++    guard_name = "_nvfp4_kv_requires_disabled_split_kv"
++    if getattr(flashinfer_prefill, guard_name, None) is None:
++        logger.info_once(
++            "VLLM_SM12X_NVFP4_PREFILL_SPLIT_KV=1: this FlashInfer version "
++            "already honors the caller's split-KV setting."
++        )
++        return
++
++    # FlashInfer 0.6.18 overrides disable_split_kv=False for packed NVFP4.
++    # This process-wide, opt-in override restores the 0.6.16 behavior. Keep it
++    # off by default because FlashInfer added its guard after observing output
++    # corruption for short-Q/long-KV attention with split-KV enabled.
++    setattr(flashinfer_prefill, guard_name, lambda _kv_data_type: False)
++    logger.warning_once(
++        "VLLM_SM12X_NVFP4_PREFILL_SPLIT_KV=1: re-enabled FlashInfer split-KV "
++        "for NVFP4 prefill/verification. Validate output fidelity at long context."
++    )
++
++
+ @cache
+ def _shrink_pooled_int_workspace(wrapper):
+     """R164/0131 (Bug C): FlashInfer gives EVERY BatchPrefillWithPagedKVCacheWrapper an
+@@ -889,6 +918,7 @@ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
+                 if current_platform.is_device_capability_family(120):
+                     # NVFP4KV-SM120: FA2 native path (no trtllm-gen on SM12x)
+                     self.use_fa2_nvfp4_kv = True
++                    _maybe_enable_sm12x_nvfp4_prefill_split_kv()
+                 elif (
+                     force_use_trtllm_attention() is False
+                     or not supports_trtllm_attention(is_prefill=True)

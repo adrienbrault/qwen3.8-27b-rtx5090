@@ -16,7 +16,7 @@
 # EXP=1 → :8029 / vllm-exp / eval-l2 (batteries); EXP=eval → :8030 / vllm-eval (campaign engine); default → :8020 daily.
 # Rollback: bash /srv/qwen5090/launch-daily.sh (fp8 daily, v0.28, unchanged).
 set -uo pipefail
-EXP=${EXP:-0}; EXP_SEQS=${SEQS:-8}; KV_BYTES=${KV_BYTES:-}; MIN_FREE_MIB=${MIN_FREE_MIB:-384}; OFFLOAD=${OFFLOAD:-1}
+EXP=${EXP:-0}; EXP_SEQS=${SEQS:-8}; KV_BYTES=${KV_BYTES:-}; MIN_FREE_MIB=${MIN_FREE_MIB:-384}; OFFLOAD=${OFFLOAD:-1}; SPLIT_KV=${SPLIT_KV:-0}
 IMG=${CAND_IMG:-vllm-qwen38:v0290rc2-nvfp4kv-revival-prs}
 if [ "${DAILY_ALLOW_ENV:-0}" != 1 ]; then
   unset MODEL_DIR IMAGE KVD_OVERRIDE MAXLEN UTIL NS SPEC_JSON NOSPEC EXTRA_ENV EXTRA_MOUNT EXTRA_ARGS \
@@ -32,15 +32,22 @@ if [ -z "$KV_BYTES" ]; then case "$SEQS" in
   8) KV_BYTES=14500000000;; 16) KV_BYTES=13980000000;; 32) KV_BYTES=13440000000;;
   *) echo "FAILED: no pinned KV budget for SEQS=$SEQS (set KV_BYTES)"; exit 1;; esac; fi
 OFFLOAD_ARGS=""; [ "$OFFLOAD" = 1 ] && OFFLOAD_ARGS="--offload-backend uva --cpu-offload-gb 1 --cpu-offload-params embed_tokens"
+# 0136 (R168, codex NOTES19): FlashInfer 0.6.18 forces split-KV OFF for NVFP4 KV in the FA2 prefill wrapper = the spec-verification
+# path (q=10), so one CTA walks the whole KV per step → rc1 30K-context decode 29 tok/s vs 144 on v0.28 (FI 0.6.16.post3 honoured
+# the flag). SPLIT_KV=1 re-enables it (VLLM_SM12X_NVFP4_PREFILL_SPLIT_KV=1); FlashInfer added its guard after seeing short-Q/long-KV
+# corruption with split-KV, so it stays 0 until r168b clears fidelity + needles with it on.
+SPLIT_ENV=""; [ "$SPLIT_KV" = 1 ] && SPLIT_ENV="-e VLLM_SM12X_NVFP4_PREFILL_SPLIT_KV=1"
+# Experiment-only hooks (ignored on the daily port): extra vllm flags / mounts, e.g. the torch profiler dir (r168b).
+XARGS=""; XMOUNT=""; if [ "$EXP" != 0 ]; then XARGS="${EXTRA_ARGS_APPEND:-}"; XMOUNT="${EXTRA_MOUNT_APPEND:-}"; fi
 [ -f "$MODEL/model.safetensors.index.json" ] || { echo "FAILED: checkpoint missing at $MODEL"; exit 1; }
 sudo docker image inspect "$IMG" >/dev/null 2>&1 || { echo "FAILED: image $IMG missing (build: build-v0290rc2.sh)"; exit 1; }
 env PORT=$PORT NAME=$NAME BIND_ADDR=$BIND MODEL_DIR="$MODEL" TP=2 L2MNT="$L2" \
     IMAGE="$IMG" KVD_OVERRIDE=nvfp4 ALLOW_NO_XQA=1 \
     NO_TIER=0 FIWS=536870912 MNBT=8192 SEQS=$SEQS UTIL=0.88 MAXLEN=262144 POOL_MIN=850000 POOL_MAX=1000000 \
-    EXTRA_MOUNT="-v $DRAFT:/draft:ro" \
-    EXTRA_ARGS="--kv-cache-memory-bytes $KV_BYTES $OFFLOAD_ARGS" \
+    EXTRA_MOUNT="-v $DRAFT:/draft:ro $XMOUNT" \
+    EXTRA_ARGS="--kv-cache-memory-bytes $KV_BYTES $OFFLOAD_ARGS $XARGS" \
     SPEC_JSON='{"method":"dflash","model":"/draft","num_speculative_tokens":9,"draft_tensor_parallel_size":2,"attention_backend":"FLASHINFER"}' \
-    EXTRA_ENV="-e NCCL_P2P_LEVEL=SYS -e VLLM_SM12X_NVFP4_XQA=0 -e VLLM_SM12X_DFLASH_GRAPHS=1" \
+    EXTRA_ENV="-e NCCL_P2P_LEVEL=SYS -e VLLM_SM12X_NVFP4_XQA=0 -e VLLM_SM12X_DFLASH_GRAPHS=1 $SPLIT_ENV" \
     bash /srv/qwen5090/launch-daily-v0280.sh || { echo "0.29 CANDIDATE FAILED — engine NOT up$([ "$EXP" = 1 ] || echo '; run launch-daily.sh')"; exit 1; }
 BOOTLOG=$(sudo docker logs "$NAME" 2>&1)
 ARGS=$(sudo docker inspect "$NAME" --format '{{json .Args}} {{json .Config.Env}}')
@@ -65,7 +72,9 @@ if [ "$OFFLOAD" = 1 ]; then  # R167 / NOTES18 §5, fail closed
 else
   [ "$(echo "$BOOTLOG" | grep -ac 'CPU offloaded parameters')" -eq 0 ] || fail "OFFLOAD=0 but the engine offloaded parameters"
 fi
+if [ "$SPLIT_KV" = 1 ]; then [ "$(echo "$BOOTLOG" | grep -ac "re-enabled FlashInfer split-KV")" -ge 1 ] || fail "SPLIT_KV=1 but 0136 did not engage (image without 0136?)"
+else [ "$(echo "$BOOTLOG" | grep -ac "re-enabled FlashInfer split-KV")" -eq 0 ] || fail "split-KV re-enabled although SPLIT_KV=0"; fi
 FREE=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | sort -n | head -1)
 [ "$FREE" -ge "$MIN_FREE_MIB" ] || fail "only $FREE MiB free after pre-warm (< $MIN_FREE_MIB) — Bug C headroom missing; lower KV_BYTES"
 POOL=$(echo "$BOOTLOG" | grep -a 'GPU KV cache size' | tail -1 | grep -oE 'cache size: [0-9,]+' | tr -dc 0-9)
-echo "0.29 CANDIDATE UP on ${BIND}:${PORT} (vllm $VER, RedHat NVFP4 weights + NVFP4 KV pinned $KV_BYTES B/GPU + DFlash2 ns9 draft_tp2 in CUDA graphs + 0131/0134 + embed offload=$OFFLOAD + native disk tier, dual 5090, image $IMG, SEQS $SEQS). Pool $POOL, min free VRAM $FREE MiB.$([ "$EXP" = 1 ] || echo ' Rollback: launch-daily.sh')"
+echo "0.29 CANDIDATE UP on ${BIND}:${PORT} (vllm $VER, RedHat NVFP4 weights + NVFP4 KV pinned $KV_BYTES B/GPU + DFlash2 ns9 draft_tp2 in CUDA graphs + 0131/0134 + embed offload=$OFFLOAD + split_kv=$SPLIT_KV + native disk tier, dual 5090, image $IMG, SEQS $SEQS). Pool $POOL, min free VRAM $FREE MiB.$([ "$EXP" = 1 ] || echo ' Rollback: launch-daily.sh')"
