@@ -17,10 +17,10 @@ DRAFT=/srv/qwen5090/models/dflash2-qwen38-syvai-w4a16
 PROBE=/srv/qwen5090/probes/mm_probe.py
 BASE=http://127.0.0.1:8029/v1
 
-settle(){ for i in $(seq 1 120); do u=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | tr "\n" " "); case "$u" in *[1-9][0-9][0-9][0-9]*) sleep 5;; *) break;; esac; done; log "gpus idle ($u MiB); settling ${1:-300}s"; sleep "${1:-300}"; }
+settle(){ for i in $(seq 1 120); do u=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | tr "\n" " "); case "$u" in *[1-9][0-9][0-9][0-9]*) sleep 5;; *) break;; esac; done; log "gpus idle ($u MiB); settling ${1:-60}s"; sleep "${1:-60}"; }
 teardown(){ # $1 = container
   sudo docker logs "$1" > "$R/engine-$1-$(date +%H%M%S).log" 2>&1 || true; sudo docker rm -f "$1" >/dev/null 2>&1 || true; }
-finish(){ log "restoring daily"; settle 300; bash /srv/qwen5090/daily-restore-retry.sh 2>&1 | grep -aE "DAILY|FAILED|KV pool|attempt" | cut -c1-160 | tee -a "$R/audit.log"; log "=== R161 $1 ==="; }
+finish(){ log "restoring daily"; settle 60; bash /srv/qwen5090/daily-restore-retry.sh 2>&1 | grep -aE "DAILY|FAILED|KV pool|attempt" | cut -c1-160 | tee -a "$R/audit.log"; log "=== R161 $1 ==="; }
 trap 'log "### SIGTERM ###"; teardown vllm-exp; finish ABORTED; exit 4' TERM
 
 boot(){ # $1 = cell label, rest = extra env assignments
@@ -40,7 +40,7 @@ boot(){ # $1 = cell label, rest = extra env assignments
 log "=== R161 start: taking the daily down ==="
 sudo docker logs vllm-27b > "$R/daily-predown.log" 2>&1 || true
 sudo docker rm -f vllm-27b >/dev/null 2>&1 || true
-settle 300
+settle 60
 
 # A (count 4) = the daily itself: probe-smoke.json (3 images, live daily) + daily-predown.log carry its boot facts.
 # B: count 16
@@ -48,7 +48,7 @@ if boot B MMLIMIT='{"image":16,"video":0}'; then
   python3 "$PROBE" "$BASE" "$R/img" 12 B "$R/probe-B.json" 2>&1 | tee -a "$R/audit.log"
 fi
 teardown vllm-exp
-settle 300
+settle 60
 # C: count 16 + 1 Mpx cap
 if boot C MMLIMIT='{"image":16,"video":0}' MMKW='{"max_pixels":1048576}'; then
   python3 "$PROBE" "$BASE" "$R/img" 12 C "$R/probe-C.json" 2>&1 | tee -a "$R/audit.log"

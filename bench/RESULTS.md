@@ -10,6 +10,7 @@ Hardware since 2026-08-31: two RTX 5090 32 GB (`sm_120`), Ryzen 7 9800X3D, 64 GB
 
 ## Index
 
+- [Post-teardown settle: 60 seconds is enough on a healthy box (2026-09-03, `results/2026-09-03-r162-settle`, `scripts/r162-settle-ladder.sh`)](#post-teardown-settle-60-seconds-is-enough-on-a-healthy-box-2026-09-03-results2026-09-03-r162-settle-scriptsr162-settle-laddersh)
 - [Image limit per request: raising the count is free, a pixel cap is not (2026-09-03, `results/2026-09-03-r161-images`, `scripts/r161-images.sh`, `scripts/mm_probe.py`)](#image-limit-per-request-raising-the-count-is-free-a-pixel-cap-is-not-2026-09-03-results2026-09-03-r161-images-scriptsr161-imagessh-scriptsmm_probepy)
 - [R159, the served shape at concurrency 8/16/32/64: aggregate saturates at c16 and the pool caps admission at ~18 short requests (2026-09-02, `results/2026-09-02-r159-conc-b`, `scripts/r159-conc.sh` + `r159c-live.sh`)](#r159-the-served-shape-at-concurrency-8163264-aggregate-saturates-at-c16-and-the-pool-caps-admission-at-18-short-requests-2026-09-02-results2026-09-02-r159-conc-b-scriptsr159-concsh--r159c-livesh)
 - [R158, DFlash2 on NVFP4 KV: drafter graphs close the single-stream gap (2026-09-02, `results/2026-09-02-r158-nvfp4-profile`)](#r158-dflash2-on-nvfp4-kv-drafter-graphs-close-the-single-stream-gap-2026-09-02-results2026-09-02-r158-nvfp4-profile)
@@ -61,6 +62,22 @@ Hardware since 2026-08-31: two RTX 5090 32 GB (`sm_120`), Ryzen 7 9800X3D, 64 GB
 - [Correction (2026-07-19): util 0.98 retired after a serve-time autotune OOM, deep-concurrency numbers re-based](#correction-2026-07-19-util-098-retired-after-a-serve-time-autotune-oom-deep-concurrency-numbers-re-based)
 - [Promotion (2026-07-19): natfii NVFP4 W4A4 is the daily, util 0.98, pool 239,436](#promotion-2026-07-19-natfii-nvfp4-w4a4-is-the-daily-util-098-pool-239436)
 - [Complete llama-benchy matrix on the promoted daily (2026-07-19, util 0.98)](#complete-llama-benchy-matrix-on-the-promoted-daily-2026-07-19-util-098)
+
+## Post-teardown settle: 60 seconds is enough on a healthy box (2026-09-03, `results/2026-09-03-r162-settle`, `scripts/r162-settle-ladder.sh`)
+
+Question: every restart cycle waited 300 seconds between a TP=2 teardown and the next TP=2 boot (gotcha 21). That number came from one bad evening: three chained boots with a 45 second settle all died in kernel warmup right after a kernel-panic reboot, and a 300 second settle booted first try. Is 300 needed?
+
+Method: teardown, wait for both GPUs to report idle (immediate, 2 MiB each), sleep S, boot the served shape on a side port with the launcher's fail-fast on the warmup error signature.
+
+| settle | boot | time to health |
+|---|---|---|
+| 60 s | first try | 137 s |
+| 120 s | first try | 138 s |
+| 180 s | first try | 137 s |
+
+Reading: on a healthy box the settle length does not matter and boot time is constant. The 45 second failures happened in the first hour after a kernel panic and did not reproduce, so this does not show that 60 seconds would have cleared that state. It shows the normal case does not need the 300 second wait. Not tested: under 60 seconds, and the post-reboot state.
+
+Applied: routine settles are now 60 seconds in the campaign, pause and restore scripts; 300 seconds remains the retry path after a failed boot. A pause-to-healthy-daily cycle is about 60 + 60 + 140 seconds.
 
 ## Image limit per request: raising the count is free, a pixel cap is not (2026-09-03, `results/2026-09-03-r161-images`, `scripts/r161-images.sh`, `scripts/mm_probe.py`)
 
