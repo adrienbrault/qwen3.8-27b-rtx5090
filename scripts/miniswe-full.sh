@@ -22,6 +22,7 @@ export TERM=dumb
 K=${1:-500}; CHUNK=${CHUNK:-40}; W=${W:-12}; START=${START:-0}
 # GPU-exclusive lock (2026-09-03): two units that both tear down every vllm-* container must never overlap — the
 # R163 battery and this runner once killed each other's engines. Held until this process exits (after finish()).
+source /srv/qwen5090/lib/gpu-queue.sh   # OPERATIONS §12: registered here so the unit ahead skips its daily restore
 exec 9>/srv/qwen5090/gpu-exclusive.lock; flock -n 9 || { echo "$(date -Is) waiting for the GPU-exclusive lock (another unit holds it)"; flock 9; }   # START: first chunk index on a resume (skips re-pulling pruned chunks)
 R=/srv/qwen5090/results/2026-09-02-miniswe-rh${RUN_SUFFIX:-}; OUT=$R/out; mkdir -p "$OUT"
 VENV=/srv/qwen5090/miniswe/.venv; MSWA=2.4.6
@@ -42,9 +43,16 @@ finish(){ # $1 = status line; always: kill agents, capture engine log, restore d
   sudo docker logs vllm-eval > "$R/engine.log" 2>&1 || true
   grep -aciE "error|traceback" "$R/engine.log" | sed "s/^/[engine] error-lines: /" | tee -a "$R/audit.log"
   settle
-  bash /srv/qwen5090/daily-restore-retry.sh 2>&1 | grep -aE "DAILY|FAILED|KV pool|attempt" | cut -c1-160 | tee -a "$R/audit.log"
+  bash /srv/qwen5090/daily-restore-retry.sh 2>&1 | grep -aE "DAILY|FAILED|KV pool|attempt|SKIPPED" | cut -c1-160 | tee -a "$R/audit.log"
   log "=== MINISWE $1 ==="; }
 trap 'log "### SIGTERM (unit RuntimeMaxSec?) — restoring daily ###"; finish "ABORTED"; exit 4' TERM
+# WIPE_L2=1 (R166): cold-tier start for a fair pairing (the fp8 run R160 started at a 3% tier). Under the lock, so no
+# eval engine can be using eval-l2; the daily's tier is a different mount.
+if [ "${WIPE_L2:-0}" = 1 ]; then
+  sudo docker ps --format '{{.Names}}' | grep -qxE 'vllm-eval|vllm-exp' && { log "WIPE_L2: an eval engine is still up under the lock?! aborting"; exit 1; }
+  sudo find "$EVAL_L2" -mindepth 1 -maxdepth 1 -name '_model_*' -exec rm -rf {} + ; sync
+  log "eval-l2 namespace sets wiped for a cold-tier start: now $(df --output=pcent "$EVAL_L2" | tail -1 | tr -dc 0-9)%"
+fi
 
 # ---- bootstrap (idempotent) ----
 if [ ! -x "$VENV/bin/mini-extra" ]; then

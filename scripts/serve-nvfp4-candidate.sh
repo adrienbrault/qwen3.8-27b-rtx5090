@@ -28,6 +28,7 @@ IMG=vllm-qwen38:v0280-nvfp4kv-revival-graphs-ws
 DRAFT=/srv/qwen5090/models/dflash2-qwen38-syvai-w4a16
 MODEL=/srv/qwen5090/models/qwen3.8-27b-redhat-nvfp4
 if [ "$EXP" = 1 ]; then PORT=8029; NAME=vllm-exp; BIND=127.0.0.1; L2=/srv/qwen5090/eval-l2; SEQS=$EXP_SEQS
+elif [ "$EXP" = eval ]; then PORT=8030; NAME=vllm-eval; BIND=${EVAL_BIND:-127.0.0.1}; L2=/srv/qwen5090/eval-l2; SEQS=$EXP_SEQS   # campaign engine (boot-candidate-miniswe.sh)
 else PORT=8020; NAME=vllm-27b; BIND=0.0.0.0; L2=/srv/qwen5090/native-l2; SEQS=8; fi
 # Pin per SEQS (R166 boot 1: 13.41 GiB at SEQS 8 → pool 931,214, graphs 0.72 GiB, only 101 MiB free after pre-warm —
 # the pinned path skips the profiler's activation-peak reserve too, so the pin must absorb graphs AND pre-warm peak).

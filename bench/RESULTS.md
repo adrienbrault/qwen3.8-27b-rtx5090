@@ -10,6 +10,7 @@ Hardware since 2026-08-31: two RTX 5090 32 GB (`sm_120`), Ryzen 7 9800X3D, 64 GB
 
 ## Index
 
+- [R166, the nvfp4-KV candidate made daily-grade: the KV pool pinned in bytes instead of sized by utilization; every promotion gate except SWE-bench passes paired against the fp8 daily (2026-09-03, `results/2026-09-03-r166-gates`, `scripts/serve-nvfp4-candidate.sh`, `scripts/r166-candidate-gates.sh`)](#r166-the-nvfp4-kv-candidate-made-daily-grade-the-kv-pool-pinned-in-bytes-instead-of-sized-by-utilization-every-promotion-gate-except-swe-bench-passes-paired-against-the-fp8-daily-2026-09-03-results2026-09-03-r166-gates-scriptsserve-nvfp4-candidatesh-scriptsr166-candidate-gatessh)
 - [R165b/c, the v0.29.0rc1 chain measured: fp8 shape at parity for −5.8% pool, nvfp4 route needs a third workaround and util 0.88, masked XQA correct but slower; rc1 not promoted (2026-09-03, `results/2026-09-03-r165b-audition`, `results/2026-09-03-r165c-audition`, `scripts/r165b-audition.sh`, `scripts/r165c-audition.sh`)](#r165bc-the-v0290rc1-chain-measured-fp8-shape-at-parity-for-58-pool-nvfp4-route-needs-a-third-workaround-and-util-088-masked-xqa-correct-but-slower-rc1-not-promoted-2026-09-03-results2026-09-03-r165b-audition-results2026-09-03-r165c-audition-scriptsr165b-auditionsh-scriptsr165c-auditionsh)
 - [R165 prep, a vLLM v0.29.0rc1 image: recipe made version-agnostic; the patch chain needs a rebase (2026-09-03, `scripts/build-v0290rc1.sh`, `patches-v0280/`)](#r165-prep-a-vllm-v0290rc1-image-recipe-made-version-agnostic-the-patch-chain-needs-a-rebase-2026-09-03-scriptsbuild-v0290rc1sh-patches-v0280)
 - [R164, the graph-capture OOM on the nvfp4 candidate: five pooled FlashInfer wrappers per captured shape; patch 0131 halves graph memory, the pool sizing is the rest (2026-09-03, `results/2026-09-03-r164-bugc`, `results/2026-09-03-r164c-ws`, patch 0131)](#r164-the-graph-capture-oom-on-the-nvfp4-candidate-five-pooled-flashinfer-wrappers-per-captured-shape-patch-0131-halves-graph-memory-the-pool-sizing-is-the-rest-2026-09-03-results2026-09-03-r164-bugc-results2026-09-03-r164c-ws-patch-0131)
@@ -83,6 +84,41 @@ Build (2026-09-03 10:10–10:22 UTC): all three tags built from the rebased chai
 First audition run (10:22 UTC, `scripts/r165-audition.sh`): the fp8 daily shape boots on rc1 (pool 622,548 against 657,269 on v0.28.0 the same hour, the new CUDA-graph reserve) but an identical 32K prompt sent twice gets zero prefix-cache hits and the same 7.5 s TTFT both times, where v0.28.0 answers the second send in 0.45 s with 51,584 cached tokens. The engine states the cause at boot: with DFlash enabled no KV cache group is identified as the draft model's, so every group including the Mamba groups is treated as a draft group, and rc1's Mamba manager now honours the resulting widened lookup, which align-mode checkpointing can never satisfy. Upstream's fix for exactly this shape is the open vllm#54163 (DFlash drafts from its own KV cache and never writes target blocks); it targets a newer main, so `patches-v0290/0134-dflash-no-eagle-block-drop-v0290.diff` carries its predicate to every rc1 site that keys KV handling on the eagle flag. The nvfp4 cells did not boot: rc1 made the FlashInfer builder's `paged_kv_indices` a plain tensor and the rebased 0101/0109 still read `.gpu` on it (two one-token fixes, whole chain re-applied for real on a fresh tree). The fidelity ruler also killed the engine because the script ran it above concurrency 1, the known prompt-logprobs memory bug in the entry dated 2026-08-28. Rebuild and a corrected second run (`scripts/r165b-audition.sh`) follow.
 
 What the new image has to answer first, in order: the graph-capture accounting (vLLM #53306, #53955 and #54418 now reserve CUDA-graph memory in the V2 runner's KV sizing, which is the upstream form of the R164 finding below; nvfp4 at SEQS 16/32, util 0.90, with and without 0131), then the fp8 daily shape (pool, needles, decode, the fidelity ruler, tool-eval ×4). Changes to watch on the way: V2 runner default for all models (#53183), DFlash draft RoPE layout taken from the draft's own config (#54373), the `DFlash2DraftModel` local-convolution architecture (#52816), Mamba prefix-cache internal checkpoints (#52789), deterministic prefix-cache seed (#51875), the kv-offload metric rename (#52812), and per-request acceptance stats (#48915). The stable tag is what gets promoted; the rc is the head start.
+
+## R166, the nvfp4-KV candidate made daily-grade: the KV pool pinned in bytes instead of sized by utilization; every promotion gate except SWE-bench passes paired against the fp8 daily (2026-09-03, `results/2026-09-03-r166-gates`, `scripts/serve-nvfp4-candidate.sh`, `scripts/r166-candidate-gates.sh`)
+
+**Why the candidate would not boot with headroom.** vLLM v0.28 sizes the KV pool from `--gpu-memory-utilization` before it captures CUDA graphs, and its pre-capture graph estimate is zero (R164). The nvfp4 route's graphs are large (0.72 / 1.20 / 1.70 GiB at 8 / 16 / 32 sequences with patch 0131), so at util 0.90 the candidate booted with 3 MiB free at 16 sequences and not at all at 32. `--kv-cache-memory-bytes` takes the pool size verbatim and skips that profiling (`gpu_worker.py:489`; the pinning approach was validated in seanyourhighness's overlay repo, see THIRD_PARTY.md). The first pinned boot showed the second half of the problem: the pinned path also skips the profiler's activation-peak reserve, so 13.41 GiB gave the predicted pool (931,214 tokens) with only 101 MiB free after the pre-warm. The launcher now pins per sequence count and fails its own boot below 384 MiB free after pre-warm.
+
+| SEQS | pin per GPU | pool (tokens) | graphs | free after pre-warm | full-window streams |
+|---|---|---|---|---|---|
+| 8 (the daily's contract) | 12.85 GiB | **892,276** (fp8 daily: 657,269, +36%) | 0.72 GiB | **1,099 MiB** (fp8 daily: 367) | 3.40x (fp8 2.51x) |
+| 16 | 12.37 GiB | 858,823 | 1.20 GiB | 857 MiB | 3.28x |
+| 32 | 11.87 GiB | 823,724 | 1.70 GiB | 597 MiB | 3.14x |
+
+All three booted first try with every boot assert green (XQA off, batched-token cap 8192, 512 MiB FlashInfer workspace, 0131 active, drafter graphs captured, pinned budget honoured, checkpoint identity). The pool is deterministic by construction.
+
+**Gates, paired the same hour on the experiment port.** fp8 arm = the daily shape (util 0.92, 8 sequences); candidate = the launcher above in experiment mode, 8 sequences.
+
+| gate | fp8 daily shape | nvfp4 candidate | verdict |
+|---|---|---|---|
+| needles 9K/20K/131K/220K/258K ×2 | 8/8 (the 258K rows were a probe overrun) | **10/10**, two real 258K rows | pass |
+| needles at wider layouts | – | 16 seq: 131K/220K 4/4, 131K under 8 concurrent 20K loaders 2/2; 32 seq: 258K 2/2 | pass |
+| warm revisit 32K (disk tier) | 7.49 s → 0.46 s | 7.61 s → 0.68 s, 50,048 block hits | pass |
+| benchy c1, 5 runs | 277.5 ± 21.7 (247–312) | 272.3 ± 28.1 (234–321) | parity; both arms show the box's two modes |
+| benchy c8 | 651.0 ± 6.6 | 617.1 ± 12.9 | −5% on the ramp-inclusive number |
+| steady-state decode, code c8 | 1,143 | **1,148** | parity |
+| steady-state decode, prose c8 | 894 | 877 | −2% |
+| prose c1 at 30K context | 150.6 | 144.4 | −4%, inside both spreads |
+| tool-eval 69×4 | 89.0 ± 1.2 | **89.0 ± 0.8** | parity |
+| fidelity vs the FP8 reference (ΔNLL / top-1 / KL) | +1.29% / 0.9267 / 0.101 | +1.61% / 0.9238 / 0.108 | 0.29 pp top-1, under the 0.4 gate |
+| nvfp4 KV vs fp8 KV directly, same checkpoint and image | – | ΔNLL +0.32%, top-1 0.932, KL 0.092 | just above the ruler's own run-to-run noise |
+| engine error lines / preemptions | 0 / 0 | 0 / 0 (one preemption at 16 seq while a manual probe overlapped the flood) | pass |
+
+**What the bigger pool buys, and what it does not.** At 32 sequences the ladder is c8 631 / c16 617 / c32 650 (fp8: 643 / 640 / 667) and the 1 s sampler saw at most 14 requests running (fp8: 17). The nvfp4 boot sets the attention block to 2,944 tokens (fp8: 1,664) so that one attention page still equals one mamba page in bytes; pages are the same size in bytes on both routes and each request holds one page in every cache group, so admission of short requests follows pool bytes, and the pinned nvfp4 pool is smaller in bytes. The +36% token pool is long-context capacity (3.40 vs 2.51 full-window streams), not more concurrent short requests. The daily's 8-sequence contract is unaffected.
+
+**Probe calibration.** The needle probe's filler assumed 1.3 tokens per word; the served tokenizer gives 1.45, so every requested depth landed at 1.117× in real tokens (the "220K" rows were 245K, and 258K requests overran the window with HTTP 400 on every image). Calibrated now; depths labelled before this run are about 12% deeper than their labels.
+
+**Status.** Every gate except SWE-bench passes or is a stated trade. The candidate's SWE-bench Verified campaign (same harness and versions as R160, cold tier, needle gate before and after) runs next on the pinned launcher; promotion is decided after it pairs against R160's 386/500.
 
 ## R165b/c, the v0.29.0rc1 chain measured: fp8 shape at parity for −5.8% pool, nvfp4 route needs a third workaround and util 0.88, masked XQA correct but slower; rc1 not promoted (2026-09-03, `results/2026-09-03-r165b-audition`, `results/2026-09-03-r165c-audition`, `scripts/r165b-audition.sh`, `scripts/r165c-audition.sh`)
 
