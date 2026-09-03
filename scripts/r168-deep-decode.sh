@@ -40,6 +40,7 @@ teardown(){ for c in vllm-27b vllm-exp vllm-eval; do sudo docker ps -a --format 
 finish(){ teardown; log "restoring daily (skipped if another unit is queued: $(gpu_queue_others | tr '\n' ' '))"; bash /srv/qwen5090/daily-restore-retry.sh 2>&1 | grep -aE "DAILY|FAILED|KV pool|attempt|SKIPPED" | cut -c1-160 | tee -a "$R/audit.log"; log "=== R168 deep-decode isolation $1 ==="; }
 trap 'log "### SIGTERM ###"; finish ABORTED; exit 4' TERM
 mountpoint -q "$L2" || sudo bash /srv/qwen5090/eval-l2-dio.sh || { log "FAILED: eval-l2 not mounted"; exit 1; }
+wipe_l2(){ sudo find "$L2" -mindepth 1 -maxdepth 1 -name '_model_*' -exec rm -rf {} + ; sync; log "eval-l2 wiped (engine down; the campaign filled it to 100% — stores would ENOSPC): $(df -h "$L2" | tail -1 | awk '{print $3" used of "$2}')"; }
 
 COMMON="MODEL_DIR=$MODEL TP=2 PORT=8029 NAME=vllm-exp BIND_ADDR=127.0.0.1 MAXLEN=262144 NO_TIER=0 L2MNT=$L2 PREFIX_CACHE=1 POOL_MIN=1 POOL_MAX=9999999 MNBT=8192 SEQS=8"
 NV_ENV="KVD_OVERRIDE=nvfp4 ALLOW_NO_XQA=1 FIWS=536870912"
@@ -90,7 +91,7 @@ cell(){ # $1 tag ... boot args
   local T=$1; shift
   if boot "$T" "$@"; then measure "$T"; fi; teardown; }
 
-log "taking the daily down"; teardown
+log "taking the daily down"; teardown; wipe_l2
 for C in $CELLS; do case $C in
   V28)  cell V28  "$V28_IMG"  "$NV_ENV UTIL=0.90" "$V28_SPEC" "$NV_X" "--kv-cache-memory-bytes 13800000000";;
   V28F) cell V28F "$V28F_IMG" "$NV_ENV UTIL=0.90" "$V28_SPEC" "$NV_X" "--kv-cache-memory-bytes 13800000000";;
