@@ -1,0 +1,13 @@
+# R168 (2026-09-03): the current v0.28 daily image + codex's 0137 fs-tier LRU eviction ONLY (NOTES20; applies --fuzz=0 to the
+# v0.28.0 tree, verified by verify-0137.sh on v028src). Everything else in the daily is untouched, so this is the smallest
+# possible daily change that ends the "tier fills to 100% and strands the engine" failure (2026-09-01 daily strand, campaign
+# ENOSPC). Inert unless the launcher passes max_capacity_gb (TIER_CAP_GB). Adoption = user's call (r170 validates it live).
+# Build (context = this directory): sudo docker build -f Dockerfile.0137-v0280 --build-arg BASE=vllm-qwen38:v0280-nvfp4kv -t vllm-qwen38:v0280-nvfp4kv-0137 .
+ARG BASE=vllm-qwen38:v0280-nvfp4kv
+FROM ${BASE}
+COPY 0137-fs-tier-eviction-v0290.diff /tmp/
+RUN set -eux; cd "$(python3 -c 'import os, vllm; print(os.path.dirname(os.path.dirname(vllm.__file__)))')"; \
+    patch --batch --forward -p1 --fuzz=0 < /tmp/0137-fs-tier-eviction-v0290.diff; \
+    python3 -m py_compile vllm/v1/kv_offload/tiering/fs/manager.py vllm/v1/kv_offload/tiering/fs/thread_pool.py vllm/v1/kv_offload/tiering/metrics.py vllm/v1/kv_offload/tiering/spec.py; \
+    grep -q max_capacity_gb vllm/v1/kv_offload/tiering/fs/manager.py; grep -q enqueue_store_task vllm/v1/kv_offload/tiering/fs/thread_pool.py; \
+    rm -f /tmp/0137-*.diff; echo "0137-APPLIED on vllm $(python3 -c 'import vllm; print(vllm.__version__)')"

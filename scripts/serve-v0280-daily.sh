@@ -26,7 +26,13 @@ CACHE_DIR=${CACHE_DIR:-/srv/qwen5090/cache}
 POOL_MIN=${POOL_MIN:-340000}   # R113 @0.955: 381,300 expected
 POOL_MAX=${POOL_MAX:-420000}
 CPUB=${CPUB:-4294967296}   # R153: CPU hot-tier bytes (codex idea 6; sweep 4/8/12G)
-KVT='{"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":'"$CPUB"',"offload_prompt_only":true,"secondary_tiers":[{"type":"fs","root_dir":"/l2","n_read_threads":16,"n_write_threads":4}]}}'
+# R168 (0137, codex NOTES20): fs-tier LRU eviction inside the engine. TIER_CAP_GB unset = upstream behaviour (no eviction — the
+# tier fills to 100% and strands the engine, 2026-09-01). Set = LRU to 80% once 90% of the cap is used, plus min-free floor.
+# evict_scope root counts every namespace under /l2 (stale namespaces from older checkpoints get evicted too). Only images
+# carrying 0137 accept these keys: an image without it fails the boot loudly (TypeError on the tier constructor).
+TIER_CAP_GB=${TIER_CAP_GB:-}; TIER_EVICT_SCOPE=${TIER_EVICT_SCOPE:-root}; TIER_MIN_FREE_GB=${TIER_MIN_FREE_GB:-10}
+TIER_X=""; if [ -n "$TIER_CAP_GB" ]; then TIER_X=',"max_capacity_gb":'"$TIER_CAP_GB"',"evict_scope":"'"$TIER_EVICT_SCOPE"'","min_free_gb":'"$TIER_MIN_FREE_GB"; fi
+KVT='{"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"spec_name":"TieringOffloadingSpec","cpu_bytes_to_use":'"$CPUB"',"offload_prompt_only":true,"secondary_tiers":[{"type":"fs","root_dir":"/l2","n_read_threads":16,"n_write_threads":4'"$TIER_X"'}]}}'
 KVT_LINE="--kv-transfer-config '$KVT'"
 NO_TIER=${NO_TIER:-0}   # NO_TIER=1: plain engine (diagnostics only — the daily contract includes the tier)
 [ "$NO_TIER" = 1 ] && KVT_LINE=""
@@ -151,9 +157,14 @@ for i in $(seq 1 60); do
 done
 [ "$AVAIL_KB" -le "$GATE_KB" ] && { echo "FAILED: memory gate timed out at $((AVAIL_KB/1048576))G — refusing to boot into an OOM window"; exit 1; }
 
+# Metrics: VictoriaMetrics scrapes :8029/:8030 through vllm-metrics-proxy@PORT (node IP :1PORT -> 127.0.0.1:PORT).
+# When the engine is published on the docker bridge instead (BIND_ADDR=172.17.0.1, eval runs whose agents call
+# it from task containers) also publish on loopback so the proxy still reaches it (2026-09-03: the TB 2.1
+# ladder ran 1.5 h with no vLLM series in Grafana — proxy@8030 got 'connection refused').
+LOOPBACK_PUBLISH=""; case "$BIND_ADDR" in 0.0.0.0|127.0.0.1) ;; *) LOOPBACK_PUBLISH="-p 127.0.0.1:${PORT}:8000" ;; esac
 sudo docker run -d --name "$NAME" --restart unless-stopped --oom-score-adj -800 \
   --entrypoint bash --runtime nvidia --gpus all --ipc=host \
-  -p ${BIND_ADDR}:${PORT}:8000 --shm-size 8g --memory 52g --memory-swap 52g \
+  -p ${BIND_ADDR}:${PORT}:8000 ${LOOPBACK_PUBLISH} --shm-size 8g --memory 52g --memory-swap 52g \
   -e VLLM_ATTENTION_BACKEND=FLASHINFER \
   -e VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE=${FIWS:-134217728} \
   -e CUDA_MODULE_LOADING=LAZY \

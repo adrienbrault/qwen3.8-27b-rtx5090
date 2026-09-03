@@ -9,21 +9,29 @@
 # _nvfp4_kv_requires_disabled_split_kv guard (forces split-KV OFF for NVFP4 KV in the FA2 prefill wrapper, which is the
 # spec-verification path: q=10 → one KV chunk per tile → the rc1 30K-context decode collapse). Off by default: FlashInfer
 # added the guard after seeing short-Q/long-KV corruption with split-KV — the Bug B family; r168b validates it.
+# R168 (codex NOTES20, user request after the eval tier hit 100% under the SWE-bench campaign): 0137 = LRU eviction INSIDE
+# FileSystemTierManager (max_capacity_gb / evict_high_ratio 0.90 / evict_low_ratio 0.80 / min_free_gb / evict_scope
+# namespace|root; pins on HIT + load/store jobs so a file is never unlinked between lookup and load; preflight eviction on
+# store, ENOSPC becomes a counted skipped store; metrics vllm:kv_offload_tiering_fs_*). Inert when max_capacity_gb is
+# unset (0 = unlimited, the upstream behaviour). Launcher knobs: TIER_CAP_GB / TIER_EVICT_SCOPE / TIER_MIN_FREE_GB.
 # Build: sudo docker build -f Dockerfile.prs --build-arg BASE=vllm-qwen38:v0290rc2-nvfp4kv-revival -t vllm-qwen38:v0290rc2-nvfp4kv-revival-prs .
 ARG BASE=vllm-qwen38:v0290rc1-nvfp4kv-revival
 FROM ${BASE}
-COPY 0132-masked-nvfp4-xqa-sm120-v0290.diff 0133-gdn-packed-decode-bv16-v0290.diff 0134-dflash-no-eagle-block-drop-v0290.diff 0135-embed-uva-offload-v0290.diff 0136-opt-in-nvfp4-prefill-split-kv-v0290.diff /tmp/
+COPY 0132-masked-nvfp4-xqa-sm120-v0290.diff 0133-gdn-packed-decode-bv16-v0290.diff 0134-dflash-no-eagle-block-drop-v0290.diff 0135-embed-uva-offload-v0290.diff 0136-opt-in-nvfp4-prefill-split-kv-v0290.diff 0137-fs-tier-eviction-v0290.diff /tmp/
 RUN set -eux; cd "$(python3 -c 'import os, vllm; print(os.path.dirname(os.path.dirname(vllm.__file__)))')"; \
     patch --batch --forward -p1 --fuzz=0 < /tmp/0132-masked-nvfp4-xqa-sm120-v0290.diff; \
     patch --batch --forward -p1 --fuzz=0 < /tmp/0133-gdn-packed-decode-bv16-v0290.diff; \
     patch --batch --forward -p1 --fuzz=0 < /tmp/0134-dflash-no-eagle-block-drop-v0290.diff; \
     patch --batch --forward -p1 --fuzz=0 < /tmp/0135-embed-uva-offload-v0290.diff; \
     patch --batch --forward -p1 --fuzz=0 < /tmp/0136-opt-in-nvfp4-prefill-split-kv-v0290.diff; \
+    patch --batch --forward -p1 --fuzz=0 < /tmp/0137-fs-tier-eviction-v0290.diff; \
     python3 -m py_compile vllm/envs.py vllm/v1/attention/backends/flashinfer.py vllm/third_party/flash_linear_attention/ops/fused_recurrent.py \
       vllm/config/speculative.py vllm/v1/core/sched/scheduler.py vllm/entrypoints/llm.py vllm/model_executor/model_loader/utils.py \
-      vllm/model_executor/offloader/base.py vllm/model_executor/offloader/uva.py; \
+      vllm/model_executor/offloader/base.py vllm/model_executor/offloader/uva.py \
+      vllm/v1/kv_offload/tiering/fs/manager.py vllm/v1/kv_offload/tiering/fs/thread_pool.py vllm/v1/kv_offload/tiering/metrics.py vllm/v1/kv_offload/tiering/spec.py; \
     grep -q VLLM_FLASHINFER_XQA_USE_ISOLATED_STREAM vllm/envs.py; grep -q VLLM_SM12X_GDN_PACKED_BV vllm/envs.py; \
     grep -q use_eagle_preserves_target_kv_cache vllm/v1/core/sched/scheduler.py; \
     grep -q maybe_offload_embeddings vllm/model_executor/model_loader/utils.py; \
     grep -q _maybe_enable_sm12x_nvfp4_prefill_split_kv vllm/v1/attention/backends/flashinfer.py; \
-    rm -f /tmp/013*.diff; echo PRS-0132-0133-0134-0135-0136-APPLIED
+    grep -q max_capacity_gb vllm/v1/kv_offload/tiering/fs/manager.py; grep -q enqueue_store_task vllm/v1/kv_offload/tiering/fs/thread_pool.py; \
+    rm -f /tmp/013*.diff; echo PRS-0132-0133-0134-0135-0136-0137-APPLIED

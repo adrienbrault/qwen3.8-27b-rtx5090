@@ -19,7 +19,8 @@ set -uo pipefail
 if [ "${DAILY_ALLOW_ENV:-0}" != 1 ]; then
   unset MODEL_DIR IMAGE KVD_OVERRIDE MAXLEN UTIL NS SPEC_JSON NOSPEC EXTRA_ENV EXTRA_MOUNT \
         POOL_MIN POOL_MAX TP FIWS NO_TIER PIP_ARM CGMODE FUSIONS MNBT SEQS PREFIX_CACHE \
-        MAMBA_MODE GATE_KB PORT NAME BIND_ADDR L2MNT CACHE_DIR MMLIMIT MMKW 2>/dev/null || true
+        MAMBA_MODE GATE_KB PORT NAME BIND_ADDR L2MNT CACHE_DIR MMLIMIT MMKW \
+        TIER_CAP_GB TIER_EVICT_SCOPE TIER_MIN_FREE_GB 2>/dev/null || true
 fi
 DRAFT=/srv/qwen5090/models/dflash2-qwen38-syvai-w4a16
 MODEL=/srv/qwen5090/models/qwen3.8-27b-redhat-nvfp4   # HF RedHatAI/Qwen3.8-27B-NVFP4 (llm-compressor, 303 modules kept 8-bit, FP8 lm_head)
