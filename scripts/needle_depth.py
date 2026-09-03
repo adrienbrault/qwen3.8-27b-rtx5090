@@ -17,6 +17,10 @@ GPU prefix cache). Prompts are seeded by --seed/depth/sample, so a second invoca
 container restart re-asks byte-identical prompts: its "cold" pass is the restart-revisit
 exact-match. Each pass records the engine's prefix-cache / external (tier) hit counter
 deltas from /metrics (single-request attribution: use --parallel 1).
+`--evict-reasks K` (R166d): the disk lookup is asynchronous (vllm/v1/kv_offload/tiering/async_lookup.py)
+and promotes into the CPU tier in the background, so the first re-ask is recomputed on every KV dtype
+(R166c: ext_hits 0 on fp8 AND nvfp4); with K >= 2 the later re-asks can be tier-served — the summary's
+`tier_served` / `tier_served_hits` count rows where a re-ask had ext_hits > 0 and whether it still hit.
 
 usage: needle_depth.py --url http://localhost:8029/v1 --model qwen3.8-27b \
          --depths 9000 20000 40000 60000 100000 --samples 3 --loaders 4 --warm --out needles.jsonl
@@ -125,10 +129,19 @@ def one_probe(args, depth, sample, warm_pass=False):
             tf = time.time()
             flood(args, depth, sample)
             flood_s = round(time.time() - tf, 1)
-            c0 = counters(args)
-            out3, dt3, _ = chat(args.url, args.model, messages, 64, args.timeout, extra)
-            res.update(flood_s=flood_s, evict_s=round(dt3, 2),
-                       evict_hit=sec in out3, evict_answer=out3.strip()[:120], evict_counters=delta(c0, counters(args)))
+            # R166d: re-ask `--evict-reasks` times in a row. The tier's secondary (disk) lookup is asynchronous and
+            # promotes into the CPU tier in the background, so the FIRST touch after eviction is recomputed (R166c:
+            # ext_hits 0 on both KV dtypes, 2.7-3.5 GB read in the background); the SECOND touch is the one the tier
+            # can serve — that pass (ext_hits > 0) is the exact-match check of tier-served blocks.
+            reasks = []
+            for _ in range(max(1, args.evict_reasks)):
+                c0 = counters(args)
+                out3, dt3, _ = chat(args.url, args.model, messages, 64, args.timeout, extra)
+                reasks.append(dict(s=round(dt3, 2), hit=sec in out3, answer=out3.strip()[:120], counters=delta(c0, counters(args))))
+            served = [r for r in reasks if (r["counters"] or {}).get("ext_hits", 0) > 0]
+            res.update(flood_s=flood_s, evict_s=reasks[0]["s"], evict_hit=all(r["hit"] for r in reasks),
+                       evict_answer=reasks[0]["answer"], evict_counters=reasks[0]["counters"], evict_reasks=reasks,
+                       tier_served=bool(served), tier_served_hit=bool(served) and all(r["hit"] for r in served))
     except Exception as e:  # noqa: BLE001
         res.update(error=repr(e)[:200], cold_hit=False)
     return res
@@ -158,6 +171,7 @@ def main():
     ap.add_argument("--warm", action="store_true")
     ap.add_argument("--evict", type=int, default=0, help="flood N unique prompts after the cold pass, then re-ask (tier path)")
     ap.add_argument("--evict-ctx", type=int, default=90000, help="tokens per flood prompt (N x ctx must exceed the GPU pool)")
+    ap.add_argument("--evict-reasks", type=int, default=1, help="re-ask the evicted prompt this many times in a row (2+: the tier's async promotion can serve the later ones)")
     ap.add_argument("--metrics", default="auto", help="/metrics URL for hit-counter deltas ('auto' = derive from --url, '' = off)")
     ap.add_argument("--effort", default=None, help="reasoning_effort template kwarg (low|medium|xhigh)")
     ap.add_argument("--seed", default="nvfp4kv")
@@ -189,6 +203,11 @@ def main():
                 eflag = (f" evict={'HIT' if res.get('evict_hit') else 'MISS'} {res.get('evict_s')}s"
                          f" ext={ec.get('ext_hits')}/{ec.get('ext_queries')} gpu={ec.get('gpu_hits')}"
                          f" tier_mb={ec.get('tier_read_mb')} ans={res.get('evict_answer')!r}")
+                for i, rk in enumerate((res.get("evict_reasks") or [])[1:], start=2):
+                    kc = rk.get("counters") or {}
+                    eflag += (f" re{i}={'HIT' if rk.get('hit') else 'MISS'} {rk.get('s')}s ext={kc.get('ext_hits')}/{kc.get('ext_queries')}"
+                              f" gpu={kc.get('gpu_hits')} tier_mb={kc.get('tier_read_mb')}")
+                eflag += f" served={'YES' if res.get('tier_served') else 'no'}"
             print(f"[{flag}] depth={res['depth']:>7} s{res['sample']} cold={res.get('cold_s')}s "
                   f"ptok={res.get('prompt_tokens')}{cflag}{wflag} ans={res.get('cold_answer', res.get('error'))!r}{eflag}", flush=True)
     stop.set()
@@ -196,8 +215,11 @@ def main():
     hits = sum(1 for r in results if r.get("cold_hit"))
     whits = sum(1 for r in results if r.get("warm_hit")) if args.warm else None
     ehits = sum(1 for r in results if r.get("evict_hit")) if args.evict else None
+    served = sum(1 for r in results if r.get("tier_served")) if args.evict else None
+    served_hits = sum(1 for r in results if r.get("tier_served_hit")) if args.evict else None
     summary = {"total": len(results), "cold_hits": hits, "warm_hits": whits, "evict_hits": ehits, "evict": args.evict,
-               "evict_ctx": args.evict_ctx if args.evict else None, "loaders": args.loaders,
+               "evict_ctx": args.evict_ctx if args.evict else None, "evict_reasks": args.evict_reasks if args.evict else None,
+               "tier_served": served, "tier_served_hits": served_hits, "loaders": args.loaders,
                "depths": args.depths, "samples": args.samples, "url": args.url, "model": args.model,
                "effort": args.effort, "seed": args.seed}
     print("SUMMARY", json.dumps(summary), flush=True)
