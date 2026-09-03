@@ -89,6 +89,20 @@ Extras on the candidate (SEQS=8, needles 131K+220K all hit): ns7 pool 1,030,986,
 
 Instrument notes: the 262K needle depth is a probe bug (prompt plus answer exceed 262,144 → HTTP 400 on both arms; the true edge needs ≈258K); decode_ss finds no steady-state window at c32 with 512-token generations, use llama-benchy peaks there; the fp8 shape's c1 was 276.5 today against 318.8 on 09-02 with clocks and the memory OC intact, so a jitter-isolation ladder (tier off, eager drafter, CPU governor performance, fp8 control) runs next. Status: fidelity and capacity gates pass; promotion is blocked on the single-stream jitter and on Bug C, both in flight; the candidate's own SWE-Bench Verified run (same 500, util 0.86) is queued to pair per-instance against R160.
 
+### R163c: the single-stream gap is a box-level bimodality, not a candidate defect (`results/2026-09-03-r163c-c1-jitter`, `scripts/r163c-c1-jitter.sh`)
+
+Five fresh boots, llama-benchy c1 ×5 with per-run values kept:
+
+| cell | c1 mean | per-run tg t/s |
+|---|---|---|
+| nvfp4, tier on (the candidate) | 297.7 ±30.3 | 326.6, 295.9, 240.8, 306.8, 318.5 |
+| nvfp4, tier off | 274.0 ±29.7 | 298.8, 241.5, 284.5, 308.8, 236.4 |
+| nvfp4, eager drafter | 227.3 ±23.2 | 267.6, 238.0, 215.5, 211.5, 203.8 |
+| nvfp4, CPU governor performance | 255.9 ±22.9 | 253.0, 285.7, 244.7, 275.0, 220.9 |
+| fp8 daily shape, CPU governor performance | 289.0 ±21.9 | 270.0, 314.9, 281.1, 315.1, 263.9 |
+
+Every cell, fp8 included, alternates within one boot between a high mode (nvfp4 300–327, fp8 315) and a low mode (nvfp4 236–245, fp8 264–281); the paired battery had sampled three low-mode runs on each side. The tier, the drafter graphs (eager is simply slower, as R158 found) and the CPU governor do not remove it. At peak the candidate is +4% over fp8 (326.6 vs 315.1), consistent with R158/R158c. The load average sat at 12–15 during every single-stream cell (the engine's busy-polling threads on a 16-thread CPU); whether the low mode is a GPU clock/power state on one of the two cards or content-driven acceptance variance at T=0.6 is being correlated with a per-second GPU clock/power sampler. The single-stream gate is therefore parity at peak, and the jitter is tracked as a daily-shape issue in its own right. The remaining promotion blocker is the graph-capture OOM.
+
 ## R160, SWE-Bench Verified with mini-SWE-agent on the fp8 daily: 386/500 = 77.2% (2026-09-02→03, `results/2026-09-02-miniswe-rh`, `scripts/miniswe-full.sh`)
 
 Leaderboard-shaped run: mini-swe-agent 2.4.6 (its builtin `swebench.yaml` plus the local model config in `scripts/miniswe/`), litellm 1.99.0, the official swebench 4.1.0 harness in the official `sweb.eval` images, the full Verified 500, one attempt each. Engine: the daily stack on :8030 (RedHatAI NVFP4 weights, fp8 KV, DFlash2 ns9 TP=2, util 0.90, SEQS 16, disk tier on), 16 then 12 agent workers, chunks of 40 scored as they finished (`scripts/miniswe-full.sh`, `scripts/miniswe-score.sh`).
