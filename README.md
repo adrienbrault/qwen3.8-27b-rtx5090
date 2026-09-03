@@ -17,6 +17,7 @@ The served configuration (two cards, since 2026-09-02):
 | prefill at 2K prompt | 8,741 t/s |
 | tool-calling benchmark (tool-eval, 69 cases × 4 runs) | 90.8 ± 0.5 |
 | perplexity gap vs the bf16 model | +0.38% |
+| top-1 agreement with the bf16 model, dense text / agentic turns | 93.1% / 96.0% |
 | warm revisit of a 32K context from the disk tier | 0.45 s instead of 7.5 s |
 
 Agentic benchmarks: SWE-Bench Verified **386/500 = 77.2%** on the current two-card daily (2026-09-03, mini-SWE-agent 2.4.6, official harness, one attempt); earlier one-card configurations scored 331/500 = 66.2% (2026-08-21, saka checkpoint, R2E-Gym scaffold) and Terminal-Bench 2.1 50/89 = 56.2% (2026-08-23, gittensor checkpoint, Harbor with terminus-2). Details in [bench/RESULTS.md](bench/RESULTS.md).
@@ -61,6 +62,18 @@ Nine NVFP4 checkpoints were compared against the bf16 model on 725K teacher-forc
 - A 4-bit `lm_head` alone costs about 0.85 percentage points of perplexity.
 - fp8 KV costs +0.13 points and does not grow with context out to 171K. 4-bit KV costs +0.76.
 - Draft acceptance measures agreement between drafter and target, not quality. Re-run the drafter A/B after every checkpoint change.
+
+The same rulers, run on the served configuration, on the vLLM 0.29 candidates and on the previous checkpoint. Dense: 693 documents, 555,549 scored positions, `results/2026-09-01-r156-bf16-ladder/compare-dense-*.txt`. Agentic: 72 bf16-generated turns, 57,972 positions. The 0.29 arms were measured 2026-09-04 in `results/2026-09-03-r169-rc2`; the last column scores one arm twice and bounds what the rulers can resolve.
+
+| vs bf16 | served: RedHatAI, fp8 KV, vLLM 0.28.0 | 0.29rc2, nvfp4 KV (candidate) | 0.29rc2, fp8 KV, embedding offload | gittensor, fp8 KV (served until 09-02) | same arm scored twice |
+|---|---|---|---|---|---|
+| dense top-1 agreement | 93.07% | 92.77% | 93.08% | 88.56% | 99.2% |
+| dense perplexity delta | +0.38% | +0.79% | +0.36% | +4.46% | ±0.02% |
+| dense truncated KL | 0.0129 | 0.0144 | 0.0126 | 0.0349 | 0.0001 |
+| agentic top-1 agreement | 95.95% | 95.60% | 95.93% | 92.60% | |
+| agentic perplexity delta | +2.41% | +2.59% | +2.38% | +6.56% | |
+
+The 0.29 stack with the embedding table in host RAM scores the same as the served 0.28 configuration. The 4-bit KV cache costs 0.3 points of top-1 agreement and 0.4 points of perplexity on both rulers. The previous checkpoint's quantizer cost 4.5 points of top-1 agreement on dense text and 3.4 on agentic turns, which no task benchmark in this repo detected.
 
 Full method and tables: [bench/RESULTS.md](bench/RESULTS.md), and the decision record in [docs/R156-DECISION.md](docs/R156-DECISION.md).
 

@@ -4,7 +4,7 @@ set -eu
 OUT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 BUNDLE_DIR=$(CDPATH= cd -- "$OUT_DIR/../.." && pwd)
 PATCH_DIR="$OUT_DIR/patches-v0290"
-WORK_DIR=$(mktemp -d /private/tmp/vllm-v0290-verify.XXXXXX)
+WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/vllm-v0290-verify.XXXXXX")
 trap 'rm -rf -- "$WORK_DIR"' EXIT HUP INT TERM
 cp -R "$BUNDLE_DIR/v029src" "$WORK_DIR/tree"
 

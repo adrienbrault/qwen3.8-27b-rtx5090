@@ -105,6 +105,18 @@ The one real blocker is the R167 finding: the rc1 nvfp4 route decodes 30K-contex
 
 **fs-tier eviction (0137).** The filesystem KV tier fills up and never evicts (see THIRD_PARTY); codex's 0137 adds capacity-bounded LRU eviction inside the tier manager with pins for in-flight files. It is in the rc2 prs image (inert unless `max_capacity_gb` is set) and as a one-layer variant on the v0.28 daily image; r170 floods a 24 GB cap on both. Launcher knobs: `TIER_CAP_GB`, `TIER_EVICT_SCOPE`, `TIER_MIN_FREE_GB`.
 
+**r169, the rc2 arms against bf16 (2026-09-04, `results/2026-09-03-r169-rc2`).** Arm N is the candidate shape (nvfp4 KV, 0136 on, embedding offload, pool pinned), arm F the same image with fp8 KV. Both were scored on the R156 rulers against the bf16 dumps; the served v0.28 daily and the gittensor arm come from `results/2026-09-01-r156-bf16-ladder/compare-dense-*.txt`, and the noise column scores the gittensor arm twice.
+
+| vs bf16 | served (RedHatAI, fp8 KV, v0.28) | N: rc2, nvfp4 KV | F: rc2, fp8 KV + offload | gittensor | same arm twice |
+|---|---|---|---|---|---|
+| dense top-1 agreement | 93.07% | 92.77% | 93.08% | 88.56% | 99.2% |
+| dense PPL delta | +0.38% | +0.79% | +0.36% | +4.46% | ±0.02% |
+| dense truncated KL | 0.0129 | 0.0144 | 0.0126 | 0.0349 | 0.0001 |
+| agentic top-1 agreement | 95.95% | 95.60% | 95.93% | 92.60% | |
+| agentic PPL delta | +2.41% | +2.59% | +2.38% | +6.56% | |
+
+F reproduces the v0.28 daily on every metric, so the 0.29 chain and the offload are fidelity-neutral; N's gap to F is the nvfp4 KV cost measured in R156 (0.3 pp top-1, 0.4 pp PPL) and it does not change between v0.28 and rc2. Against the FP8 same-hour ruler the two arms differ by 0.27 pp top-1 (N 0.9241, F 0.9268) with no PPL separation. The tier check on N passed both ways: the flood-evicted re-asks were tier-served (2/2 correct), and a fresh boot over the existing tier served its first 131K touch in 1.4 s (129,536 of 130,688 tokens external) with both secrets correct, which v0.28 never did (R166c).
+
 ## R167, the embedding table moved to pinned host RAM: +9% KV pool for no measurable cost, on the rc1 image only, which turns out to decode 5x slower than v0.28 at 30K context with nvfp4 KV (2026-09-03, `results/2026-09-03-r167-embed`, `scripts/r167-embed-audition.sh`, `patches-v0290/0135-embed-uva-offload-v0290.diff`)
 
 **What was tried.** The model's input embedding table is 2.37 GiB of BF16 that is read once per token. A vLLM pull request (vllm#53981, see THIRD_PARTY.md) makes the existing UVA offloader reach it, so `--offload-backend uva --cpu-offload-gb 1 --cpu-offload-params embed_tokens` keeps each tensor-parallel shard (1.18 GiB) in pinned host memory and gathers rows over PCIe. Three arms on the v0.29.0rc1 chain, one hour, same box: nvfp4 KV without and with the offload, and fp8 KV with it. The launcher fails closed unless the engine log proves the offloader engaged and the offloaded size is the shard.

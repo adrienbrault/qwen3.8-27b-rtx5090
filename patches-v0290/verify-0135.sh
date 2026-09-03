@@ -7,7 +7,7 @@ set -eu
 OUT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PATCH="$OUT_DIR/0135-embed-uva-offload-v0290.diff"
 TGZ=${1:?usage: verify-0135.sh <package tgz>}
-WORK=$(mktemp -d /private/tmp/vllm-0135-verify.XXXXXX 2>/dev/null || mktemp -d)
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/vllm-0135-verify.XXXXXX")
 trap 'rm -rf -- "$WORK"' EXIT HUP INT TERM
 mkdir -p "$WORK/x" "$WORK/tree"; tar -C "$WORK/x" -xzf "$TGZ"
 top=$(ls "$WORK/x" | head -1); mv "$WORK/x/$top" "$WORK/tree/vllm"

@@ -50,7 +50,7 @@ TOOL_TASKS = [
  "Report the five most frequent 5xx paths from /var/log/nginx/access.log today.",
  "Set the timezone of the machine to Europe/Paris and confirm with the date command.",
  "Find the largest 10 directories under /home and print sizes in human-readable form.",
- "Check whether port 443 on 10.0.0.5 is reachable and how long the TCP handshake took.",
+ "Check whether port 443 on 10.0.0.5 is reachable and how long the TCP handshake took.",  # hygiene-ok: fictional address, frozen prompt text (R156 agentic ruler)
  "Read pyproject.toml and tell me the package name, version and declared Python requirement.",
 ]
 CODE_TASKS = [
