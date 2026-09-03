@@ -10,7 +10,7 @@
 # shared object); the mixed-dtype arm (r163 dfp8) needs an upstream fix and is out of scope.
 # Cells: R = v0.28 image, RedHat, fp8 KV, util 0.90: the fidelity ruler's missing same-checkpoint baseline (the daily at
 # util 0.92 has no headroom: the ruler OOM-killed it at --conc 1 at 12:33 UTC, container auto-restarted in 50 s).
-# B/C as r165b (nvfp4 SEQS 16/32/ws0, XQA on/iso). boot() now quotes the last Python exception line on failure.
+# B/C as r165b (nvfp4 SEQS 16/32/ws0, XQA on/iso) at NV_UTIL (default 0.88; the 0.90 pass OOMed, see NV_UTIL). boot() now quotes the last Python exception line on failure.
 # Takes the flock; takes the daily down; restores it.
 # Unit: sudo systemd-run --unit=r165c-audition --collect -p User=adrienbrault -p RuntimeMaxSec=10800 -p TimeoutStopSec=900 bash /srv/qwen5090/r165c-audition.sh
 set -uo pipefail
@@ -22,7 +22,7 @@ V028_IMG=vllm-qwen38:v0280-nvfp4kv
 PRS_IMG=vllm-qwen38:v0290rc1-nvfp4kv-revival-prs
 for i in $BASE_IMG $PRS_IMG $V028_IMG; do sudo docker image inspect "$i" >/dev/null 2>&1 || { log "ABORT: image $i missing (build first: build-v0290rc1.sh)"; exit 3; }; done
 exec 9>/srv/qwen5090/gpu-exclusive.lock; flock -n 9 || { log "waiting for the GPU-exclusive lock (another unit holds it)"; flock 9; }
-log "=== R165c audition start (lock held): $BASE_IMG / $PRS_IMG ==="
+log "=== R165c audition start (lock held): $BASE_IMG / $PRS_IMG; NV_UTIL=${NV_UTIL:-0.88} SKIP_R=${SKIP_R:-0} ==="
 U=http://127.0.0.1:8029
 LAUNCH=/srv/qwen5090/launch-daily-v0280.sh
 MODEL=/srv/qwen5090/models/qwen3.8-27b-redhat-nvfp4
@@ -40,7 +40,10 @@ FP8_ENV="IMAGE=$PRS_IMG KVD_OVERRIDE=fp8_e4m3 FIWS=268435456 UTIL=0.92"
 FP8_PRS_ENV="IMAGE=$PRS_IMG KVD_OVERRIDE=fp8_e4m3 FIWS=268435456 UTIL=0.92"
 FP8_SPEC='{"method":"dflash","model":"/draft","num_speculative_tokens":9}'
 FP8_X="-e NCCL_P2P_LEVEL=SYS"
-NV_ENV="IMAGE=$PRS_IMG KVD_OVERRIDE=nvfp4 ALLOW_NO_XQA=1 FIWS=536870912 UTIL=0.90"
+NV_UTIL=${NV_UTIL:-0.88}  # 0.90 = v0.28 candidate value; on rc1 the nvfp4 route boots at 0.90 (pool 905,438, layout fix works) then OOMs
+                          # in the launcher pre-warm (pp8192 c8): 368 MiB aux-hidden-state cat in the drafter propose + 242 MiB, 32 MiB free.
+                          # v0.28 same shape survives with 3 MiB reported free (r164c ws-s16). Second pass runs at 0.88 (NV_UTIL=0.88 SKIP_R=1).
+NV_ENV="IMAGE=$PRS_IMG KVD_OVERRIDE=nvfp4 ALLOW_NO_XQA=1 FIWS=536870912 UTIL=$NV_UTIL"
 NV_SPEC='{"method":"dflash","model":"/draft","num_speculative_tokens":9,"draft_tensor_parallel_size":2,"attention_backend":"FLASHINFER"}'  # no draft kv_cache_dtype: see header (rc1 regression #3)
 V028_ENV="IMAGE=$V028_IMG KVD_OVERRIDE=fp8_e4m3 FIWS=268435456 UTIL=0.90"
 NV_X="-e NCCL_P2P_LEVEL=SYS -e VLLM_SM12X_NVFP4_XQA=0 -e VLLM_SM12X_DFLASH_GRAPHS=1"
@@ -71,8 +74,10 @@ wipe_l2(){ sudo find "$L2" -mindepth 1 -maxdepth 1 -name '_model_*' -exec rm -rf
 sudo docker logs vllm-27b > "$R/daily-predown.log" 2>&1 || true
 teardown; wipe_l2
 
+SKIP_R=${SKIP_R:-0}
 # ---- R: the ruler's same-checkpoint baseline on the v0.28 image (RedHat, fp8 KV), util 0.90 (never on the daily at 0.92)
-if boot R-v028-fp8 "$V028_ENV" "$FP8_SPEC" "$FP8_X" 8; then
+if [ "$SKIP_R" = 1 ]; then log "[R-v028-fp8] skipped (SKIP_R=1, done in the first pass)"
+elif boot R-v028-fp8 "$V028_ENV" "$FP8_SPEC" "$FP8_X" 8; then
   log "[R-v028-fp8] fidelity ruler start (--conc 1)"
   python3 /srv/qwen5090/probes/fidelity.py run --url $U --model qwen3.8-27b --corpus "$FD/corpus.jsonl" --out "$R/run-v0280-redhat-fp8kv.jsonl" --conc 1 > "$R/fidelity-ref-run.log" 2>&1 || log "[R-v028-fp8] ruler FAILED rc=$? ($R/fidelity-ref-run.log)"
   RC1=/srv/qwen5090/results/2026-09-03-r165b-audition/run-v0290rc1-fp8kv.jsonl
