@@ -21,6 +21,7 @@ BASE_IMG=vllm-qwen38:v0290rc1-nvfp4kv
 V028_IMG=vllm-qwen38:v0280-nvfp4kv
 PRS_IMG=vllm-qwen38:v0290rc1-nvfp4kv-revival-prs
 for i in $BASE_IMG $PRS_IMG $V028_IMG; do sudo docker image inspect "$i" >/dev/null 2>&1 || { log "ABORT: image $i missing (build first: build-v0290rc1.sh)"; exit 3; }; done
+. /srv/qwen5090/lib/gpu-queue.sh   # queue-aware daily restore
 exec 9>/srv/qwen5090/gpu-exclusive.lock; flock -n 9 || { log "waiting for the GPU-exclusive lock (another unit holds it)"; flock 9; }
 log "=== R165c audition start (lock held): $BASE_IMG / $PRS_IMG; NV_UTIL=${NV_UTIL:-0.88} SKIP_R=${SKIP_R:-0} ==="
 U=http://127.0.0.1:8029
@@ -32,7 +33,7 @@ L2=/srv/qwen5090/eval-l2
 FD=/srv/qwen5090/results/2026-08-23-fidelity
 settle(){ for i in $(seq 36); do busy=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | awk '$1>1024{c++} END{print c+0}'); [ "$busy" = 0 ] && break; sleep 5; done; sleep "${1:-60}"; }
 teardown(){ for c in vllm-27b vllm-exp vllm-eval; do sudo docker ps -a --format '{{.Names}}' | grep -qx "$c" || continue; sudo docker logs "$c" > "$R/engine-$c-$(date +%H%M%S).log" 2>&1; sudo docker rm -f "$c" >/dev/null 2>&1; done; settle; }
-finish(){ teardown; log "restoring daily"; bash /srv/qwen5090/daily-restore-retry.sh 2>&1 | grep -aE "DAILY|FAILED|KV pool|attempt" | cut -c1-160 | tee -a "$R/audit.log"; log "=== R165c audition $1 ==="; }
+finish(){ teardown; log "restoring daily (skipped if another unit is queued: $(gpu_queue_others | tr "\n" " "))"; bash /srv/qwen5090/daily-restore-retry.sh 2>&1 | grep -aE "DAILY|FAILED|KV pool|attempt" | cut -c1-160 | tee -a "$R/audit.log"; log "=== R165c audition $1 ==="; }
 trap 'log "### SIGTERM ###"; finish ABORTED; exit 4' TERM
 
 COMMON="MODEL_DIR=$MODEL TP=2 PORT=8029 NAME=vllm-exp BIND_ADDR=127.0.0.1 MAXLEN=262144 NO_TIER=0 L2MNT=$L2 PREFIX_CACHE=1 POOL_MIN=1 POOL_MAX=9999999 MNBT=8192"
