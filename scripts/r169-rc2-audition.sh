@@ -104,9 +104,11 @@ served(){ python3 -c "import json,sys; s=json.loads(open('$1').read().split('SUM
 tier_check(){ # $1 arm: in-session eviction + restart revisit on this engine
   local A=$1 a b
   nd_tier "$A-evict" --evict 12 --evict-ctx 90000 --evict-reasks 3 --evict-reask-gap 15
-  log "[$A] docker restart"; sudo docker restart vllm-exp >/dev/null 2>&1; sleep 20
-  for i in $(seq 90); do curl -sf -m 5 $U/health >/dev/null && break; sleep 10; done
-  curl -sf -m 5 $U/health >/dev/null || { log "[$A] TIER FAILED: engine did not come back after docker restart"; return 1; }
+  # r170 (22:26 UTC): `docker restart` of the rc2 candidate faulted (Xid 31 MMU fault in capture_model on both GPUs, crash loop
+  # under restart=unless-stopped) while fresh boots of the same image work every time. The daily's real restart is a fresh
+  # container anyway (launch-daily.sh), so the restart revisit is a teardown + fresh boot over the EXISTING tier (no wipe).
+  log "[$A] restart revisit: teardown + fresh boot over the existing tier"; teardown
+  boot_$A || { log "[$A] TIER FAILED: fresh boot over the existing tier did not come up"; return 1; }
   nd_tier "$A-restart" --evict-reasks 3 --evict-reask-gap 15
   a=$(served "$R/needles-$A-evict.out"); b=$(served "$R/needles-$A-restart.out")
   log "[$A] TIER SHEET evict(served,served_hits,total,cold_hits,evict_hits)=$a restart=$b"
