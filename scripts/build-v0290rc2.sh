@@ -30,13 +30,20 @@ log "=== R168 build start (no GPU lock; niced): fiswap images, then $TAG chain f
 for i in "$BASE" "$V28" "$RC1E"; do sudo docker image inspect "$i" >/dev/null 2>&1 || { log "FAILED: image $i missing"; exit 1; }; done
 curl -sfI -m 30 "$WHEEL" >/dev/null || { log "FAILED: rc2 wheel not reachable: $WHEEL"; exit 1; }
 
-build(){ # $1 tag, $2 dockerfile, rest = --build-arg ...
-  local tag=$1 df=$2; shift 2
-  log "--- build $tag ($df $*)"
-  ( cd "$D" && sudo nice -n 19 ionice -c3 docker build -f "$df" "$@" -t "$tag" . ) > "$R/build-${tag##*:}.log" 2>&1
-  local rc=$?
-  grep -aE "IMAGE OK|APPLIED|^vllm |compiled extensions|FATAL|error:|Error|FAILED" "$R/build-${tag##*:}.log" | tail -8 | cut -c1-200 | sed "s/^/[${tag##*:}] /" | tee -a "$R/audit.log"
-  [ $rc -eq 0 ] || { log "FAILED: build $tag rc=$rc (log $R/build-${tag##*:}.log)"; return 1; }
+build(){ # $1 tag, $2 dockerfile, rest = --build-arg ... ; retries the containerd content-store race (concurrent builds/pulls:
+  # "failed to export layer ... failed to commit: rename .../ingest/... no such file or directory", seen 20:39 UTC with
+  # the rc2 chain build and the campaign's image prepull running alongside) up to 3 attempts, 60 s apart.
+  local tag=$1 df=$2 attempt rc; shift 2
+  if [ "${FISWAP_FORCE:-0}" != 1 ] && sudo docker image inspect "$tag" >/dev/null 2>&1; then log "--- build $tag: image exists, skipped"; return 0; fi
+  for attempt in 1 2 3; do
+    log "--- build $tag ($df $*) attempt $attempt"
+    ( cd "$D" && sudo nice -n 19 ionice -c3 docker build -f "$df" "$@" -t "$tag" . ) > "$R/build-${tag##*:}.log" 2>&1; rc=$?
+    grep -aE "IMAGE OK|APPLIED|^vllm |compiled extensions|FATAL|error:|Error|FAILED|failed to export layer" "$R/build-${tag##*:}.log" | tail -8 | cut -c1-200 | sed "s/^/[${tag##*:}] /" | tee -a "$R/audit.log"
+    [ $rc -eq 0 ] && return 0
+    if grep -aq "failed to export layer\|failed to commit: rename" "$R/build-${tag##*:}.log"; then log "build $tag: containerd layer-export race, retrying in 60 s"; sleep 60; continue; fi
+    break
+  done
+  log "FAILED: build $tag rc=$rc (log $R/build-${tag##*:}.log)"; return 1
 }
 # 1) FlashInfer-swap diagnosis images (independent of rc2)
 build "$V28-fi0618" Dockerfile.fiswap --build-arg BASE="$V28" --build-arg FI_VER=0.6.18 || log "fi0618 swap image FAILED — r168 cell V28F unavailable"
