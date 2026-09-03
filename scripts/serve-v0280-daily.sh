@@ -37,7 +37,7 @@ PIP_ARM=${PIP_ARM:-0}
 EXTRA_MOUNT=${EXTRA_MOUNT:-}
 FIWS=${FIWS:-134217728}
 PREFIX_CACHE=${PREFIX_CACHE:-1}   # 0 = --no-enable-prefix-caching (ReplaySSM A/B only)
-MMLIMIT=${MMLIMIT:-'{"image":4,"video":0}'}   # R161: --limit-mm-per-prompt JSON; count is free at profile time (profiler encodes encoder_budget//max_item_tokens items)
+MMLIMIT=${MMLIMIT:-'{"image":16,"video":0}'}  # R161 (promoted 2026-09-03): --limit-mm-per-prompt JSON; count is free at profile time (profiler encodes encoder_budget//max_item_tokens items)
 MMKW=${MMKW:-}               # R161: --mm-processor-kwargs JSON, e.g. '{"max_pixels":1048576}' caps tokens per image (default cap 16.7 Mpx = 16,384 tok)
 MMKW_LINE=""; [ -n "$MMKW" ] && MMKW_LINE="--mm-processor-kwargs '$MMKW'"
 MAMBA_MODE=${MAMBA_MODE:-align}   # ReplaySSM requires 'none' (loses hybrid prefix caching — R128)
