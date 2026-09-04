@@ -6,6 +6,8 @@ Every flag of the two-card configuration, why it is set, and what happens withou
 
 The sections below describe the v0.28 fp8 shape, which is unchanged and remains the rollback (`serve-r156-daily.sh`). The served launcher wraps the same `serve-v0280-daily.sh` body with these deltas, each asserted at boot:
 
+**How the served image is built.** `vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616` is built by [scripts/build-v0290rc2.sh](../scripts/build-v0290rc2.sh) on the CPU: a pinned `vllm/vllm-openai` nightly whose dependency set matches v0.29.0rc2, the rc2 wheel from `wheels.vllm.ai` over it, the [patches-v0290/](../patches-v0290/) chain 0101 to 0137 applied with `--fuzz=0`, and a final layer that swaps FlashInfer to 0.6.16.post3. The chain carries the sm120 NVFP4 KV port (FA2 routing, linear V-scale store overlay, XQA decode), DFlash2 with quantized drafters and CUDA graphs, GDN kernel hardening, a pooled FlashInfer workspace (0131), prefix-cache reuse under DFlash (0134), embedding-table offload (0135), an opt-in split-KV knob (0136, unused on this image) and LRU eviction for the disk tier (0137). Design notes per patch are in the `NOTES*.md` files next to the diffs; the v0.28 generation has one README per hunk in [patches-v0280/README-sm120-nvfp4.md](../patches-v0280/README-sm120-nvfp4.md).
+
 | flag / env | value | why |
 |---|---|---|
 | image | `vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616` | v0.29.0rc2 + patches-v0290 + FlashInfer 0.6.16.post3 swap; the boot fails if `flashinfer.__version__` is not 0.6.16.x |

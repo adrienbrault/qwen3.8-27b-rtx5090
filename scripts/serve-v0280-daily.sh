@@ -63,9 +63,11 @@ FUSIONS=${FUSIONS:-}         # e.g. '\"fuse_norm_quant\":true' extras merged int
 # MUST live BELOW the CGMODE/FUSIONS default declarations (set -u; the first r136 launch
 # died on 'CGMODE: unbound variable' when this block sat above them, taking the daily
 # restore down with it). FUSIONS = raw pass_config pairs, e.g. '"enable_sp":true'.
+CCEXTRA=${CCEXTRA:-}         # R183: raw top-level compilation-config pairs, e.g. '"custom_ops":["+rms_norm"]'
 CC_LINE=""
-if [ -n "${CGMODE}" ] || [ -n "${FUSIONS}" ]; then
+if [ -n "${CGMODE}" ] || [ -n "${FUSIONS}" ] || [ -n "${CCEXTRA}" ]; then
   CCJ="{"
+  [ -n "${CCEXTRA}" ] && CCJ="${CCJ}${CCEXTRA},"
   [ -n "${CGMODE}" ] && CCJ="${CCJ}\"cudagraph_mode\":\"${CGMODE}\","
   [ -n "${FUSIONS}" ] && CCJ="${CCJ}\"pass_config\":{${FUSIONS}},"
   CCJ="${CCJ%,}}"

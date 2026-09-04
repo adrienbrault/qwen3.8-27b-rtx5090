@@ -26,7 +26,7 @@
 # Rollback: bash /srv/qwen5090/launch-daily-r174-ssm-fp32-0904.sh (fp32 SSM, block 2,944, frozen copy; tear this one down first);
 #   older: launch-daily-redhat-fp8-0902.sh (v0.28 fp8 daily)
 set -uo pipefail
-EXP=${EXP:-0}; EXP_SEQS=${SEQS:-8}; KV_BYTES=${KV_BYTES:-}; OFFLOAD=${OFFLOAD:-1}; SPLIT_KV=${SPLIT_KV:-0}; SSM_DTYPE=${SSM_DTYPE:-bfloat16}  # R182; experiments may pass SSM_DTYPE=float32
+EXP=${EXP:-0}; EXP_SEQS=${SEQS:-8}; KV_BYTES=${KV_BYTES:-}; OFFLOAD=${OFFLOAD:-1}; SPLIT_KV=${SPLIT_KV:-0}; SSM_DTYPE=${SSM_DTYPE:-bfloat16}  # R182; experiments may pass SSM_DTYPE=float32 (NOT in the unset list below: R183 found every EXP boot dying on "SSM_DTYPE: unbound"; the daily branch forces bfloat16)
 # Daily: pool band 990K–1.05M around the deterministic 1,020,596 (SEQS 16 pin, bf16 SSM; fp32 SSM gave 903,793) and a 512 MiB free floor. Experiments
 # keep an 850K–1.1M band (fp32-SSM pins land at ~904K / ~869K, bf16-SSM at ~986K–1.02M) and the 384 MiB Bug C floor (the r17x boot_cand retry ladders expect it).
 if [ "$EXP" = 0 ]; then MIN_FREE_MIB=${MIN_FREE_MIB:-512}; P_MIN=990000; P_MAX=1050000; else MIN_FREE_MIB=${MIN_FREE_MIB:-384}; P_MIN=850000; P_MAX=1100000; fi
@@ -38,7 +38,7 @@ else T_CAP=300; T_SCOPE=root; T_MINFREE=40; CPU_B=17179869184; IMG=$DAILY_IMG; f
 if [ "${DAILY_ALLOW_ENV:-0}" != 1 ]; then
   unset MODEL_DIR IMAGE KVD_OVERRIDE MAXLEN UTIL NS SPEC_JSON NOSPEC EXTRA_ENV EXTRA_MOUNT EXTRA_ARGS \
         POOL_MIN POOL_MAX TP PP FIWS NO_TIER PIP_ARM CGMODE FUSIONS MNBT SEQS PREFIX_CACHE EAGER MMLIMIT MMKW CPUB \
-        MAMBA_MODE GATE_KB PORT NAME BIND_ADDR L2MNT CACHE_DIR ALLOW_NO_XQA ALLOW_NO_PREWARM HEALTH_TRIES SSM_DTYPE \
+        MAMBA_MODE GATE_KB PORT NAME BIND_ADDR L2MNT CACHE_DIR ALLOW_NO_XQA ALLOW_NO_PREWARM HEALTH_TRIES \
         TIER_CAP_GB TIER_EVICT_SCOPE TIER_MIN_FREE_GB 2>/dev/null || true
 fi
 DRAFT=/srv/qwen5090/models/dflash2-qwen38-syvai-w4a16
@@ -56,18 +56,23 @@ SSM_ARGS="--mamba-ssm-cache-dtype $SSM_DTYPE"
 # re-enables it. The S image ships FlashInfer 0.6.16.post3 whose split path is on by default, so the daily runs SPLIT_KV=0 (r168e:
 # closest to bf16 of the three paths; r173c: its decode dumps are identical to rc2 ON's at ctx0 and 30K).
 SPLIT_ENV=""; [ "$SPLIT_KV" = 1 ] && SPLIT_ENV="-e VLLM_SM12X_NVFP4_PREFILL_SPLIT_KV=1"
-XARGS=""; XMOUNT=""; if [ "$EXP" != 0 ]; then XARGS="${EXTRA_ARGS_APPEND:-}"; XMOUNT="${EXTRA_MOUNT_APPEND:-}"; fi
+XARGS=""; XMOUNT=""; MNBT_=8192; FUS_=""; SPX_=""; XENV=""; CCX_=""
+# R183 EXP-only passthrough (the EXP=0 path is unchanged): EXP_MNBT (chunk size; the 8192 assert follows it), FUSIONS_APPEND (raw
+# pass_config pairs -> v0280 FUSIONS), SPEC_EXTRA (raw JSON pairs appended inside --speculative-config), EXTRA_ENV_APPEND (-e pairs), CC_EXTRA (raw top-level
+# compilation-config pairs -> v0280 CCEXTRA).
+if [ "$EXP" != 0 ]; then XARGS="${EXTRA_ARGS_APPEND:-}"; XMOUNT="${EXTRA_MOUNT_APPEND:-}"; MNBT_=${EXP_MNBT:-8192}; FUS_="${FUSIONS_APPEND:-}"; SPX_="${SPEC_EXTRA:-}"; XENV="${EXTRA_ENV_APPEND:-}"; CCX_="${CC_EXTRA:-}"; fi
+case "$MNBT_" in *[!0-9]*|"") echo "FAILED: EXP_MNBT must be an integer (got $MNBT_)"; exit 1;; esac
 NS_=9; DTP_=2; if [ "$EXP" != 0 ]; then NS_=${SPEC_NS:-9}; DTP_=${SPEC_DTP:-2}; fi
 case "$NS_$DTP_" in *[!0-9]*) echo "FAILED: SPEC_NS/SPEC_DTP must be integers (got $NS_/$DTP_)"; exit 1;; esac
 [ -f "$MODEL/model.safetensors.index.json" ] || { echo "FAILED: checkpoint missing at $MODEL"; exit 1; }
 sudo docker image inspect "$IMG" >/dev/null 2>&1 || { echo "FAILED: image $IMG missing (build: build-v0290rc2.sh + the fi0616 swap layer)"; exit 1; }
 env PORT=$PORT NAME=$NAME BIND_ADDR=$BIND MODEL_DIR="$MODEL" TP=2 L2MNT="$L2" CPUB=$CPU_B ${T_CAP:+TIER_CAP_GB=$T_CAP} ${T_SCOPE:+TIER_EVICT_SCOPE=$T_SCOPE} ${T_MINFREE:+TIER_MIN_FREE_GB=$T_MINFREE} \
     IMAGE="$IMG" KVD_OVERRIDE=nvfp4 ALLOW_NO_XQA=1 \
-    NO_TIER=0 FIWS=536870912 MNBT=8192 SEQS=$SEQS UTIL=0.88 MAXLEN=262144 POOL_MIN=$P_MIN POOL_MAX=$P_MAX \
+    NO_TIER=0 FIWS=536870912 MNBT=$MNBT_ SEQS=$SEQS ${FUS_:+FUSIONS="$FUS_"} ${CCX_:+CCEXTRA="$CCX_"} UTIL=0.88 MAXLEN=262144 POOL_MIN=$P_MIN POOL_MAX=$P_MAX \
     EXTRA_MOUNT="-v $DRAFT:/draft:ro $XMOUNT" \
     EXTRA_ARGS="--kv-cache-memory-bytes $KV_BYTES $OFFLOAD_ARGS $SSM_ARGS $XARGS" \
-    SPEC_JSON='{"method":"dflash","model":"/draft","num_speculative_tokens":'$NS_',"draft_tensor_parallel_size":'$DTP_',"attention_backend":"FLASHINFER"}' \
-    EXTRA_ENV="-e NCCL_P2P_LEVEL=SYS -e VLLM_SM12X_NVFP4_XQA=0 -e VLLM_SM12X_DFLASH_GRAPHS=1 $SPLIT_ENV" \
+    SPEC_JSON='{"method":"dflash","model":"/draft","num_speculative_tokens":'$NS_',"draft_tensor_parallel_size":'$DTP_',"attention_backend":"FLASHINFER"'"${SPX_:+,$SPX_}"'}' \
+    EXTRA_ENV="-e NCCL_P2P_LEVEL=SYS -e VLLM_SM12X_NVFP4_XQA=0 -e VLLM_SM12X_DFLASH_GRAPHS=1 $SPLIT_ENV $XENV" \
     bash /srv/qwen5090/launch-daily-v0280.sh || { echo "0.29 nvfp4 DAILY FAILED — engine NOT up$([ "$EXP" != 0 ] || echo '; rollback: launch-daily-redhat-fp8-0902.sh')"; exit 1; }
 BOOTLOG=$(sudo docker logs "$NAME" 2>&1)
 ARGS=$(sudo docker inspect "$NAME" --format '{{json .Args}} {{json .Config.Env}}')
@@ -83,7 +88,7 @@ if [ "$IMG" = "$DAILY_IMG" ]; then case "$FIVER" in 0.6.16*) ;; *) fail "S image
 [ "$(echo "$BOOTLOG" | grep -ac "running the draft eagerly")" -eq 0 ] || fail "drafter fell back to eager"
 [ "$(echo "$BOOTLOG" | grep -ac "decode_backend=xqa")" -eq 0 ] || fail "XQA decode engaged — Bug B dodge not in force"
 [ "$(echo "$BOOTLOG" | grep -ac "redhat-nvfp4\|compressed-tensors")" -ge 1 ] || fail "checkpoint identity"
-[ "$(echo "$ARGS" | grep -ac -- "--max-num-batched-tokens 8192")" -ge 1 ] || fail "MNBT is not 8192 (Bug B dodge)"
+[ "$(echo "$ARGS" | grep -ac -- "--max-num-batched-tokens $MNBT_")" -ge 1 ] || fail "MNBT is not $MNBT_ (Bug B dodge = 8192 on the daily)"
 [ "$(echo "$ARGS" | grep -ac -- "--mamba-ssm-cache-dtype $SSM_DTYPE")" -ge 1 ] || fail "SSM cache dtype is not $SSM_DTYPE on the container"
 if [ "$SSM_DTYPE" = bfloat16 ]; then [ "$(echo "$BOOTLOG" | grep -ac 'Setting attention block size to 1584 tokens')" -ge 1 ] || fail "bf16 SSM state should give a 1,584-token attention block (R180); block line missing or different"; fi
 [ "$(echo "$ARGS" | grep -acE "num_speculative_tokens.{1,5}$NS_[,}]")" -ge 1 ] && [ "$(echo "$ARGS" | grep -acE "draft_tensor_parallel_size.{1,5}$DTP_[,}]")" -ge 1 ] || fail "speculative config is not ns$NS_ draft_tp$DTP_ on the container"
