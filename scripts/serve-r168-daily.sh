@@ -22,9 +22,9 @@
 # Rollback: bash /srv/qwen5090/launch-daily-redhat-fp8-0902.sh  (v0.28 fp8 daily, frozen copy; tear this one down first)
 set -uo pipefail
 EXP=${EXP:-0}; EXP_SEQS=${SEQS:-8}; KV_BYTES=${KV_BYTES:-}; OFFLOAD=${OFFLOAD:-1}; SPLIT_KV=${SPLIT_KV:-0}
-# Daily: pool band 900–980K around the deterministic 937,795 and a 512 MiB free floor. Experiments keep the candidate launcher's
+# Daily: pool band 870–950K around the deterministic 903,793 (SEQS 16 pin; 937,795 at SEQS 8) and a 512 MiB free floor. Experiments keep the candidate launcher's
 # 850K–1M band (the SEQS 16/32 pins land at ~904K / ~869K) and its 384 MiB Bug C floor (the r17x boot_cand retry ladders expect it).
-if [ "$EXP" = 0 ]; then MIN_FREE_MIB=${MIN_FREE_MIB:-512}; P_MIN=900000; P_MAX=980000; else MIN_FREE_MIB=${MIN_FREE_MIB:-384}; P_MIN=850000; P_MAX=1000000; fi
+if [ "$EXP" = 0 ]; then MIN_FREE_MIB=${MIN_FREE_MIB:-512}; P_MIN=870000; P_MAX=950000; else MIN_FREE_MIB=${MIN_FREE_MIB:-384}; P_MIN=850000; P_MAX=1000000; fi
 DAILY_IMG=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616
 # Tier knobs (0137): the daily boots with a 300 GB LRU cap on the 393 GB native-l2 fs, evict_scope root (stale namespaces from
 # other configs are evicted too), 40 GB min-free (the launcher's own GC threshold). Experiments (EXP≠0) honour the env, unset = no cap.
@@ -40,7 +40,7 @@ DRAFT=/srv/qwen5090/models/dflash2-qwen38-syvai-w4a16
 MODEL=/srv/qwen5090/models/qwen3.8-27b-redhat-nvfp4
 if [ "$EXP" = 1 ]; then PORT=8029; NAME=vllm-exp; BIND=127.0.0.1; L2=/srv/qwen5090/eval-l2; SEQS=$EXP_SEQS
 elif [ "$EXP" = eval ]; then PORT=8030; NAME=vllm-eval; BIND=${EVAL_BIND:-127.0.0.1}; L2=/srv/qwen5090/eval-l2; SEQS=$EXP_SEQS
-else PORT=8020; NAME=vllm-27b; BIND=0.0.0.0; L2=/srv/qwen5090/native-l2; SEQS=8; fi   # BIND 0.0.0.0 deliberate: owui-proxy/harbor reach the engine via 172.17.0.1
+else PORT=8020; NAME=vllm-27b; BIND=0.0.0.0; L2=/srv/qwen5090/native-l2; SEQS=16; fi   # SEQS 16 since 2026-09-04 (R176, user): R159 c16 = +34% aggregate on the fp8 shape; pin 13.98 GB → pool 903,793 (−3.6% vs SEQS 8)   # BIND 0.0.0.0 deliberate: owui-proxy/harbor reach the engine via 172.17.0.1
 if [ -z "$KV_BYTES" ]; then case "$SEQS" in
   8) KV_BYTES=14500000000;; 16) KV_BYTES=13980000000;; 32) KV_BYTES=13440000000;;
   *) echo "FAILED: no pinned KV budget for SEQS=$SEQS (set KV_BYTES)"; exit 1;; esac; fi
