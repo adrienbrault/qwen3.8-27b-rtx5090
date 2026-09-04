@@ -3,9 +3,12 @@
 # R183b showed the GEMM kernel is a fidelity knob: MarlinNvFp4LinearKernel on every NVFP4 layer is 94.051% top-1 / +0.207% PPL vs
 # bf16 against FlashInferCutlass's 92.771% / +0.744%, at −7.8% c8 / −17.3% c16 / +32% TTFT@100K. 0139 adds VLLM_SM12X_NVFP4_MARLIN_LAYERS
 # (Python regex over the vLLM module prefix; unset = byte-identical selection) so the fidelity can be bought per layer. Seven arms:
-#   CTRL      knob unset on the 0139 image. MUST reproduce R183 BASE's dense ruler to the digit (92.771% / 40,162 flips / KL 0.014082 —
-#             R183's four replicates were bit-identical) and log 0 allowlist lines; otherwise 0139 changed the unset path and nothing
-#             below is interpretable.
+#   CTRL      knob unset on the 0139 image. With the knob unset the diff cannot reach the original ladder (matches_allowlist(None) is
+#             False), so the equivalence proof is the two proof lines: 0 allowlist lines AND the same "Using X for NVFP4 GEMM" selection
+#             as R183 BASE. A nonzero count or a changed selection line voids the sheet. The dense ruler should then reproduce R183
+#             BASE (92.771% / 40,162 flips / KL 0.014082; R183's replicates were bit-identical) — a few flips off with the proofs
+#             intact is image-layer/boot drift of the R185 kind (92.774 on the pcieipc image); CTRL, not R183 BASE, is the
+#             within-unit yardstick for the six Marlin arms either way.
 #   M-ALL     every NVFP4 module (layers 0–55, gate_up + down) through the allowlist = R183b's DK-Cutlass arm by another route; MUST
 #             reproduce 94.051% / 33,047 / 0.010046. Proves the allowlist path ≡ the ladder's Marlin selection.
 #   M-DOWN    down_proj only, layers 0–55          M-GATEUP  gate_up_proj only, layers 0–55
@@ -102,6 +105,8 @@ arm(){ local tag=$1 expect=$2 rx=${3:-}; local -a ev=()
 
 # module names are model.language_model.layers.<n>.mlp.{gate_up_proj,down_proj}; layers 56–63 are FP8 and never enter the branch.
 # expected line counts = codex's per-rank counts × 2 ranks (56/56/112 per rank; thirds 19/19/18 layers × 2 modules per rank)
+# reader check: MISMATCH at exactly half everywhere (112/56/56/38/38/36) = rank-0-only logging, not a patch failure — the proof-first
+# and gemm lines disambiguate; MISMATCH at 0 with a regex set = the knob did not reach the container (see the env line).
 arm CTRL     0
 arm M-ALL    224 'layers\.([0-9]|[1-4][0-9]|5[0-5])\.mlp\.(gate_up|down)_proj$'
 arm M-DOWN   112 'layers\.([0-9]|[1-4][0-9]|5[0-5])\.mlp\.down_proj$'
