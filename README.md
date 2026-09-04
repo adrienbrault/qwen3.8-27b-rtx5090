@@ -89,7 +89,7 @@ Three shapes remain runnable and documented:
 
 - **Two cards, fp8 KV, DFlash2 on vLLM 0.28.0** ([scripts/serve-r156-daily.sh](scripts/serve-r156-daily.sh)): the rollback. Served 2026-09-02 to 09-04 on the RedHatAI checkpoint with pool 654,491 or 628,798, tool-eval 90.8 ± 0.5 over its life, SWE-Bench Verified 386/500. Its disk tier never served a revisit (`results/2026-09-04-r172-cputier`, arm D16).
 - **One card, nvfp4 KV, MTP on vLLM 0.28.0** ([scripts/serve-v0280-daily.sh](scripts/serve-v0280-daily.sh)): the shape for a single RTX 5090.
-- **Two cards, nvfp4 KV, MTP on vLLM 0.28.0** (`serve-v0280-daily.sh` with `TP=2`): the capacity shape, largest pool and best aggregate throughput at 16 streams.
+- **Two cards, nvfp4 KV, MTP on vLLM 0.28.0** (`serve-v0280-daily.sh` with `TP=2`): the capacity shape: 1,508,519 tokens of pool and 2,007 t/s aggregate at 16 streams in the table below, at 225 t/s single stream.
 
 The three measured on 2026-08-31 on the gittensor checkpoint, same day, same harness, `results/2026-08-31-r142-matrix`. The RedHatAI checkpoint costs about 6% decode, 14% prefill and 12% pool on the fp8 shape relative to these numbers.
 
