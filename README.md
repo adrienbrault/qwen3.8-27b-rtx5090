@@ -11,14 +11,14 @@ Since 2026-09-04: vLLM 0.29 with an NVFP4 KV cache on two cards, launcher [scrip
 | | value | measured |
 |---|---|---|
 | context length | 262,144 tokens | |
-| KV pool on the GPUs | 903,793 tokens at 16 sequences, pinned at 13.98 GB per card (937,795 at 8 sequences, 14.5 GB) | 2026-09-04, `results/2026-09-02-miniswe-rh-r174-nvfp4` (16), `results/2026-09-04-r174-promote` (8) |
+| KV pool on the GPUs | 903,793 tokens at 16 sequences, pinned at 13.98 GB per card (937,795 at 8 sequences, 14.5 GB; 920,794 at 12). Engine token count; in practice about four 100K contexts, see below | 2026-09-04, `results/2026-09-02-miniswe-rh-r174-nvfp4` (16), `results/2026-09-04-r174-promote` (8), `results/2026-09-04-r178-seqs-ladder` (12) |
 | CPU KV tier | 16 GiB, 1,013 blocks | 2026-09-04, `results/2026-09-04-r172-cputier` |
 | disk KV tier | 300 GB cap with LRU eviction, survives restarts | 2026-09-04, `results/2026-09-03-r170-tier-evict` |
 | decode, code, 1 stream | 244 t/s at the promotion boot (two runs, 226 and 261); 324 and 287 t/s on the live daily at 16 sequences (two batteries of three runs, 279 to 335) | 2026-09-04, `results/2026-09-04-r174-promote`, `results/2026-09-04-r177-matrix` |
 | decode, prose, 1 stream | 172 t/s (two boots, 171.6 and 171.1); 166 on the live daily at 16 sequences (three runs, 162 to 204) | 2026-09-04, `results/2026-09-04-r173b-ns-confirm`, `results/2026-09-04-r177-matrix` |
 | decode, prose, 1 stream at 30K context | 147 t/s (two boots, 147.6 and 146.4); 149 at 16 sequences (two runs) | same |
 | decode, code, 8 streams | 1,134 and 1,146 t/s aggregate (two boots); 1,241 at 16 sequences (two runs, 155 per stream) | same |
-| decode, code, 15 streams | 1,576 t/s aggregate, 105 per stream (two runs, 1,571 and 1,582). The engine admits 15 of the 16 configured sequences, see below | 2026-09-04, `results/2026-09-04-r177-matrix` |
+| decode, code, 15 streams | 1,576 t/s aggregate, 105 per stream (two runs, 1,571 and 1,582). The engine admits 15 of the 16 configured sequences, see below. At 12 sequences on the same image: 1,456 at 12 streams, 1,515 at 12 streams on a 13-sequence boot | 2026-09-04, `results/2026-09-04-r177-matrix`, `results/2026-09-04-r178-seqs-ladder` |
 | prefill, 2K prompt, 1 request | 8,757 t/s (three runs, sd 36) | 2026-09-04, `results/2026-09-04-r173-c1-opt`, llama-benchy |
 | prefill, 8K and 100K prompt, 1 request, from time to first token | 8.1K and 6.4K t/s (two runs each) | 2026-09-04, `results/2026-09-04-r177-matrix`, decode_ss |
 | tool-eval, 69 scenarios × 4 trials, parallel 8 | 91 at the promotion boot; 89.5 ± 1.3 on the live daily at 16 sequences, one run each | 2026-09-04, `results/2026-09-04-r174-promote`, `results/2026-09-04-r177-matrix` |
@@ -29,7 +29,7 @@ Since 2026-09-04: vLLM 0.29 with an NVFP4 KV cache on two cards, launcher [scrip
 
 Decode numbers are steady-state tokens per second from [scripts/decode_ss.py](scripts/decode_ss.py) (512 generated tokens, content stated in the results directory), not llama-benchy means. Single-stream decode swings up to 20% between runs inside one boot on this box, so the one-stream cells are ranges, not points.
 
-At `--max-num-seqs 16` the engine runs 15 sequences and queues the 16th: under 16 and under 17 concurrent streams the running gauge holds at 15, and it never exceeded 15 across the SWE-Bench campaign or a 16-way GSM8K run. At 8 sequences all 8 ran. The scheduler's sequence cap and the DFlash draft-slot budget both allow 16; the cause is not identified (`results/2026-09-04-r177-matrix`).
+**What a request costs in the pool.** The pool figure is the engine's count of attention tokens, and a request costs more of the pool than its token count says. Measured on the served daily with `vllm:kv_cache_usage_perc` ([scripts/kv_capacity_probe.py](scripts/kv_capacity_probe.py), `results/2026-09-04-r178-seqs-ladder`, 2026-09-04): a short request holds 6.4% of the pool while it runs, four short requests 25.5%, a 30K prompt 10.9%, a 100K prompt 21.9%, a 200K prompt 43.4%. Five concurrent 100K requests held alive with `ignore_eos`: four ran at 97.6% usage and the fifth queued, with no preemption. So the pool holds about four 100K contexts, or one 200K context beside a few short ones, or 15 short requests. That is why `--max-num-seqs 16` runs 15 sequences and queues the 16th (15 × 6.4% = 96%), 17 also runs 15, and 12 and 13 run all 12 and 13 (boots on the same image, [scripts/r178-seqs-ladder.sh](scripts/r178-seqs-ladder.sh), same results directory). The 3.4× "maximum concurrency for 262,144 tokens" the engine logs at boot is computed from the token count and is not reachable. The boot log sets the attention block to 2,944 tokens so that an attention page is at least a linear-attention state page and adds padding layers it says may waste up to 25% of the pool; the accounting was not traced further than that. The 39 early preemptions during the SWE-Bench run (12 workers, 76% of the pool held before any context) are the same effect.
 
 What the route trades against the two-card fp8 shape it replaced, measured the same day on the same box:
 
