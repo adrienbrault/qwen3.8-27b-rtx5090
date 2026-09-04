@@ -45,7 +45,7 @@ The fidelity rows are what the whole stack costs against the unquantized model: 
 - Memory clock offset +4500 MHz on both cards, core clock stock ([scripts/gpu-tune.sh](scripts/gpu-tune.sh)), worth about 4% decode. All throughput numbers include it.
 - One Gen5 x4 NVMe for the model weights and a 393 GB loopback image for the KV disk tier.
 
-The one-card configuration needs only the first RTX 5090 and 64 GB of RAM.
+The one-card configuration ran on this same host before the second card was added. The host RAM it needs was not measured: its container is capped at 52 GB (`--memory`) with a 4 GiB CPU KV staging buffer inside that, and the peak is the first boot's kernel JIT, which once took all 64 GB before the compile-job caps and persisted caches bounded it ([docs/CONFIG.md](docs/CONFIG.md)).
 
 ## Quick start
 
