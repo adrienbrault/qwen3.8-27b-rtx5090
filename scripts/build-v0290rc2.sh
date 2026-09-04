@@ -56,6 +56,9 @@ touch "$R/FISWAP-DONE"
 build "$TAG" Dockerfile --build-arg VLLM_REF=v0.29.0rc2 --build-arg VLLM_WHEEL_URL="$WHEEL" --build-arg VLLM_EXPECT_VER=0.29.0rc2 --build-arg OVERLAY_JOBS=3 || exit 1
 build "$TAG-revival" Dockerfile.revival --build-arg BASE="$TAG" || exit 1
 build "$TAG-revival-prs" Dockerfile.prs --build-arg BASE="$TAG-revival" || exit 1
+# 3) the DAILY image since 2026-09-04 (R168 promotion): the rc2 chain + FlashInfer 0.6.16.post3 (r168e: closest of the three
+#    nvfp4 attention paths to bf16; the 0.6.18 guard forces split-KV off, 0.6.16 keeps the split path). First built by hand 09-04 01:57 UTC.
+build "$TAG-revival-prs-fi0616" Dockerfile.fiswap --build-arg BASE="$TAG-revival-prs" --build-arg FI_VER=0.6.16.post3 || exit 1
 
 # Identity check of the final layer (loads libcuda only; nothing runs on the GPU)
 sudo docker run --rm --runtime nvidia --gpus all --entrypoint python3 "$TAG-revival-prs" -c '

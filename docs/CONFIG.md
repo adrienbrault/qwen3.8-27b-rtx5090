@@ -2,6 +2,25 @@
 
 Every flag of the two-card configuration, why it is set, and what happens without it. The launchers are [`scripts/serve-r156-daily.sh`](../scripts/serve-r156-daily.sh) (sets the two-card values and calls the generic launcher) and [`scripts/serve-v0280-daily.sh`](../scripts/serve-v0280-daily.sh) (the generic launcher, whose defaults are the one-card configuration). Inline comments in the scripts are the reference when the two disagree. Earlier generations are in [HISTORY.md](HISTORY.md) and [archive/](archive/).
 
+## Since 2026-09-04: the vLLM 0.29 nvfp4-KV route ([scripts/serve-r168-daily.sh](../scripts/serve-r168-daily.sh))
+
+The sections below describe the v0.28 fp8 shape, which is unchanged and remains the rollback (`serve-r156-daily.sh`). The served launcher wraps the same `serve-v0280-daily.sh` body with these deltas, each asserted at boot:
+
+| flag / env | value | why |
+|---|---|---|
+| image | `vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616` | v0.29.0rc2 + patches-v0290 + FlashInfer 0.6.16.post3 swap; the boot fails if `flashinfer.__version__` is not 0.6.16.x |
+| `--kv-cache-dtype nvfp4` | block 2,944 tokens | +43% pool vs fp8 at the same VRAM |
+| `--kv-cache-memory-bytes 14500000000` | pinned per SEQS (13.98 GB at 16, 13.44 GB at 32) | the utilization path sizes the pool before CUDA-graph capture and OOMs on the first request (Bug C); the boot fails under 512 MiB free after pre-warm |
+| `--gpu-memory-utilization 0.88` | | headroom for the drafter graphs; the pin, not util, sets the pool |
+| `--max-num-batched-tokens 8192`, `VLLM_SM12X_NVFP4_XQA=0`, FlashInfer workspace 512 MiB | | the Bug B dodge: nvfp4 prefill above about 4,929 tokens corrupts under XQA decode on this stack |
+| `VLLM_SM12X_NVFP4_PREFILL_SPLIT_KV` unset | split_kv=0 | FlashInfer 0.6.16 keeps the split-KV path on its own; the 0136 knob exists for 0.6.18 images |
+| `VLLM_SM12X_DFLASH_GRAPHS=1` | drafter in CUDA graphs | the boot fails on "running the draft eagerly" |
+| speculative config | `{"method":"dflash","num_speculative_tokens":9,"draft_tensor_parallel_size":2,"attention_backend":"FLASHINFER"}` | ns9; ns7 was retracted on the bf16 decode ruler (R173c); draft_tp1 needs a lower pin |
+| `--offload-backend uva --cpu-offload-gb 1 --cpu-offload-params embed_tokens` | embedding table in pinned host RAM | +9% pool at no measured cost (R167); the boot fails unless 1.18 GB was offloaded |
+| tier `cpu_bytes_to_use` | 16 GiB (about 1,010 blocks) | every disk-tier hit is promoted through the CPU tier, so a prompt is served only if all its blocks fit there (R172) |
+| tier `max_capacity_gb` / `min_free_gb` / `evict_scope` | 300 / 40 / root | LRU eviction inside vLLM's fs tier (patch 0137); upstream has none and the tier stranded the engine at 100% on 2026-09-01 |
+| `NCCL_P2P_LEVEL=SYS`, TP=2 | | unchanged from the fp8 shape |
+
 ## Image
 
 `vllm-qwen38:v0280-nvfp4kv` = `vllm/vllm-openai:v0.28.0` plus [`patches-v0280/`](../patches-v0280/README-sm120-nvfp4.md). The two-card configuration uses from it: the DFlash2 quantized-drafter loader (0107), the DFlash2 selector sampling guard (0106), the GDN kernel hardening (0108) and the speculator CUDA graphs (0113). The one-card configuration additionally needs the NVFP4 KV cache pieces: FA2 routing (0101), the linear V-scale store overlay (0102), XQA decode (0103) and drafter graphs (0104). No GPU is needed to build the image.

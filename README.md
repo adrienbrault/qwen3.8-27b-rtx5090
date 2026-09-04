@@ -6,21 +6,20 @@ Every number in this repo was measured on one machine, on the date given, and th
 
 ## What you get
 
-The served configuration (two cards, since 2026-09-02):
+The served configuration (two cards, since 2026-09-04: vLLM 0.29 with nvfp4 KV, [bench/RESULTS.md](bench/RESULTS.md) R168–R174):
 
 | | value |
 |---|---|
 | context length | 262,144 tokens |
-| KV pool on the GPUs | 654,491 tokens (fp8 KV), plus a 200 GB disk tier that survives restarts |
-| decode, single stream, code | 318.8 t/s (llama-benchy, T=0.6, pp2048/tg256) |
-| decode, 8 streams, code, steady state | 1,212 t/s aggregate |
-| prefill at 2K prompt | 8,741 t/s |
-| tool-calling benchmark (tool-eval, 69 cases × 4 runs) | 90.8 ± 0.5 |
-| perplexity gap vs the bf16 model | +0.38% |
-| top-1 agreement with the bf16 model, dense text / agentic turns | 93.1% / 96.0% |
-| warm revisit of a 32K context from the disk tier | 0.45 s instead of 7.5 s |
+| KV pool on the GPUs | 937,795 tokens (nvfp4 KV, pinned at 14.5 GB per card), plus a 300 GB LRU-capped disk tier that survives restarts and serves 131K–220K prompts |
+| decode, single stream, code, steady state | 244 t/s (2026-09-04) |
+| decode, 8 streams, code, steady state | 1,134–1,146 t/s aggregate (2026-09-04, two boots) |
+| perplexity gap vs the bf16 model | +0.75% |
+| top-1 agreement with the bf16 model, dense text / agentic turns | 92.8% / 95.7% |
+| decode-path distance to bf16 at 30K context, median abs Δlogprob | 0.0052 (the fp8-KV shape it replaced: 0.0062) |
+| tool-eval, SWE-Bench | not yet run on this route; the fp8 shape scored 90.8 ± 0.5 and 386/500 |
 
-Agentic benchmarks: SWE-Bench Verified **386/500 = 77.2%** on the current two-card daily (2026-09-03, mini-SWE-agent 2.4.6, official harness, one attempt); earlier one-card configurations scored 331/500 = 66.2% (2026-08-21, saka checkpoint, R2E-Gym scaffold) and Terminal-Bench 2.1 50/89 = 56.2% (2026-08-23, gittensor checkpoint, Harbor with terminus-2). Details in [bench/RESULTS.md](bench/RESULTS.md).
+Agentic benchmarks: SWE-Bench Verified **386/500 = 77.2%** on the two-card fp8 configuration served 2026-09-02 to 09-04 (2026-09-03, mini-SWE-agent 2.4.6, official harness, one attempt); earlier one-card configurations scored 331/500 = 66.2% (2026-08-21, saka checkpoint, R2E-Gym scaffold) and Terminal-Bench 2.1 50/89 = 56.2% (2026-08-23, gittensor checkpoint, Harbor with terminus-2). Details in [bench/RESULTS.md](bench/RESULTS.md).
 
 ## Hardware
 
@@ -33,6 +32,8 @@ Agentic benchmarks: SWE-Bench Verified **386/500 = 77.2%** on the current two-ca
 The one-card configuration needs only the first RTX 5090 and 64 GB of RAM.
 
 ## The three configurations
+
+Since 2026-09-04 the served two-card configuration is the vLLM 0.29 nvfp4-KV route ([serve-r168-daily.sh](scripts/serve-r168-daily.sh), image from [build-v0290rc2.sh](scripts/build-v0290rc2.sh) + [patches-v0290/](patches-v0290/)): nvfp4 KV pinned at 14.5 GB per card, pool 937,795, DFlash2 ns9 in CUDA graphs, embedding table in pinned host RAM, disk tier with LRU eviction. Measured against the fp8 shape below on the same day it costs about 5% decode at 8 streams and at 30K context and gains 43% pool and a disk tier that serves long prompts (bench/RESULTS.md R166–R174). The table describes the three v0.28 shapes; the two-card fp8 DFlash2 column is the configuration it replaced and remains the rollback.
 
 All three run the same image (vLLM v0.28.0 plus [patches-v0280/](patches-v0280/)), the same disk KV tier, and the same sampling settings. Numbers measured 2026-08-31 on the previous checkpoint (gittensor), same day, same harness, `results/2026-08-31-r142-matrix`. The current RedHatAI checkpoint costs about 6% decode, 14% prefill and 12% pool on the two-card DFlash2 shape and gains fidelity (see below).
 
@@ -91,10 +92,11 @@ sudo bash scripts/setup-native-l2.sh
 
 # 3. the image: vLLM v0.28.0 + the sm120 patches (no GPU needed to build)
 docker build -f patches-v0280/Dockerfile.v0280-nvfp4kv -t vllm-qwen38:v0280-nvfp4kv patches-v0280
-#    (v0.29.0rc1: scripts/build-v0290rc1.sh with patches-v0290/ builds; not yet the served image, see bench/RESULTS.md R165)
+#    the served image since 2026-09-04: vLLM v0.29.0rc2 + patches-v0290 + FlashInfer 0.6.16.post3
+bash scripts/build-v0290rc2.sh    # builds vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616 (needs the v0.28 image above as base)
 
-# 4a. two cards (the served configuration)
-bash scripts/serve-r156-daily.sh
+# 4a. two cards (the served configuration: 0.29 nvfp4 KV; serve-r156-daily.sh is the fp8 rollback)
+bash scripts/serve-r168-daily.sh
 
 # 4b. one card
 MODEL_DIR=/srv/qwen5090/models/qwen3.8-27b-redhat-nvfp4 PORT=8020 NAME=vllm-27b bash scripts/serve-v0280-daily.sh
