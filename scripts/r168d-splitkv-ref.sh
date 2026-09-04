@@ -47,6 +47,13 @@ boot_cand(){ local tag=$1 split=$2 img=$3 kv rc
     log "[$tag] boot attempt ${kv:-default pin} FAILED rc=$rc: $(grep -aE 'FAILED' "$R/boot-$tag.log" | tail -1 | cut -c1-200)"
     grep -aq "Bug C headroom missing" "$R/boot-$tag.log" || break; teardown
   done; return 1; }
+# Box-state boot retry (flan-heavy-tp2-cadence; r170 2026-09-04 lost both arms to "CUDA error: invalid argument" in the
+# TP1 warm-up after a chain of TP2 boots). If a boot fails with that signature: teardown, GPUs idle + 300 s, ONE retry.
+boxstate(){ sudo docker logs vllm-exp 2>&1 | grep -aq "CUDA error: invalid argument" || grep -aq "CUDA error: invalid argument" "$R/boot-$1.log" 2>/dev/null; }
+boot_retry(){ local tag=$1; shift   # usage: boot_retry <tag> <boot fn> [args]
+  "$@" && return 0
+  if boxstate "$tag"; then log "[$tag] box-state boot failure (invalid argument in warm-up): teardown + 300 s idle, retrying once"; teardown; settle 300; "$@" && return 0; fi
+  return 1; }
 COMMON="MODEL_DIR=$MODEL TP=2 PORT=8029 NAME=vllm-exp BIND_ADDR=127.0.0.1 MAXLEN=262144 NO_TIER=0 L2MNT=$L2 PREFIX_CACHE=1 POOL_MIN=1 POOL_MAX=9999999 MNBT=8192 SEQS=8"
 boot_F(){ local rc
   env -i PATH="$PATH" HOME="$HOME" USER="$USER" $COMMON IMAGE="$RC2_IMG" KVD_OVERRIDE=fp8_e4m3 FIWS=268435456 UTIL=0.92 EXTRA_MOUNT="-v $DRAFT:/draft:ro" SPEC_JSON='{"method":"dflash","model":"/draft","num_speculative_tokens":9}' EXTRA_ENV="-e NCCL_P2P_LEVEL=SYS" EXTRA_ARGS="--offload-backend uva --cpu-offload-gb 1 --cpu-offload-params embed_tokens" bash $LAUNCH > "$R/boot-F.log" 2>&1; rc=$?
@@ -69,9 +76,9 @@ PY
 }
 
 log "taking the daily down"; teardown; wipe_l2
-if boot_cand OFF2 0 $RC2_IMG; then measure OFF2; fi; teardown; wipe_l2
-if boot_F; then measure F; fi; teardown; wipe_l2
-if boot_cand S 0 $FI16_IMG; then measure S; fi; teardown
+if boot_retry OFF2 boot_cand OFF2 0 $RC2_IMG; then measure OFF2; fi; teardown; wipe_l2
+if boot_retry F boot_F; then measure F; fi; teardown; wipe_l2
+if boot_retry S boot_cand S 0 $FI16_IMG; then measure S; fi; teardown
 log "--- comparisons (ref first) ---"
 cmp_dec "floor OFF2-vs-OFF ctx0"      "$C/dec-OFF-ctx0.jsonl"     "$R/dec-OFF2-ctx0.jsonl"
 cmp_dec "floor OFF2-vs-OFF ctx30000"  "$C/dec-OFF-ctx30000.jsonl" "$R/dec-OFF2-ctx30000.jsonl"

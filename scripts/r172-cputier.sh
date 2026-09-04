@@ -61,6 +61,13 @@ boot_D16(){ local rc
   env -i PATH="$PATH" HOME="$HOME" USER="$USER" $COMMON IMAGE="$V28_IMG" $FP8_ENV EXTRA_MOUNT="-v $DRAFT:/draft:ro" SPEC_JSON="$FP8_SPEC" EXTRA_ENV="$FP8_X" bash $LAUNCH > "$R/boot-D16.log" 2>&1; rc=$?
   if [ $rc -ne 0 ] || ! curl -sf -m 5 $U/health >/dev/null; then log "[D16] BOOT FAILED rc=$rc: $(grep -aE 'FAILED|Error' "$R/boot-D16.log" | tail -1 | cut -c1-200)"; return 1; fi
   log "[D16] BOOT OK pool=$(pool) $(cpu_blocks) (v0.28 fp8 daily image)"; return 0; }
+# Box-state boot retry (flan-heavy-tp2-cadence; r170 2026-09-04 lost both arms to "CUDA error: invalid argument" in the
+# TP1 warm-up after a chain of TP2 boots). If a boot fails with that signature: teardown, GPUs idle + 300 s, ONE retry.
+boxstate(){ sudo docker logs vllm-exp 2>&1 | grep -aq "CUDA error: invalid argument" || grep -aq "CUDA error: invalid argument" "$R/boot-$1.log" 2>/dev/null; }
+boot_retry(){ local tag=$1; shift   # usage: boot_retry <tag> <boot fn> [args]
+  "$@" && return 0
+  if boxstate "$tag"; then log "[$tag] box-state boot failure (invalid argument in warm-up): teardown + 300 s idle, retrying once"; teardown; settle 300; "$@" && return 0; fi
+  return 1; }
 # CPUB assert: the connector JSON on the container must carry the requested cpu_bytes_to_use
 cpub_assert(){ local got; got=$(sudo docker inspect vllm-exp --format '{{join .Args " "}}' | grep -oE '"cpu_bytes_to_use":[0-9]+' | grep -oE '[0-9]+$')
   [ "$got" = "$CPUB" ] && log "[$1] CPUB asserted on the container: $got" || { log "[$1] CPUB ASSERT FAILED: container has '${got:-none}', wanted $CPUB — arm NOT measured"; return 1; }; }
@@ -90,12 +97,12 @@ PY
 errlines(){ sudo docker logs vllm-exp 2>&1 | grep -ac "illegal memory\|CUDA error\|Traceback\|OutOfMemoryError" | sed "s/^/[$1 engine error-lines] /" | tee -a "$R/audit.log"; }
 arm(){ local A=$1
   wipe_l2; ram_ok "$A" || { log "[$A] SKIPPED: not enough host RAM for CPUB"; return; }
-  boot_$A || { teardown; return; }
+  boot_retry "$A" boot_$A || { teardown; return; }
   cpub_assert "$A" || { teardown; return; }
   nd_tier "$A-evict" --evict 12 --evict-ctx 90000 --evict-reasks 3 --evict-reask-gap 15
   offload_metrics "$A-evict"; errlines "$A-evict"
   log "[$A] restart revisit: teardown + fresh boot over the existing tier ($(df -h "$L2" | tail -1 | awk '{print $3}') on the tier)"; teardown
-  boot_$A || { log "[$A] restart boot FAILED"; return; }
+  boot_retry "$A" boot_$A || { log "[$A] restart boot FAILED"; return; }
   nd_tier "$A-restart" --evict-reasks 3 --evict-reask-gap 15
   offload_metrics "$A-restart"; errlines "$A-restart"
   served_sheet "$A" "$R/needles-$A-evict.out" "$R/needles-$A-restart.out"
