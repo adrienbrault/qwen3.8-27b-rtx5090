@@ -12,7 +12,7 @@ Hardware since 2026-08-31: two RTX 5090 32 GB (`sm_120`), Ryzen 7 9800X3D, 64 GB
 
 ## Index
 
-- [R183, a decode-step profile of the served route and a lever ladder (GEMM kernel, all-reduce, prefill chunk, speculation policy, DP2): the two-card decode tax is the custom all-reduce, not NCCL (2026-09-04, in progress, `results/2026-09-04-r183-next-levers`, `scripts/r183-next-levers.sh`, `scripts/r183b-kernels.sh`)](#r183-a-decode-step-profile-of-the-served-route-and-a-lever-ladder-gemm-kernel-all-reduce-prefill-chunk-speculation-policy-dp2-the-two-card-decode-tax-is-the-custom-all-reduce-not-nccl-2026-09-04-in-progress-results2026-09-04-r183-next-levers-scriptsr183-next-leverssh-scriptsr183b-kernelssh)
+- [R183, a decode-step profile of the served route and a 20-arm lever ladder (GEMM kernel, all-reduce backends, fusion passes, prefill chunk, speculation policy, DP2): the two-card decode tax is the custom all-reduce, not NCCL, and no arm beats the replicate band (2026-09-04, `results/2026-09-04-r183-next-levers`, `scripts/r183-next-levers.sh`)](#r183-a-decode-step-profile-of-the-served-route-and-a-20-arm-lever-ladder-gemm-kernel-all-reduce-backends-fusion-passes-prefill-chunk-speculation-policy-dp2-the-two-card-decode-tax-is-the-custom-all-reduce-not-nccl-and-no-arm-beats-the-replicate-band-2026-09-04-results2026-09-04-r183-next-levers-scriptsr183-next-leverssh)
 - [R168, the 0.29 program: rc2 image chain, FlashInfer-swap diagnosis images and an isolation battery for the 5x deep-context nvfp4 decode regression, a 0.29 candidate launcher (2026-09-03, in progress)](#r168-the-029-program)
 - [R167, the embedding table moved to pinned host RAM: +9% KV pool for no measurable cost, on the rc1 image only, which turns out to decode 5x slower than v0.28 at 30K context with nvfp4 KV (2026-09-03, `results/2026-09-03-r167-embed`, `scripts/r167-embed-audition.sh`, `patches-v0290/0135-embed-uva-offload-v0290.diff`)](#r167-the-embedding-table-moved-to-pinned-host-ram-9-kv-pool-for-no-measurable-cost-on-the-rc1-image-only-which-turns-out-to-decode-5x-slower-than-v028-at-30k-context-with-nvfp4-kv-2026-09-03-results2026-09-03-r167-embed-scriptsr167-embed-auditionsh-patches-v02900135-embed-uva-offload-v0290diff)
 - [R166, the nvfp4-KV candidate made daily-grade: the KV pool pinned in bytes instead of sized by utilization; every promotion gate except SWE-bench and the tier half of the revisit gate passes paired against the fp8 daily (2026-09-03, `results/2026-09-03-r166-gates`, `scripts/serve-nvfp4-candidate.sh`, `scripts/r166-candidate-gates.sh`)](#r166-the-nvfp4-kv-candidate-made-daily-grade-the-kv-pool-pinned-in-bytes-instead-of-sized-by-utilization-every-promotion-gate-except-swe-bench-passes-paired-against-the-fp8-daily-2026-09-03-results2026-09-03-r166-gates-scriptsserve-nvfp4-candidatesh-scriptsr166-candidate-gatessh)
@@ -90,7 +90,7 @@ First audition run (10:22 UTC, `scripts/r165-audition.sh`): the fp8 daily shape 
 
 What the new image has to answer first, in order: the graph-capture accounting (vLLM #53306, #53955 and #54418 now reserve CUDA-graph memory in the V2 runner's KV sizing, which is the upstream form of the R164 finding below; nvfp4 at SEQS 16/32, util 0.90, with and without 0131), then the fp8 daily shape (pool, needles, decode, the fidelity ruler, tool-eval ×4). Changes to watch on the way: V2 runner default for all models (#53183), DFlash draft RoPE layout taken from the draft's own config (#54373), the `DFlash2DraftModel` local-convolution architecture (#52816), Mamba prefix-cache internal checkpoints (#52789), deterministic prefix-cache seed (#51875), the kv-offload metric rename (#52812), and per-request acceptance stats (#48915). The stable tag is what gets promoted; the rc is the head start.
 
-## R183, a decode-step profile of the served route and a lever ladder (GEMM kernel, all-reduce, prefill chunk, speculation policy, DP2): the two-card decode tax is the custom all-reduce, not NCCL (2026-09-04, in progress, `results/2026-09-04-r183-next-levers`, `scripts/r183-next-levers.sh`, `scripts/r183b-kernels.sh`)
+## R183, a decode-step profile of the served route and a 20-arm lever ladder (GEMM kernel, all-reduce backends, fusion passes, prefill chunk, speculation policy, DP2): the two-card decode tax is the custom all-reduce, not NCCL, and no arm beats the replicate band (2026-09-04, `results/2026-09-04-r183-next-levers`, `scripts/r183-next-levers.sh`)
 
 One chain on the bf16-state daily flags (`EXP=1` path of `scripts/serve-r168-daily.sh`, pin 13.98 GB, 16 sequences, tier wiped before every arm). Every arm boots, then runs decode_ss (code 1 stream ×2, prose 1 stream ×2, code 8 streams ×2, code 16 streams ×1), a cold TTFT ladder ([scripts/kv_capacity_probe.py](../scripts/kv_capacity_probe.py) at 8 output tokens; prompts of 6.7K, 30K, 100K and 200K tokens), the decode ruler at 0 context, and the dense ruler against bf16. The BASE arm carried an idle torch-profiler configuration and was profiled separately at 1, 8 and 16 streams with llama-benchy (pp2048 tg256).
 
@@ -112,7 +112,30 @@ The two ranks are symmetric. The cost that grows with concurrency is the custom 
 
 **First lever measured, `--linear-backend flashinfer_b12x`** (NVFP4 GEMM kernel FlashInferB12x instead of FlashInferCutlass; the fp8 layers keep their kernel): code 1 stream 285.3 vs 285.0, prose 1 stream 177 vs 158, code 8 streams 1,388 vs 1,327, code 16 streams 1,833 vs 1,738, TTFT 6.7K 1.1 s vs 0.8, 100K 17.1 vs 17.1; dense ruler 92.769% / +0.758% / KL 0.014081, decode ruler 0.0004; pool 1,020,596, 969 MiB free after pre-warm. The 8- and 16-stream deltas are inside one arm's run-to-run spread at 8 streams (1,312 to 1,342 on BASE, 1,336 to 1,441 on this arm) and are judged against the replicate arms when the chain completes.
 
-Remaining arms in the chain, results to be appended: the rest of the `--linear-backend` ladder (cutlass, marlin, flashinfer_cudnn, flashinfer_trtllm, humming), the all-reduce replicates, fusion passes (all-reduce+RMSNorm, sequence-parallel, the full set, then in `r183b` the per-pass and custom-op arms), `--max-num-batched-tokens` 16K and 32K, `num_speculative_tokens_per_batch_size` schedules, drafter tensor-parallel 1, and data-parallel 2 on `serve-v0280-daily.sh` without tiers.
+**The full sheet.** Code c1 / prose c1 / code c8 / code c16 in t/s, then dense top-1 / perplexity delta vs bf16 where the ruler ran. Same-configuration replicates: BASE, AR-fi, AR-symm and FU-sptp (the requested all-reduce backends are unsupported on this box and the SP passes matched nothing, so those boots ran the served flags; the ruler is bit-identical to BASE on each). Their band: c1 285 to 308, c8 1,327 to 1,421, c16 1,738 to 1,804.
+
+| arm | change | c1 | prose c1 | c8 | c16 | top-1 / PPL |
+|---|---|---|---|---|---|---|
+| BASE | served flags, idle profiler config | 285 | 158 | 1,327 | 1,738 | 92.771% / +0.744% |
+| AR-fi | replicate (booted at pin 13.5 GB after a headroom failure at 13.98) | 308 † | 159 | 1,421 | 1,804 | 92.771% / +0.744% |
+| AR-symm | replicate | 308 † | 159 | 1,376 | 1,764 | 92.771% / +0.744% |
+| FU-sptp | replicate (`enable_sp`, `fuse_gemm_comms`: inert) | 306 | 159 | 1,363 | 1,767 | 92.771% / +0.744% |
+| LB-flashinfer_b12x | NVFP4 GEMM kernel FlashInferB12x | 285 | 177 | 1,388 | 1,833 | 92.769% / +0.758% |
+| LB-flashinfer_cudnn | NVFP4 GEMM kernel FlashInferCudnn | 234 | | 1,339 | | 92.759% / +0.808% |
+| FU-arrms | `fuse_allreduce_rms` (matched nothing) | 253 | 168 | 1,334 | 1,785 | 92.806% / +0.756% |
+| FU-arrms2 | same plus custom op `+rms_norm` | 286 | 172 | 1,398 | 1,835 | 92.773% / +0.761% |
+| FU-all | all fusion passes | 257 | 169 | 1,363 | 1,811 | 92.806% / +0.756% |
+| SP-argmax | `use_local_argmax_reduction` | 309 | 160 | 1,350 | 1,867 | |
+| SP-dyn2 | 9 draft tokens up to batch 8, then 1 | 302 | 159 | 1,345 | | |
+| SP-dtp1 | drafter tensor-parallel 1 | 308 | 158 | 1,423 | 1,833 | |
+
+† The AR-fi and AR-symm c1 summaries are byte-identical (308.2, runs 298.8 and 317.6 on both), which two timed runs cannot produce; treated as a probe artefact and not used.
+
+Every arm sits inside the replicate band or inside one arm's own run-to-run spread at c8 (FU-arrms2's two c8 runs read 1,312 and 1,484). The highest single c16 read, SP-argmax at 1,867, is 3.5% above the best replicate on one run. The cudnn GEMM kernel is slower and farther from bf16 on the dense ruler. No lever in this ladder is a result; the software knobs vLLM 0.29 exposes for the TP2 decode tax are exhausted on this box.
+
+**Boots that failed, and why.** `--linear-backend b12x`, `cutlass` and `marlin` refuse to start because the filter applies to every layer type: b12x has no fp8 ScaledMM kernel, cutlass and marlin none for the drafter's W4A16 layers. `--max-num-batched-tokens 16384` leaves 171 MiB free after pre-warm at the 13.98 GB pin and 35 MiB at 13.5 GB, under the 384 MiB floor; 32768 hits a warm-up CUDA error. Data-parallel 2 on `serve-v0280-daily.sh` fails at KV sizing: one replica needs 6.69 GiB of KV for a single 262K sequence and has 2.05 GiB left after the weights at utilization 0.90, so DP2 cannot serve the 262K contract on 32 GB cards. The three-range dynamic draft schedule (SP-dyn1) came up but failed the harness's post-boot check and was not re-run.
+
+**All-reduce cost per call.** Bytes per call are rows × 5,120 × 2: 10 rows at c1 with the 9-token draft (100 KB) take 19 µs, about 5 GB/s, latency-bound; 160 rows at c16 (1.6 MB) take 90 µs, about 18 GB/s, roughly two thirds of the PCIe Gen5 x8 link. The c16 floor is closer to bandwidth than to latency. The kernel itself is the remaining lever: R184 benchmarks NCCL, vLLM's custom all-reduce and FlashInfer main's `pcie_ipc` all-reduce ([flashinfer PR #4393](https://github.com/flashinfer-ai/flashinfer/pull/4393), merged 2026-08-20, in no 0.6.x release) at these row counts.
 
 ## R168, the 0.29 program
 
@@ -390,7 +413,7 @@ For the daily: raising `--max-num-seqs` to 16 sits under the measured short-requ
 
 ## R158, DFlash2 on NVFP4 KV: drafter graphs close the single-stream gap (2026-09-02, `results/2026-09-02-r158-nvfp4-profile`)
 
-**Correction (R183, 2026-09-04):** the NCCL cost reported in this section (16 ms per step, 35% at 8 streams) was measured on llama-benchy prefill chunks, whose all-reduces exceed the custom all-reduce cap; decode all-reduces never go through NCCL. The decode-only profile is in [R183](#r183-a-decode-step-profile-of-the-served-route-and-a-lever-ladder-gemm-kernel-all-reduce-prefill-chunk-speculation-policy-dp2-the-two-card-decode-tax-is-the-custom-all-reduce-not-nccl-2026-09-04-in-progress-results2026-09-04-r183-next-levers-scriptsr183-next-leverssh-scriptsr183b-kernelssh).
+**Correction (R183, 2026-09-04):** the NCCL cost reported in this section (16 ms per step, 35% at 8 streams) was measured on llama-benchy prefill chunks, whose all-reduces exceed the custom all-reduce cap; decode all-reduces never go through NCCL. The decode-only profile is in [R183](#r183-a-decode-step-profile-of-the-served-route-and-a-20-arm-lever-ladder-gemm-kernel-all-reduce-backends-fusion-passes-prefill-chunk-speculation-policy-dp2-the-two-card-decode-tax-is-the-custom-all-reduce-not-nccl-and-no-arm-beats-the-replicate-band-2026-09-04-results2026-09-04-r183-next-levers-scriptsr183-next-leverssh).
 
 All arms used RedHatAI NVFP4 weights, TP=2, `num_speculative_tokens=7`, `draft_tensor_parallel_size=1` (identical drafter), MNBT 8192, util 0.90, no tier; llama-benchy natural T=0.6 pp2048 tg256, runs 3. Profile = torch profiler, 60 decode iterations, rank 0 (`scripts/prof_summary.py`, `scripts/prof_cpu.py`).
 
