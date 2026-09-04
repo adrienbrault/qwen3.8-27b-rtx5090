@@ -11,7 +11,7 @@ The served configuration (two cards, since 2026-09-04: vLLM 0.29 with nvfp4 KV, 
 | | value |
 |---|---|
 | context length | 262,144 tokens |
-| KV pool on the GPUs | 937,795 tokens (nvfp4 KV, pinned at 14.5 GB per card), plus a 300 GB LRU-capped disk tier that survives restarts and serves 131K–220K prompts |
+| KV pool on the GPUs | 937,795 tokens (nvfp4 KV, pinned at 14.5 GB per card), plus a 16 GiB CPU tier and a 300 GB LRU-capped disk tier that survive restarts. Both tiers work in whole 2,944-token blocks, so any prompt with at least one full block is cached; tier-served hits were verified with needles at 131K and 220K |
 | decode, single stream, code, steady state | 244 t/s (2026-09-04) |
 | decode, 8 streams, code, steady state | 1,134–1,146 t/s aggregate (2026-09-04, two boots) |
 | perplexity gap vs the bf16 model | +0.75% |
