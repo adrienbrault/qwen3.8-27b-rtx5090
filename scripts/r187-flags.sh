@@ -12,7 +12,7 @@
 # Every arm: bat_decode (decode_ss code c1×2 / prose c1×2 / code c8×2 / code c16×1) + decode ruler ctx0 vs bf16 + smi summary;
 # BASE/MNBT arms add ttft 8k/36k/120k; MNBT arms add the dense ruler. Queued behind miniswe-r183 (GPU_QUEUE_NAME registers it so
 # the campaign's finish() skips the daily restore); finish restores the daily unless another unit is queued (R188 arms will be).
-#   unit: sudo systemd-run --unit=r187-flags --collect -p User=adrienbrault -p RuntimeMaxSec=12600 -p TimeoutStopSec=900 \
+#   unit: sudo systemd-run --unit=r187-flags --collect -p User=adrienbrault -p RuntimeMaxSec=28800 -p TimeoutStopSec=900 \
 #         -E GPU_QUEUE_NAME=r187-flags bash -c '. /srv/qwen5090/lib/gpu-queue.sh; while systemctl is-active -q miniswe-r183; do sleep 30; done; exec bash /srv/qwen5090/r187-flags.sh'
 set -uo pipefail
 export PATH="$HOME/.local/bin:$PATH"
@@ -124,6 +124,8 @@ arm BASE-b ttft
 # ---------- PROF-deep: torch profiler around single-stream decode at 30K and 100K ----------
 # delay_iterations=50 skips the prompt's prefill chunks (4 at 30K, 13 at 100K with the 8192 chunk) and the first decode steps;
 # max_iterations=60 then captures 60 decode steps; decode_ss --tokens 512 gives ~300 steps so the window lands inside decode.
+# Reader check (2026-09-05): decode_ss sends no warm-up request, so the window lands in the measured decode; still, attention time per
+# step MUST grow from ctx30000 to ctx100000 — near-identical summaries mean the window missed and the PROF-deep arm is void.
 teardown; wipe_l2; mkdir -p "$R/prof-deep"; chmod 777 "$R/prof-deep"
 capture_deep(){ local ctx=$1; local d="$R/prof-deep/ctx$ctx"; mkdir -p "$d"
   curl -s -m 10 -X POST $U/start_profile >/dev/null 2>&1 || log "[prof ctx$ctx] start_profile returned non-2xx (continuing)"
