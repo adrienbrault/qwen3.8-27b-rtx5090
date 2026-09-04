@@ -66,6 +66,12 @@ nd(){ # $1 tag, $2 seed, rest = args
   python3 /srv/qwen5090/probes/needle_depth.py --url $U/v1 --model qwen3.8-27b --seed "$seed" "$@" --out "$R/needles-$tag.jsonl" > "$R/needles-$tag.out" 2>&1; local rc=$?
   grep -a "^\[" "$R/needles-$tag.out" | cut -c1-260 | sed "s/^/[$tag] /" >> "$R/audit.log"
   log "[$tag] hits=$(grep -ac '^\[HIT ' "$R/needles-$tag.out") miss=$(grep -ac MISS "$R/needles-$tag.out") rc=$rc $(grep -a SUMMARY "$R/needles-$tag.out" | cut -c1-200)"; return $rc; }
+# Box-state boot retry (flan-heavy-tp2-cadence; the 2026-09-04 00:33 rerun lost both arms to "CUDA error: invalid argument"
+# in the TP1 warm-up after a chain of TP2 boots): teardown, GPUs idle + 300 s, ONE retry.
+boxstate(){ sudo docker logs vllm-exp 2>&1 | grep -aq "CUDA error: invalid argument" || grep -aq "CUDA error: invalid argument" "$R/boot-$1.log" 2>/dev/null; }
+boot_retry(){ local tag=$1; shift; "$@" && return 0
+  if boxstate "$tag"; then log "[$tag] box-state boot failure (invalid argument in warm-up): teardown + 300 s idle, retrying once"; teardown; settle 300; "$@" && return 0; fi
+  return 1; }
 arm(){ local A=$1 fail=0 ev bu
   local cfg; cfg=$(sudo docker inspect vllm-exp --format '{{join .Args " "}}' 2>/dev/null | grep -oE '"max_capacity_gb":[0-9.]+,"evict_scope":"[a-z]+","min_free_gb":[0-9.]+'); log "[$A] tier config on the container: ${cfg:-NONE}"
   [ -n "$cfg" ] || { log "[$A] FAIL: the engine was not given max_capacity_gb (launcher dropped the knob)"; fail=1; }
@@ -106,7 +112,7 @@ arm(){ local A=$1 fail=0 ev bu
   SINCE=""
   log "[$A] VERDICT: $([ $fail = 0 ] && echo PASS || echo FAIL)"; echo "$A $([ $fail = 0 ] && echo PASS || echo FAIL)" >> "$R/verdicts.txt"; }
 teardown
-wipe_l2; if boot_N; then arm N; else echo "N BOOT-FAILED" >> "$R/verdicts.txt"; fi; teardown
-wipe_l2; if boot_D; then arm D; else echo "D BOOT-FAILED" >> "$R/verdicts.txt"; fi; teardown
+wipe_l2; if boot_retry N boot_N; then arm N; else echo "N BOOT-FAILED" >> "$R/verdicts.txt"; fi; teardown
+wipe_l2; if boot_retry D boot_D; then arm D; else echo "D BOOT-FAILED" >> "$R/verdicts.txt"; fi; teardown
 log "verdicts: $(tr '\n' ' ' < "$R/verdicts.txt")"
 finish DONE
