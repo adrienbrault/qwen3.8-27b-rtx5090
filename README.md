@@ -11,7 +11,7 @@ Since 2026-09-04: vLLM 0.29 with an NVFP4 KV cache on two cards, launcher [scrip
 | | value | measured |
 |---|---|---|
 | context length | 262,144 tokens | |
-| KV pool on the GPUs | 937,795 tokens, pinned at 14.5 GB per card | every boot since 2026-09-03 (`results/2026-09-04-r173b-ns-confirm`, `results/2026-09-04-r174-promote`) |
+| KV pool on the GPUs | 903,793 tokens at 16 sequences, pinned at 13.98 GB per card (937,795 at 8 sequences, 14.5 GB) | 2026-09-04, `results/2026-09-02-miniswe-rh-r174-nvfp4` (16), `results/2026-09-04-r174-promote` (8) |
 | CPU KV tier | 16 GiB, 1,013 blocks | 2026-09-04, `results/2026-09-04-r172-cputier` |
 | disk KV tier | 300 GB cap with LRU eviction, survives restarts | 2026-09-04, `results/2026-09-03-r170-tier-evict` |
 | decode, code, 1 stream | 244 t/s (two runs, 226 and 261) | 2026-09-04, `results/2026-09-04-r174-promote` |
@@ -28,7 +28,7 @@ Decode numbers are steady-state tokens per second from [scripts/decode_ss.py](sc
 
 What the route trades against the two-card fp8 shape it replaced, measured the same day on the same box:
 
-- The pool grows from 654,491 (or 628,798, the fp8 shape's profiler was bimodal) to 937,795, and the pin makes it the same on every boot.
+- The pool grows from 654,491 (or 628,798, the fp8 shape's profiler was bimodal) to 903,793 at 16 sequences, and the pin makes it the same on every boot. The daily serves 16 sequences since 2026-09-04 (8 before), because 16 streams gave +34% aggregate decode over 8 on the fp8 shape (`results/2026-09-02-r159-conc-b`); the pin for 16 costs 34K tokens of pool.
 - The disk tier serves. On the fp8 shape every revisit of a 131K prompt was recomputed: a tier hit is promoted through the CPU tier, 331 fp8 blocks did not fit its 4 GiB, and with 16 GiB the v0.28 lookup still served 0 of 4 needles. On the served route, needles at 131K and 220K were served 4 of 4 after a 12-prompt flood and 4 of 4 after a fresh boot, in 1.4 to 2.9 s against 25 to 57 s cold (`results/2026-09-04-r172-cputier`).
 - The fidelity cost is the NVFP4 KV cost measured in R156 and unchanged across vLLM versions: 0.3 points of top-1 agreement and 0.4 points of perplexity against bf16. The rc2 image with fp8 KV scores the same as the v0.28 fp8 daily (table below), so the 0.29 chain itself is fidelity-neutral.
 - Decode, paired against the rc2 image with fp8 KV (`results/2026-09-03-r169-rc2`, decode_ss): code 1 stream 245 vs 227, 30K context 155 vs 164, code 8 streams 1,110 vs 1,153 (`results/2026-09-04-r173-c1-opt`). Prefill at 2K: 8,757 vs 8,548 (`results/2026-09-03-r166-gates`). Tool-eval on the same instrument: 91 vs 88.
@@ -52,7 +52,7 @@ The image `vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616` is built by [scripts
 The flags the launcher asserts at boot, and why ([docs/CONFIG.md](docs/CONFIG.md) has the full table):
 
 - `--kv-cache-dtype nvfp4`: 2,944-token blocks, +43% pool over fp8 at the same VRAM.
-- `--kv-cache-memory-bytes 14500000000` with `--gpu-memory-utilization 0.88`: the pool is pinned in bytes, per `--max-num-seqs`, because the utilization path sizes it before CUDA-graph capture and the first request then runs out of memory. The boot fails under 512 MiB free after pre-warm, since a long-prompt logprobs request once killed the fp8 daily with 100 MiB free.
+- `--kv-cache-memory-bytes 13980000000` at `--max-num-seqs 16` with `--gpu-memory-utilization 0.88`: the pool is pinned in bytes, per `--max-num-seqs`, because the utilization path sizes it before CUDA-graph capture and the first request then runs out of memory. The boot fails under 512 MiB free after pre-warm, since a long-prompt logprobs request once killed the fp8 daily with 100 MiB free.
 - `VLLM_SM12X_NVFP4_XQA=0`, `--max-num-batched-tokens 8192`, a 512 MiB FlashInfer workspace: NVFP4 prefill chunks above about 4,929 tokens corrupt under XQA decode on this stack, so decode goes through FlashInfer FA2 instead.
 - FlashInfer 0.6.16.post3 rather than the 0.6.18 the nightly ships: 0.6.18 force-disables split-KV for packed NVFP4 in its paged-prefill wrapper, and every speculative verification step is a 10-token prefill through that wrapper, so decode at 30K context dropped from 143 to 26.5 t/s. The swap restores it (`scripts/r168-deep-decode.sh`, RESULTS R168).
 - DFlash2 drafter, 9 draft tokens, drafter tensor-parallel 2, in CUDA graphs (`VLLM_SM12X_DFLASH_GRAPHS=1`): 7 draft tokens gave +12.5% at 8 streams and 4.6% more pool but sat twice as far from the bf16 decode reference at 30K, so it was retracted (`results/2026-09-04-r173c-bf16-decode`).
