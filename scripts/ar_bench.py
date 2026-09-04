@@ -9,6 +9,9 @@ per-rank medians, as flashinfer's own comm benchmark does):
   vllm  vLLM's CustomAllreduce (the served daily's decode path; max_size raised to
         256 MiB so the prefill-sized rows go through it too)
   pcie  flashinfer.comm.PcieIpcAllReduceWorkspace (flashinfer main, PR #4393)
+  vend  pcie_ipc_ar21.workspace.PcieIpcAllReduceWorkspace: the same kernel vendored into the served
+        image by patch 0138 (R185) with the fixed R184 tune table; rows <= 320 only (its slab is sized
+        for the decode shapes). Needs an image that carries the package.
 
 Row = tokens in the step (c1 with a 9-token draft = 10 rows; c8 = 80; c16 = 160;
 a 2,048 / 8,192-token prefill chunk = 2048 / 8192). Both eager and CUDA-graph
@@ -111,14 +114,23 @@ def main():
         res["notes"]["pcie_supports"] = {r: bool(pcie.supports(torch.empty(r, H, dtype=dtype, device=device))) for r in rows}
         log(rank, "pcie supports:", res["notes"]["pcie_supports"])
 
-    ca = None
+    ca = None; vend = None
+    # vLLM attaches the custom all-reduce (and the vendored pcie_ipc workspace) to a CPU (gloo) group for its IPC-handle exchange
+    gloo = dist.new_group(backend="gloo") if ("vllm" in backends or "vend" in backends) else None
     if "vllm" in backends:
         from vllm.distributed.device_communicators.custom_all_reduce import CustomAllreduce
-        # vLLM attaches the custom all-reduce to a CPU (gloo) group for its IPC-handle exchange
-        gloo = dist.new_group(backend="gloo")
         ca = CustomAllreduce(group=gloo, device=device, max_size=256 << 20)
         res["notes"]["vllm_disabled"] = bool(ca.disabled)
         log(rank, "vllm CustomAllreduce disabled:", ca.disabled, "full_nvlink:", getattr(ca, "full_nvlink", None))
+    if "vend" in backends:
+        import pcie_ipc_ar21
+        from pcie_ipc_ar21.workspace import PcieIpcAllReduceWorkspace as VendWorkspace
+        log(rank, f"pcie_ipc_ar21 from {pcie_ipc_ar21.__file__}")
+        vend = VendWorkspace(gloo, device)
+        added = vend.prepare([(r, H) for r in rows if r <= vend.max_numel // H], dtype=dtype)
+        res["notes"]["vend_configs"] = {f"{r}x{h}": list(c) for (r, h), c in added.items()}
+        res["notes"]["vend_supports"] = {r: bool(vend.supports(torch.empty(r, H, dtype=dtype, device=device))) for r in rows}
+        log(rank, "vend configs (blocks,threads,variant):", res["notes"]["vend_configs"])
 
     def make_fn(name, x):
         if name == "nccl":
@@ -131,7 +143,18 @@ def main():
             if pcie is None or not pcie.supports(x):
                 return None
             return lambda: pcie.all_reduce(x)
+        if name == "vend":
+            if vend is None or not vend.supports(x) or not vend.is_resolved(x):
+                return None
+            return lambda: vend.all_reduce(x)
         raise ValueError(name)
+
+    def capture_ctx(name):
+        if name == "vllm":
+            return ca.capture
+        if name == "vend":
+            return vend.capture
+        return None
 
     hdr = f"{'rows':>6} {'bytes':>10} | " + " ".join(f"{b+'-eager':>11} {b+'-graph':>11}" for b in backends)
     log(rank, hdr)
@@ -179,7 +202,7 @@ def main():
               dist.barrier()
               x = x0.clone(); fn = make_fn(b, x)
               try:
-                  tg, g = time_graph(fn, a.graph_iters, capture_ctx=(ca.capture if b == "vllm" else None))
+                  tg, g = time_graph(fn, a.graph_iters, capture_ctx=capture_ctx(b))
                   tg = group_max(tg, device, group)
                   del g
                   # graph-replayed correctness: one captured call from a fresh copy of x0 into a fixed buffer,
@@ -191,7 +214,7 @@ def main():
                       one()
                   torch.cuda.synchronize()
                   gv = torch.cuda.CUDAGraph()
-                  ctxv = ca.capture() if b == "vllm" else contextlib.nullcontext()
+                  cctx = capture_ctx(b); ctxv = cctx() if cctx else contextlib.nullcontext()
                   with ctxv:
                       with torch.cuda.graph(gv):
                           one()
@@ -224,6 +247,8 @@ def main():
 
     if pcie is not None:
         pcie.destroy()
+    if vend is not None:
+        vend.destroy()
     dist.barrier(); dist.destroy_process_group()
 
 

@@ -1,0 +1,33 @@
+# Offline layer on the served v0290rc2 ...-prs-fi0616 image.
+# The native compile below is a future image-build step, not local verification.
+ARG BASE
+FROM ${BASE}
+ARG PCIE_IPC_BUILD_NATIVE=1
+COPY pcie_ipc_ar21/ /opt/pcie-ipc-ar21-layer/pcie_ipc_ar21/
+COPY 0138-pcie-ipc-all-reduce-v0290.diff /opt/pcie-ipc-ar21-layer/
+RUN --network=none set -eux; \
+    python3 -c 'from importlib.metadata import version; assert version("flashinfer-python") == "0.6.16.post3"; assert version("vllm") == "0.29.0rc2"; assert version("torch") == "2.13.0+cu130"'; \
+    PKG_ROOT="$(python3 -c 'import importlib.util, pathlib; print(pathlib.Path(importlib.util.find_spec("vllm").origin).parent.parent)')"; \
+    cd "$PKG_ROOT"; \
+    patch --batch --forward -p1 --fuzz=0 < /opt/pcie-ipc-ar21-layer/0138-pcie-ipc-all-reduce-v0290.diff; \
+    python3 -c 'import shutil; shutil.copytree("/opt/pcie-ipc-ar21-layer/pcie_ipc_ar21", "pcie_ipc_ar21")'; \
+    python3 -m py_compile \
+      vllm/distributed/device_communicators/cuda_communicator.py \
+      vllm/distributed/device_communicators/pcie_ipc_all_reduce.py \
+      vllm/distributed/parallel_state.py \
+      vllm/v1/worker/gpu_worker.py \
+      vllm/v1/worker/gpu/model_runner.py \
+      vllm/v1/worker/gpu/spec_decode/dflash/speculator.py \
+      pcie_ipc_ar21/__init__.py pcie_ipc_ar21/build.py \
+      pcie_ipc_ar21/fixed_config.py pcie_ipc_ar21/workspace.py; \
+    case "$PCIE_IPC_BUILD_NATIVE" in \
+      1) CUDA_VISIBLE_DEVICES="" MAX_JOBS=2 python3 -m pcie_ipc_ar21.build \
+           --build-root /opt/pcie-ipc-ar21-layer/build \
+           --output "$PKG_ROOT/pcie_ipc_ar21/_C.so" ;; \
+      0) echo 'PCIe IPC: source-only layer; lazy native build at enabled init' ;; \
+      *) echo 'PCIE_IPC_BUILD_NATIVE must be 0 or 1' >&2; exit 1 ;; \
+    esac; \
+    python3 -c 'from importlib.metadata import version; assert version("flashinfer-python") == "0.6.16.post3"'; \
+    rm -rf /opt/pcie-ipc-ar21-layer; \
+    echo PRS-0138-PCIE-IPC-APPLIED
+# No ENV enabling the path: VLLM_SM12X_PCIE_IPC_AR=1 is a launch-time opt-in.

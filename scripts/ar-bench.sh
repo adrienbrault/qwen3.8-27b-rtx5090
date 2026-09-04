@@ -12,6 +12,9 @@ CACHE=/srv/qwen5090/cache/flashinfer-main
 MODE=${1:-bench}     # jit | bench
 ROWS=${ROWS:-1,8,10,16,20,40,80,160,320,2048,8192}
 TUNE=${TUNE:-pcie-tune.json}   # pcie_ipc autotune cache under $R; tune on a FREE card (a co-resident engine skews it)
+# R185: BACKENDS=nccl,pcie,vend with IMG=...-fi0616-pcieipc times the vendored pcie_ipc_ar21 package (patch 0138, fixed R184 table)
+# next to the flashinfer-main workspace it was cut from; both must agree to the µs and pass the graph-replay check.
+BACKENDS=${BACKENDS:-nccl,vllm,pcie}
 mkdir -p "$R" "$CACHE"
 log(){ echo "$(date -Is) $*" | tee -a "$R/audit.log"; }
 
@@ -22,8 +25,8 @@ for pair in csrc:../../csrc include:../../include cutlass:../../3rdparty/cutlass
   n=${pair%%:*}; t=${pair#*:}; [ -e "$D/$n" ] || ln -s "$t" "$D/$n"
 done
 
-EXTRA=""; [ "$MODE" = jit ] && EXTRA="--jit-only --backends pcie"
-log "R184 ar-bench mode=$MODE rows=$ROWS tune=$TUNE image=$IMG fi=$(git -C $FI log --oneline -1)"
+EXTRA="--backends $BACKENDS"; [ "$MODE" = jit ] && EXTRA="--jit-only --backends pcie"
+log "R184 ar-bench mode=$MODE rows=$ROWS backends=$BACKENDS tune=$TUNE image=$IMG fi=$(git -C $FI log --oneline -1)"
 docker run --rm --gpus all --ipc=host --shm-size 8g --name ar-bench \
   -v "$FI":/fi -v /srv/qwen5090/probes:/probes:ro -v "$CACHE":/ficache -v "$R":/out \
   -e PYTHONPATH=/fi -e FLASHINFER_DISABLE_VERSION_CHECK=1 -e FLASHINFER_WORKSPACE_BASE=/ficache \

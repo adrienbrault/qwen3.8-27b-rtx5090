@@ -1,0 +1,75 @@
+{
+  "_metadata": {
+    "flashinfer_version": "0.0.0+unknown",
+    "cuda_version": "13.0",
+    "cublas_version": "13.1.1",
+    "cudnn_version": "92000",
+    "cudnn_frontend_version": "1.27.0",
+    "gpu": "NVIDIA GeForce RTX 5090"
+  },
+  "('flashinfer::pcie_ipc_all_reduce', 'PcieIpcAllReduceRunner', ((1, 5120),), (1, 2, 'rootcplx-noswitch', 128, 41943040, 'torch.bfloat16'))": [
+    "PcieIpcAllReduceRunner",
+    [
+      0,
+      96,
+      64
+    ]
+  ],
+  "('flashinfer::pcie_ipc_all_reduce', 'PcieIpcAllReduceRunner', ((128, 5120),), (1, 2, 'rootcplx-noswitch', 128, 41943040, 'torch.bfloat16'))": [
+    "PcieIpcAllReduceRunner",
+    [
+      1,
+      64,
+      512
+    ]
+  ],
+  "('flashinfer::pcie_ipc_all_reduce', 'PcieIpcAllReduceRunner', ((16, 5120),), (1, 2, 'rootcplx-noswitch', 128, 41943040, 'torch.bfloat16'))": [
+    "PcieIpcAllReduceRunner",
+    [
+      0,
+      128,
+      256
+    ]
+  ],
+  "('flashinfer::pcie_ipc_all_reduce', 'PcieIpcAllReduceRunner', ((2, 5120),), (1, 2, 'rootcplx-noswitch', 128, 41943040, 'torch.bfloat16'))": [
+    "PcieIpcAllReduceRunner",
+    [
+      1,
+      96,
+      128
+    ]
+  ],
+  "('flashinfer::pcie_ipc_all_reduce', 'PcieIpcAllReduceRunner', ((32, 5120),), (1, 2, 'rootcplx-noswitch', 128, 41943040, 'torch.bfloat16'))": [
+    "PcieIpcAllReduceRunner",
+    [
+      1,
+      128,
+      128
+    ]
+  ],
+  "('flashinfer::pcie_ipc_all_reduce', 'PcieIpcAllReduceRunner', ((4, 5120),), (1, 2, 'rootcplx-noswitch', 128, 41943040, 'torch.bfloat16'))": [
+    "PcieIpcAllReduceRunner",
+    [
+      0,
+      128,
+      128
+    ]
+  ],
+  "('flashinfer::pcie_ipc_all_reduce', 'PcieIpcAllReduceRunner', ((64, 5120),), (1, 2, 'rootcplx-noswitch', 128, 41943040, 'torch.bfloat16'))": [
+    "PcieIpcAllReduceRunner",
+    [
+      1,
+      128,
+      256
+    ]
+  ],
+  "('flashinfer::pcie_ipc_all_reduce', 'PcieIpcAllReduceRunner', ((8, 5120),), (1, 2, 'rootcplx-noswitch', 128, 41943040, 'torch.bfloat16'))": [
+    "PcieIpcAllReduceRunner",
+    [
+      0,
+      128,
+      128
+    ]
+  ],
+  "_generation": "820b05930b4560390962c1b0757d8a293768cc2824b8eb30b77b5e6a7747ce4c"
+}

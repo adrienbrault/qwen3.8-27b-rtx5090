@@ -1,0 +1,425 @@
+diff --git a/vllm/distributed/device_communicators/cuda_communicator.py b/vllm/distributed/device_communicators/cuda_communicator.py
+--- a/vllm/distributed/device_communicators/cuda_communicator.py
++++ b/vllm/distributed/device_communicators/cuda_communicator.py
+@@ -2,6 +2,7 @@
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ 
+ 
++import os
+ import torch
+ from torch.distributed import ProcessGroup
+ 
+@@ -127,6 +128,18 @@
+                 ),
+             )
+ 
++        self.pcie_ipc_comm = None
++        if (os.environ.get("VLLM_SM12X_PCIE_IPC_AR", "0") == "1"
++                and tcp_store_group is None):
++            from .pcie_ipc_all_reduce import PcieIpcAllReduce
++
++            self.pcie_ipc_comm = PcieIpcAllReduce(
++                self.cpu_group, self.device, self.ca_comm,
++                use_custom_allreduce and current_platform.is_cuda(),
++            )
++        else:
++            logger.info("PCIe IPC all-reduce disabled: knob off or stateless group")
++
+         if use_custom_allreduce and self.world_size > 1 and current_platform.is_rocm():
+             # Initialize a custom quick all-reduce implementation for AMD.
+             # Quick reduce is designed as a complement to custom allreduce
+@@ -224,6 +237,7 @@
+             "NCCL_SYMM_MEM",
+             "QUICK_REDUCE",
+             "AITER_CUSTOM",
++            "PCIE_IPC",
+             "CUSTOM",
+             "SYMM_MEM",
+             "PYNCCL",
+@@ -259,6 +273,8 @@
+             enabled_ar_backends.append("QUICK_REDUCE")
+         if self.aiter_ar_comm is not None and not self.aiter_ar_comm.disabled:
+             enabled_ar_backends.append("AITER_CUSTOM")
++        if self.pcie_ipc_comm is not None and not self.pcie_ipc_comm.disabled:
++            enabled_ar_backends.append("PCIE_IPC")
+         if self.ca_comm is not None and not self.ca_comm.disabled:
+             enabled_ar_backends.append("CUSTOM")
+         if self.symm_mem_comm is not None and not self.symm_mem_comm.disabled:
+@@ -316,6 +332,9 @@
+             out = aiter_ar_comm.custom_all_reduce(input_)
+             assert out is not None
+             return out
++        pcie_ipc_comm = self.pcie_ipc_comm
++        if pcie_ipc_comm is not None and pcie_ipc_comm.should_use(input_):
++            return pcie_ipc_comm.all_reduce(input_)
+         ca_comm = self.ca_comm
+         if (
+             ca_comm is not None
+diff --git a/vllm/distributed/parallel_state.py b/vllm/distributed/parallel_state.py
+--- a/vllm/distributed/parallel_state.py
++++ b/vllm/distributed/parallel_state.py
+@@ -666,6 +666,7 @@
+         # only cuda uses this function,
+         # so we don't abstract it into the base class
+         maybe_ca_context = nullcontext()
++        maybe_pcie_context = nullcontext()
+         maybe_aiter_context = nullcontext()
+         from vllm.distributed.device_communicators.cuda_communicator import (
+             CudaCommunicator,
+@@ -679,6 +680,11 @@
+                 self.device_communicator,
+                 (CudaCommunicator, XpuCommunicator),
+             )
++            pcie_comm = getattr(self.device_communicator, "pcie_ipc_comm", None)
++            if pcie_comm is not None and not pcie_comm.disabled:
++                # Before stream switch, warmups, or any real CUDA capture.
++                pcie_comm.prepare_for_capture()
++                maybe_pcie_context = pcie_comm.capture()
+             ca_comm = self.device_communicator.ca_comm
+             if ca_comm is not None:
+                 maybe_ca_context = ca_comm.capture()  # type: ignore
+@@ -696,7 +702,12 @@
+         if curr_stream != stream:
+             stream.wait_stream(curr_stream)
+ 
+-        with torch.cuda.stream(stream), maybe_ca_context, maybe_aiter_context:
++        with (
++            torch.cuda.stream(stream),
++            maybe_ca_context,
++            maybe_aiter_context,
++            maybe_pcie_context,
++        ):
+             yield graph_capture_context
+ 
+     def all_reduce(self, input_: torch.Tensor) -> torch.Tensor:
+@@ -1360,6 +1371,10 @@
+         return self.device_communicator.recv(size, dtype, src)
+ 
+     def destroy(self):
++        # PCIe IPC unmapping/freeing is collective and needs the CPU group alive.
++        pcie_comm = getattr(self.device_communicator, "pcie_ipc_comm", None)
++        if pcie_comm is not None:
++            pcie_comm.destroy()
+         if hasattr(self, "device_group"):
+             torch.distributed.destroy_process_group(self.device_group)
+             del self.device_group
+diff --git a/vllm/v1/worker/gpu_worker.py b/vllm/v1/worker/gpu_worker.py
+--- a/vllm/v1/worker/gpu_worker.py
++++ b/vllm/v1/worker/gpu_worker.py
+@@ -1507,12 +1507,20 @@
+         timeout,
+     )
+ 
+-    ensure_model_parallel_initialized(
+-        parallel_config.tensor_parallel_size,
+-        parallel_config.pipeline_parallel_size,
+-        parallel_config.prefill_context_parallel_size,
+-        parallel_config.decode_context_parallel_size,
++    # Make the opt-in communicator's shape and stream safety gates available
++    # at construction, before init_snapshot and determine_available_memory.
++    pcie_config_context = (
++        set_current_vllm_config(vllm_config)
++        if os.environ.get("VLLM_SM12X_PCIE_IPC_AR", "0") == "1"
++        else nullcontext()
+     )
++    with pcie_config_context:
++        ensure_model_parallel_initialized(
++            parallel_config.tensor_parallel_size,
++            parallel_config.pipeline_parallel_size,
++            parallel_config.prefill_context_parallel_size,
++            parallel_config.decode_context_parallel_size,
++        )
+ 
+     # Init ec connector here before KV caches init
+     # NOTE: We do not init KV caches for Encoder-only instance in EPD disagg mode
+diff --git a/vllm/v1/worker/gpu/model_runner.py b/vllm/v1/worker/gpu/model_runner.py
+--- a/vllm/v1/worker/gpu/model_runner.py
++++ b/vllm/v1/worker/gpu/model_runner.py
+@@ -20,7 +20,7 @@
+ import functools
+ import gc
+ import time
+-from contextlib import AbstractContextManager
++from contextlib import AbstractContextManager, nullcontext
+ from copy import deepcopy
+ from typing import Any, NamedTuple
+ 
+@@ -35,6 +35,7 @@
+ from vllm.distributed.parallel_state import (
+     get_dcp_group,
+     get_pp_group,
++    get_tp_group,
+ )
+ from vllm.forward_context import BatchDescriptor, set_forward_context
+ from vllm.logger import init_logger
+@@ -899,6 +900,9 @@
+ 
+     @torch.inference_mode()
+     def capture_model(self) -> int:
++        pcie_comm = getattr(get_tp_group().device_communicator, "pcie_ipc_comm", None)
++        if pcie_comm is not None and not pcie_comm.disabled:
++            pcie_comm.prepare_for_capture(self.vllm_config)
+         assert self.cudagraph_manager is not None
+         capture_encoder = (
+             self.model_state.supports_mm_inputs
+@@ -920,7 +924,8 @@
+         torch.accelerator.empty_cache()
+         start_free_gpu_memory = torch.accelerator.get_memory_info()[0]
+ 
+-        with self.maybe_setup_dummy_loras(self.lora_config):
++        pcie_context = pcie_comm.capture() if pcie_comm is not None else nullcontext()
++        with self.maybe_setup_dummy_loras(self.lora_config), pcie_context:
+             if capture_encoder:
+                 self.model_state.encoder_runner.capture()
+ 
+diff --git a/vllm/v1/worker/gpu/spec_decode/dflash/speculator.py b/vllm/v1/worker/gpu/spec_decode/dflash/speculator.py
+--- a/vllm/v1/worker/gpu/spec_decode/dflash/speculator.py
++++ b/vllm/v1/worker/gpu/spec_decode/dflash/speculator.py
+@@ -1,6 +1,7 @@
+ # SPDX-License-Identifier: Apache-2.0
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ import copy
++from contextlib import nullcontext
+ from collections.abc import Mapping
+ from typing import Any
+ 
+@@ -10,6 +11,7 @@
+ 
+ from vllm.config import VllmConfig, replace
+ from vllm.config.compilation import CUDAGraphMode
++from vllm.distributed.parallel_state import get_tp_group
+ from vllm.forward_context import BatchDescriptor, set_forward_context
+ from vllm.logger import init_logger
+ from vllm.triton_utils import tl, triton
+@@ -150,22 +152,28 @@
+                 self._speculator_name,
+             )
+             return
++        pcie_comm = getattr(get_tp_group().device_communicator, "pcie_ipc_comm", None)
++        if pcie_comm is not None and not pcie_comm.disabled:
++            # Runtime config, not the target's 5120 or auxiliary concatenation.
++            pcie_comm.prepare_draft(self.draft_model_config.get_hidden_size(), self.dtype)
+         logger.info("Capturing model for %s speculator...", self._speculator_name)
+         # Padded sample rows must not scatter into a live request during capture.
+         self.sample_indices.zero_()
+         self.sample_pos.zero_()
+         self.sample_idx_mapping.fill_(-1)
+         assert self.query_cudagraph_manager is not None
+-        self.query_cudagraph_manager.capture(
+-            self._generate_draft,
+-            self.input_buffers,
+-            self.block_tables,
+-            self.attn_groups,
+-            self.kv_cache_config,
+-            self.max_model_len,
+-            causal=self._group_causal,
+-            progress_bar_desc=f"Capturing {self._speculator_name.lower()} CUDA graphs",
+-        )
++        pcie_context = pcie_comm.capture() if pcie_comm is not None else nullcontext()
++        with pcie_context:
++            self.query_cudagraph_manager.capture(
++                self._generate_draft,
++                self.input_buffers,
++                self.block_tables,
++                self.attn_groups,
++                self.kv_cache_config,
++                self.max_model_len,
++                causal=self._group_causal,
++                progress_bar_desc=f"Capturing {self._speculator_name.lower()} CUDA graphs",
++            )
+ 
+     def load_draft_model(
+         self,
+diff --git a/vllm/distributed/device_communicators/pcie_ipc_all_reduce.py b/vllm/distributed/device_communicators/pcie_ipc_all_reduce.py
+--- /dev/null
++++ b/vllm/distributed/device_communicators/pcie_ipc_all_reduce.py
+@@ -0,0 +1,189 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Opt-in TP2 PCIe all-reduce for the R185 served image.
++
++No exception-driven fallback after launching a collective. Initialization
++failures are agreed across the CPU group; per-call gates are metadata-only.
++"""
++
++import json
++import os
++from contextlib import nullcontext
++
++import torch
++import torch.distributed as dist
++
++from vllm.config import get_current_vllm_config_or_none
++from vllm.logger import init_logger
++
++logger = init_logger(__name__)
++
++
++class PcieIpcAllReduce:
++    def __init__(self, group, device, custom_comm, allowed):
++        self.disabled = True
++        self.workspace = None
++        self.config = get_current_vllm_config_or_none()
++        self.extra_shapes = []
++        self.hiddens = {5120}
++        reason = None
++        # Static group facts: never enter TP2 ownership code at another size.
++        if dist.get_world_size(group) != 2:
++            reason = "requires world size 2"
++        elif dist.get_backend(group) != "gloo":
++            reason = "requires the existing TP Gloo control group"
++        if reason is not None:
++            logger.info("PCIe IPC all-reduce disabled: %s", reason)
++            return
++
++        # Keep this first exchange independent of the vendored package: a
++        # missing/broken installation on one rank cannot strand its peer.
++        error = None
++        try:
++            reason = self._disabled_reason(allowed, custom_comm, device)
++            from pcie_ipc_ar21.workspace import (
++                JointFailure,
++                PcieIpcAllReduceWorkspace,
++            )
++            if reason is None:
++                self.extra_shapes = self._parse_shapes(
++                    os.environ.get("VLLM_SM12X_PCIE_IPC_PREPARE_SHAPES", "[]")
++                )
++        except Exception as exc:
++            error = f"{type(exc).__name__}: {exc}"
++        with torch.inference_mode(False):
++            outcomes = [None, None]
++            dist.all_gather_object(outcomes, (reason, error, self.extra_shapes), group=group)
++        if any(item[0] or item[1] for item in outcomes) or outcomes[0] != outcomes[1]:
++            logger.info("PCIe IPC all-reduce disabled: rank prerequisites %s", outcomes)
++            return
++
++        try:
++            self.workspace = PcieIpcAllReduceWorkspace(group, device)
++            self.prepare_for_capture(self.config)
++        except JointFailure as exc:
++            if self.workspace is not None:
++                self.workspace.destroy()
++                self.workspace = None
++            logger.info("PCIe IPC all-reduce disabled: %s", exc)
++            return
++        # Set only after all allocations, agreements and preparation succeeded.
++        self.disabled = False
++        logger.info(
++            "PCIe IPC all-reduce enabled: TP2 bf16, max_rows=320, "
++            "max_numel=1638400, slab_bytes=26223744; fixed R184 tactics "
++            "transplanted from max_numel=41943040 (no boot autotuning)"
++        )
++
++    def _disabled_reason(self, allowed, custom_comm, device):
++        if not allowed:
++            return "custom all-reduce disabled, non-TP group, or non-CUDA platform"
++        if custom_comm is None or custom_comm.disabled or custom_comm.mnnvl_only:
++            return "requires enabled same-node CustomAllreduce/P2P fallback"
++        if torch.cuda.get_device_capability(device) != (12, 0):
++            return "requires sm_120"
++        if torch.cuda.get_device_name(device) != "NVIDIA GeForce RTX 5090":
++            return "fixed tuning data requires RTX 5090"
++        if torch.version.cuda != "13.0":
++            return "fixed tuning data requires CUDA 13.0 torch build"
++        config = self.config
++        if config is None:
++            return "worker config unavailable at communicator construction"
++        parallel = config.parallel_config
++        if parallel.enable_dbo:
++            return "DBO may overlap forward streams"
++        if any(getattr(parallel, name, 1) != 1 for name in (
++            "pipeline_parallel_size", "data_parallel_size",
++            "prefill_context_parallel_size", "decode_context_parallel_size",
++        )):
++            return "only TP2 with PP/DP/PCP/DCP=1 is supported"
++        model = config.model_config
++        if model.dtype != torch.bfloat16 or model.get_hidden_size() != 5120:
++            return "requires bf16 target hidden size 5120"
++        if model.is_moe or config.lora_config is not None:
++            return "MoE/LoRA auxiliary forward streams are outside this contract"
++        if model.enable_sleep_mode:
++            return "raw IPC allocations do not support sleep/offload lifecycle"
++        spec = config.speculative_config
++        if spec is not None and spec.method != "dflash":
++            return "only the sequential DFlash drafter is supported"
++        return None
++
++    @staticmethod
++    def _parse_shapes(text):
++        value = json.loads(text)
++        if not isinstance(value, list):
++            raise ValueError("PREPARE_SHAPES must be a JSON list of [rows, hidden]")
++        for shape in value:
++            if not (isinstance(shape, list) and len(shape) == 2
++                    and all(type(x) is int and x > 0 for x in shape)):
++                raise ValueError("PREPARE_SHAPES entries must be two positive integers")
++        return sorted(set(tuple(shape) for shape in value))
++
++    def _prepare(self, shapes, dtype=torch.bfloat16):
++        if self.workspace is None:
++            return
++        # The complete request is agreed even on repeat calls; skipping a
++        # collective based on rank-local cache state can deadlock the group.
++        added = self.workspace.prepare(shapes, dtype)
++        self.hiddens.update(h for _, h in added)
++        if added:
++            logger.info(
++                "PCIe IPC prepared resolved shapes=%s dtype=%s; hidden=5120 "
++                "uses fixed floor buckets, other hiddens use the TP2 seed",
++                sorted(added), dtype,
++            )
++
++    def prepare_for_capture(self, config=None):
++        from pcie_ipc_ar21.fixed_config import CAPTURE_ROWS, MAX_ROWS
++
++        from pcie_ipc_ar21.workspace import stage
++
++        config = config or self.config
++
++        def capture_shapes():
++            sizes = (config.compilation_config.cudagraph_capture_sizes
++                     if config is not None else None) or CAPTURE_ROWS
++            shapes = [(int(rows), 5120) for rows in sizes] + self.extra_shapes
++            # Cover post-config padding/adjustment too, even for runner helpers
++            # absent from the dump. This is CPU metadata, not 320 GPU buffers.
++            shapes += [(rows, 5120) for rows in range(1, MAX_ROWS + 1)]
++            spec = config.speculative_config if config is not None else None
++            if spec is not None and spec.method == "dflash":
++                hidden = spec.draft_model_config.get_hidden_size()
++                # The dumped CudaGraphManager base/config is missing. Resolve a
++                # bounded superset of EVERY possible padded query row count, not
++                # an invented num_reqs * query_len capture schedule.
++                shapes += [(rows, hidden) for rows in range(1, MAX_ROWS + 1)]
++            return shapes
++
++        if self.workspace is not None:
++            shapes = stage(self.workspace.group, "reading capture shapes", capture_shapes)
++            self._prepare(shapes)
++
++    def prepare_draft(self, hidden, dtype):
++        from pcie_ipc_ar21.fixed_config import MAX_ROWS
++
++        self._prepare([(rows, int(hidden)) for rows in range(1, MAX_ROWS + 1)], dtype)
++
++    def should_use(self, inp):
++        ws = self.workspace
++        if self.disabled or ws is None or not ws.supports(inp):
++            return False
++        if inp.shape[1] not in self.hiddens:
++            return False
++        # No lazy resolution, collective, or exception for a capture cache miss.
++        if torch.cuda.is_current_stream_capturing() and not ws.is_resolved(inp):
++            return False
++        return True
++
++    def all_reduce(self, inp):
++        return self.workspace.all_reduce(inp)
++
++    def capture(self):
++        return self.workspace.capture() if not self.disabled else nullcontext()
++
++    def destroy(self):
++        if self.workspace is not None:
++            self.workspace.destroy()
++            self.workspace = None
++        self.disabled = True
