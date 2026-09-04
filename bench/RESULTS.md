@@ -139,11 +139,11 @@ One chain on the bf16-state daily flags (`EXP=1` path of `scripts/serve-r168-dai
 
 | streams | ms per step | GEMM | custom all-reduce | drafter | GDN | attention | inter-kernel gaps |
 |---|---|---|---|---|---|---|---|
-| 1 | 18.4 (14.4 busy) | 7.1 (265 calls, 27 µs) | 2.7 (143 calls, 19 µs) | 0.9 | 0.7 | 0.6 | 22%, about 1,400 kernels per step |
+| 1 | 18.4 (14.4 busy) | 7.1 (265 calls, 27 µs) | 2.7 (143 calls, 19 µs) | 0.9 | 0.7 | 0.6 | 22%; about 1,400 small kernels per step (elementwise, Triton, FP4 quant, copies), about 2,000 device events in total |
 | 8 | 24.9 | 8.4 | 6.8 (49 µs per call) | | | | 12% |
 | 16 | 38.1 | 11.1 | 12.6 (90 µs per call, 33% of the step) | | 3.2 | | 7% |
 
-The two ranks are symmetric. The cost that grows with concurrency is the custom all-reduce kernel, from 15% of the step at 1 stream to 33% at 16; at 1 stream the step is a third gaps between small kernels.
+The two ranks are symmetric. The cost that grows with concurrency is the custom all-reduce kernel, from 15% of the step at 1 stream to 33% at 16; at 1 stream 22% of the step is gaps between small kernels. NCCL all-gathers remain in decode at about 3 per step (0.18 / 1.01 / 1.99 ms at 1 / 8 / 16 streams, the vocabulary gathers); no NCCL all-reduce does.
 
 **Correction of R158.** R158 reported NCCL at 16 ms per step, 35% of the step at 8 streams. That trace was llama-benchy's 2,048-token prefill chunks: a 21 MB all-reduce exceeds the 8 MiB cap of the custom all-reduce and goes through the NCCL ring, and the call counts (k × 128 + k) match the prefill steps ([scripts/nccl_ctx.py](../scripts/nccl_ctx.py) shows GEMM-heavy prefill kernels on both sides of every NCCL call). Decode all-reduces stay under the cap and never touch NCCL. NCCL is not a decode cost on this box.
 
@@ -160,7 +160,7 @@ The two ranks are symmetric. The cost that grows with concurrency is the custom 
 | AR-symm | replicate | 308 † | 159 | 1,376 | 1,764 | 92.771% / +0.744% |
 | FU-sptp | replicate (`enable_sp`, `fuse_gemm_comms`: inert) | 306 | 159 | 1,363 | 1,767 | 92.771% / +0.744% |
 | LB-flashinfer_b12x | NVFP4 GEMM kernel FlashInferB12x | 285 | 177 | 1,388 | 1,833 | 92.769% / +0.758% |
-| LB-flashinfer_cudnn | NVFP4 GEMM kernel FlashInferCudnn | 234 | | 1,339 | | 92.759% / +0.808% |
+| LB-flashinfer_cudnn | NVFP4 GEMM kernel FlashInferCudnn | 234 | 155 | 1,339 | 1,785 | 92.759% / +0.808% |
 | FU-arrms | `fuse_allreduce_rms` (matched nothing) | 253 | 168 | 1,334 | 1,785 | 92.806% / +0.756% |
 | FU-arrms2 | same plus custom op `+rms_norm` | 286 | 172 | 1,398 | 1,835 | 92.773% / +0.761% |
 | FU-all | all fusion passes | 257 | 169 | 1,363 | 1,811 | 92.806% / +0.756% |
