@@ -14,17 +14,22 @@ Since 2026-09-04: vLLM 0.29 with an NVFP4 KV cache on two cards, launcher [scrip
 | KV pool on the GPUs | 903,793 tokens at 16 sequences, pinned at 13.98 GB per card (937,795 at 8 sequences, 14.5 GB) | 2026-09-04, `results/2026-09-02-miniswe-rh-r174-nvfp4` (16), `results/2026-09-04-r174-promote` (8) |
 | CPU KV tier | 16 GiB, 1,013 blocks | 2026-09-04, `results/2026-09-04-r172-cputier` |
 | disk KV tier | 300 GB cap with LRU eviction, survives restarts | 2026-09-04, `results/2026-09-03-r170-tier-evict` |
-| decode, code, 1 stream | 244 t/s (two runs, 226 and 261) | 2026-09-04, `results/2026-09-04-r174-promote` |
-| decode, prose, 1 stream | 172 t/s (two boots, 171.6 and 171.1) | 2026-09-04, `results/2026-09-04-r173b-ns-confirm` |
-| decode, prose, 1 stream at 30K context | 147 t/s (two boots, 147.6 and 146.4) | same |
-| decode, code, 8 streams | 1,134 and 1,146 t/s aggregate (two boots) | same |
+| decode, code, 1 stream | 244 t/s at the promotion boot (two runs, 226 and 261); 324 and 287 t/s on the live daily at 16 sequences (two batteries of three runs, 279 to 335) | 2026-09-04, `results/2026-09-04-r174-promote`, `results/2026-09-04-r177-matrix` |
+| decode, prose, 1 stream | 172 t/s (two boots, 171.6 and 171.1); 166 on the live daily at 16 sequences (three runs, 162 to 204) | 2026-09-04, `results/2026-09-04-r173b-ns-confirm`, `results/2026-09-04-r177-matrix` |
+| decode, prose, 1 stream at 30K context | 147 t/s (two boots, 147.6 and 146.4); 149 at 16 sequences (two runs) | same |
+| decode, code, 8 streams | 1,134 and 1,146 t/s aggregate (two boots); 1,241 at 16 sequences (two runs, 155 per stream) | same |
+| decode, code, 15 streams | 1,576 t/s aggregate, 105 per stream (two runs, 1,571 and 1,582). The engine admits 15 of the 16 configured sequences, see below | 2026-09-04, `results/2026-09-04-r177-matrix` |
 | prefill, 2K prompt, 1 request | 8,757 t/s (three runs, sd 36) | 2026-09-04, `results/2026-09-04-r173-c1-opt`, llama-benchy |
-| tool-eval, 69 scenarios × 4 trials, parallel 8 | 91, one run | 2026-09-04, `results/2026-09-04-r174-promote` |
+| prefill, 8K and 100K prompt, 1 request, from time to first token | 8.1K and 6.4K t/s (two runs each) | 2026-09-04, `results/2026-09-04-r177-matrix`, decode_ss |
+| tool-eval, 69 scenarios × 4 trials, parallel 8 | 91 at the promotion boot; 89.5 ± 1.3 on the live daily at 16 sequences, one run each | 2026-09-04, `results/2026-09-04-r174-promote`, `results/2026-09-04-r177-matrix` |
+| GSM8K cot zero-shot, n=120, temperature 0, flexible extract | 0.85 ± 0.03 (0.86 ± 0.03 on the same checkpoint on the fp8 shape, 2026-09-01) | 2026-09-04, `results/2026-09-04-r177-matrix`; `results/2026-09-01-r156-bf16-ladder` |
 | dense text vs the bf16 model: top-1 agreement / perplexity delta / truncated KL | 92.80% / +0.75% / 0.0140 | 2026-09-04, `results/2026-09-04-r168e-splitkv-bf16` |
 | agentic turns vs the bf16 model: top-1 / perplexity delta | 95.67% / +2.61% | same |
 | SWE-Bench Verified, mini-SWE-agent, one attempt | 388/500 = 77.6% | 2026-09-04, `results/2026-09-02-miniswe-rh-r174-nvfp4` |
 
 Decode numbers are steady-state tokens per second from [scripts/decode_ss.py](scripts/decode_ss.py) (512 generated tokens, content stated in the results directory), not llama-benchy means. Single-stream decode swings up to 20% between runs inside one boot on this box, so the one-stream cells are ranges, not points.
+
+At `--max-num-seqs 16` the engine runs 15 sequences and queues the 16th: under 16 and under 17 concurrent streams the running gauge holds at 15, and it never exceeded 15 across the SWE-Bench campaign or a 16-way GSM8K run. At 8 sequences all 8 ran. The scheduler's sequence cap and the DFlash draft-slot budget both allow 16; the cause is not identified (`results/2026-09-04-r177-matrix`).
 
 What the route trades against the two-card fp8 shape it replaced, measured the same day on the same box:
 
@@ -91,18 +96,18 @@ Three shapes remain runnable and documented:
 - **One card, nvfp4 KV, MTP on vLLM 0.28.0** ([scripts/serve-v0280-daily.sh](scripts/serve-v0280-daily.sh)): the shape for a single RTX 5090.
 - **Two cards, nvfp4 KV, MTP on vLLM 0.28.0** (`serve-v0280-daily.sh` with `TP=2`): the capacity shape: 1,508,519 tokens of pool and 2,007 t/s aggregate at 16 streams in the table below, at 225 t/s single stream.
 
-The three measured on 2026-08-31 on the gittensor checkpoint, same day, same harness, `results/2026-08-31-r142-matrix`. The RedHatAI checkpoint costs about 6% decode, 14% prefill and 12% pool on the fp8 shape relative to these numbers.
+The three measured on 2026-08-31 on the gittensor checkpoint, same day, same harness, `results/2026-08-31-r142-matrix`. The RedHatAI checkpoint costs about 6% decode, 14% prefill and 12% pool on the fp8 shape relative to these numbers. The last column is the served route, read on 2026-09-04 on the RedHatAI checkpoint at 16 sequences with the same instrument on the live daily (`results/2026-09-04-r177-matrix`); checkpoint and day differ from the other three.
 
-| | one card | two cards, DFlash2, fp8 KV | two cards, MTP, nvfp4 KV |
-|---|---|---|---|
-| KV pool at 262K | 381,300 | 746,849 | 1,508,519 |
-| decode, code, 1 stream | 175.0 t/s | 298.9 | 225.3 |
-| decode, code, 8 streams | 1,187 | 1,289 | 1,349 |
-| decode, code, 16 streams | not admitted | 1,522 | 2,007 |
-| decode at 100K context | 106.7 | 174.4 | 137.5 |
-| prefill at 8K | 11.9K t/s | 9.3K | 9.0K |
-| prefill at 100K | 4.7K | 7.0K | 6.3K |
-| tool-eval ×4 | 89.2 ± 1.7 | 89.8 ± 1.3 | 90.2 ± 1.0 |
+| | one card | two cards, DFlash2, fp8 KV | two cards, MTP, nvfp4 KV | served: two cards, DFlash2, nvfp4 KV, vLLM 0.29 (2026-09-04) |
+|---|---|---|---|---|
+| KV pool at 262K | 381,300 | 746,849 | 1,508,519 | 903,793 |
+| decode, code, 1 stream | 175.0 t/s | 298.9 | 225.3 | 323.8 and 286.6 (two batteries) |
+| decode, code, 8 streams | 1,187 | 1,289 | 1,349 | 1,241 |
+| decode, code, 16 streams | not admitted | 1,522 | 2,007 | 1,576 at 15 streams (the 16th is queued) |
+| decode at 100K context | 106.7 | 174.4 | 137.5 | 152.8 |
+| prefill at 8K | 11.9K t/s | 9.3K | 9.0K | 8.1K |
+| prefill at 100K | 4.7K | 7.0K | 6.3K | 6.4K |
+| tool-eval ×4 | 89.2 ± 1.7 | 89.8 ± 1.3 | 90.2 ± 1.0 | 89.5 ± 1.3 |
 
 DFlash2 accepts few draft tokens per step, so its decode is bound by weight bandwidth, which the second card doubles. MTP accepts more, amortizes the weight reads, and turns the second card into KV space instead. Tool-eval does not separate the three; the bf16 rulers above do, by the KV dtype.
 
