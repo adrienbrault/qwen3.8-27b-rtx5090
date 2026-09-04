@@ -9,7 +9,8 @@ The sections below describe the v0.28 fp8 shape, which is unchanged and remains 
 | flag / env | value | why |
 |---|---|---|
 | image | `vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616` | v0.29.0rc2 + patches-v0290 + FlashInfer 0.6.16.post3 swap; the boot fails if `flashinfer.__version__` is not 0.6.16.x |
-| `--kv-cache-dtype nvfp4` | block 2,944 tokens | +43% pool vs fp8 at the same VRAM |
+| `--kv-cache-dtype nvfp4` | block 2,944 tokens with the fp32 SSM state, 1,584 with bf16 (since 2026-09-04 16:24 UTC) | +43% pool vs fp8 at the same VRAM |
+| `--mamba-ssm-cache-dtype bfloat16` | the GDN state page halves, so the attention block drops to 1,584 tokens and the pool reads 1,020,596 at the same pin | a request costs 3.4% of the pool at admission instead of 6.4% and a 100K prompt 15.9% instead of 25.1%; five 100K contexts co-resident instead of four; dense/agentic bf16 rulers neutral, 80-chunk decode ruler at 30K 0.00576 vs 0.00443 median log-prob distance (`results/2026-09-04-r180-pool-cost-clean`, `-r181-ssm-bf16-ruler`, `-r182-promote-ssm-bf16`) |
 | `--kv-cache-memory-bytes 13980000000`, `--max-num-seqs 16` | pinned per SEQS (14.5 GB at 8, 13.44 GB at 32); 16 sequences since 2026-09-04 (pool 903,793; 937,795 at 8) because 16 streams gave +34% aggregate decode over 8 on the fp8 shape (R159) | the utilization path sizes the pool before CUDA-graph capture and OOMs on the first request (Bug C); the boot fails under 512 MiB free after pre-warm |
 | `--gpu-memory-utilization 0.88` | | headroom for the drafter graphs; the pin, not util, sets the pool |
 | `--max-num-batched-tokens 8192`, `VLLM_SM12X_NVFP4_XQA=0`, FlashInfer workspace 512 MiB | | the Bug B dodge: nvfp4 prefill above about 4,929 tokens corrupts under XQA decode on this stack |
