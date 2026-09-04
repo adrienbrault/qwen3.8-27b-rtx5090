@@ -18,7 +18,7 @@ The sections below describe the v0.28 fp8 shape, which is unchanged and remains 
 | speculative config | `{"method":"dflash","num_speculative_tokens":9,"draft_tensor_parallel_size":2,"attention_backend":"FLASHINFER"}` | ns9; ns7 was retracted on the bf16 decode ruler (R173c); draft_tp1 needs a lower pin |
 | `--offload-backend uva --cpu-offload-gb 1 --cpu-offload-params embed_tokens` | embedding table in pinned host RAM | +9% pool at no measured cost (R167); the boot fails unless 1.18 GB was offloaded |
 | tier `cpu_bytes_to_use` | 16 GiB (about 1,010 blocks) | every disk-tier hit is promoted through the CPU tier, so a prompt is served only if all its blocks fit there (R172) |
-| tier `max_capacity_gb` / `min_free_gb` / `evict_scope` | 300 / 40 / root | LRU eviction inside vLLM's fs tier (patch 0137); upstream has none and the tier stranded the engine at 100% on 2026-09-01 |
+| tier `max_capacity_gb` / `min_free_gb` / `evict_scope` | 300 / 40 / root | LRU eviction inside vLLM's fs tier (patch 0137); upstream has none and the tier stranded the engine at 100% on 2026-09-01. The serving host's tier is a 393 GB image; `setup-native-l2.sh` in the quick start creates a 200 GB one, on which the 300 GB cap never engages and only `min_free_gb` does the evicting — set `TIER_CAP_GB` below the image size or resize the image |
 | `NCCL_P2P_LEVEL=SYS`, TP=2 | | unchanged from the fp8 shape |
 
 ## Image

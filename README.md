@@ -16,7 +16,7 @@ The served configuration (two cards, since 2026-09-04: vLLM 0.29 with nvfp4 KV, 
 | decode, 8 streams, code, steady state | 1,134–1,146 t/s aggregate (2026-09-04, two boots) |
 | perplexity gap vs the bf16 model | +0.75% |
 | top-1 agreement with the bf16 model, dense text / agentic turns | 92.8% / 95.7% |
-| decode-path distance to bf16 at 30K context, median abs Δlogprob | 0.0052 (the fp8-KV shape it replaced: 0.0062) |
+| decode-path distance to bf16 at 30K context, median abs Δlogprob | 0.0052 (rc2 fp8-KV arm measured the same day: 0.0062; the v0.28 fp8 daily's decode path was never dumped against bf16) |
 | tool-eval, SWE-Bench | not yet run on this route; the fp8 shape scored 90.8 ± 0.5 and 386/500 |
 
 Agentic benchmarks: SWE-Bench Verified **386/500 = 77.2%** on the two-card fp8 configuration served 2026-09-02 to 09-04 (2026-09-03, mini-SWE-agent 2.4.6, official harness, one attempt); earlier one-card configurations scored 331/500 = 66.2% (2026-08-21, saka checkpoint, R2E-Gym scaffold) and Terminal-Bench 2.1 50/89 = 56.2% (2026-08-23, gittensor checkpoint, Harbor with terminus-2). Details in [bench/RESULTS.md](bench/RESULTS.md).

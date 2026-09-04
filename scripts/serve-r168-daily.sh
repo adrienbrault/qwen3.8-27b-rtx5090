@@ -17,10 +17,14 @@
 #   SEQS 8 leaves 1,311–1,809 MiB free after pre-warm across boots (r173b); the guard below fails the boot under MIN_FREE_MIB.
 # Bug B dodge ASSERTED (XQA off, MNBT 8192, FIWS 512 MiB): nvfp4 prefill above MNBT≈4,929 corrupts under XQA (R155).
 # EXP=1 → :8029 / vllm-exp / eval-l2 (batteries); EXP=eval → :8030 / vllm-eval; default → :8020 daily. Experiments may pass
-#   CAND_IMG / SPLIT_KV / OFFLOAD / KV_BYTES / SEQS / SPEC_NS / SPEC_DTP / TIER_* / CPUB; the daily port ignores the env.
+#   CAND_IMG / SPLIT_KV / OFFLOAD / KV_BYTES / SEQS / SPEC_NS / SPEC_DTP / TIER_* / CPUB; the daily port ignores the env. Since the
+#   promotion, experiments default to the DAILY image (fi0616) — pass CAND_IMG=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs for the 0.6.18 rc2 image.
 # Rollback: bash /srv/qwen5090/launch-daily-redhat-fp8-0902.sh  (v0.28 fp8 daily, frozen copy; tear this one down first)
 set -uo pipefail
-EXP=${EXP:-0}; EXP_SEQS=${SEQS:-8}; KV_BYTES=${KV_BYTES:-}; MIN_FREE_MIB=${MIN_FREE_MIB:-512}; OFFLOAD=${OFFLOAD:-1}; SPLIT_KV=${SPLIT_KV:-0}
+EXP=${EXP:-0}; EXP_SEQS=${SEQS:-8}; KV_BYTES=${KV_BYTES:-}; OFFLOAD=${OFFLOAD:-1}; SPLIT_KV=${SPLIT_KV:-0}
+# Daily: pool band 900–980K around the deterministic 937,795 and a 512 MiB free floor. Experiments keep the candidate launcher's
+# 850K–1M band (the SEQS 16/32 pins land at ~904K / ~869K) and its 384 MiB Bug C floor (the r17x boot_cand retry ladders expect it).
+if [ "$EXP" = 0 ]; then MIN_FREE_MIB=${MIN_FREE_MIB:-512}; P_MIN=900000; P_MAX=980000; else MIN_FREE_MIB=${MIN_FREE_MIB:-384}; P_MIN=850000; P_MAX=1000000; fi
 DAILY_IMG=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616
 # Tier knobs (0137): the daily boots with a 300 GB LRU cap on the 393 GB native-l2 fs, evict_scope root (stale namespaces from
 # other configs are evicted too), 40 GB min-free (the launcher's own GC threshold). Experiments (EXP≠0) honour the env, unset = no cap.
@@ -52,7 +56,7 @@ case "$NS_$DTP_" in *[!0-9]*) echo "FAILED: SPEC_NS/SPEC_DTP must be integers (g
 sudo docker image inspect "$IMG" >/dev/null 2>&1 || { echo "FAILED: image $IMG missing (build: build-v0290rc2.sh + the fi0616 swap layer)"; exit 1; }
 env PORT=$PORT NAME=$NAME BIND_ADDR=$BIND MODEL_DIR="$MODEL" TP=2 L2MNT="$L2" CPUB=$CPU_B ${T_CAP:+TIER_CAP_GB=$T_CAP} ${T_SCOPE:+TIER_EVICT_SCOPE=$T_SCOPE} ${T_MINFREE:+TIER_MIN_FREE_GB=$T_MINFREE} \
     IMAGE="$IMG" KVD_OVERRIDE=nvfp4 ALLOW_NO_XQA=1 \
-    NO_TIER=0 FIWS=536870912 MNBT=8192 SEQS=$SEQS UTIL=0.88 MAXLEN=262144 POOL_MIN=900000 POOL_MAX=980000 \
+    NO_TIER=0 FIWS=536870912 MNBT=8192 SEQS=$SEQS UTIL=0.88 MAXLEN=262144 POOL_MIN=$P_MIN POOL_MAX=$P_MAX \
     EXTRA_MOUNT="-v $DRAFT:/draft:ro $XMOUNT" \
     EXTRA_ARGS="--kv-cache-memory-bytes $KV_BYTES $OFFLOAD_ARGS $XARGS" \
     SPEC_JSON='{"method":"dflash","model":"/draft","num_speculative_tokens":'$NS_',"draft_tensor_parallel_size":'$DTP_',"attention_backend":"FLASHINFER"}' \
