@@ -22,7 +22,7 @@ Since 2026-09-04: vLLM 0.29 with an NVFP4 KV cache on two cards, launcher [scrip
 | tool-eval, 69 scenarios × 4 trials, parallel 8 | 91, one run | 2026-09-04, `results/2026-09-04-r174-promote` |
 | dense text vs the bf16 model: top-1 agreement / perplexity delta / truncated KL | 92.80% / +0.75% / 0.0140 | 2026-09-04, `results/2026-09-04-r168e-splitkv-bf16` |
 | agentic turns vs the bf16 model: top-1 / perplexity delta | 95.67% / +2.61% | same |
-| SWE-Bench Verified | not run on this route | |
+| SWE-Bench Verified, mini-SWE-agent, one attempt | 388/500 = 77.6% | 2026-09-04, `results/2026-09-02-miniswe-rh-r174-nvfp4` |
 
 Decode numbers are steady-state tokens per second from [scripts/decode_ss.py](scripts/decode_ss.py) (512 generated tokens, content stated in the results directory), not llama-benchy means. Single-stream decode swings up to 20% between runs inside one boot on this box, so the one-stream cells are ranges, not points.
 
@@ -33,7 +33,7 @@ What the route trades against the two-card fp8 shape it replaced, measured the s
 - The fidelity cost is the NVFP4 KV cost measured in R156 and unchanged across vLLM versions: 0.3 points of top-1 agreement and 0.4 points of perplexity against bf16. The rc2 image with fp8 KV scores the same as the v0.28 fp8 daily (table below), so the 0.29 chain itself is fidelity-neutral.
 - Decode, paired against the rc2 image with fp8 KV (`results/2026-09-03-r169-rc2`, decode_ss): code 1 stream 245 vs 227, 30K context 155 vs 164, code 8 streams 1,110 vs 1,153 (`results/2026-09-04-r173-c1-opt`). Prefill at 2K: 8,757 vs 8,548 (`results/2026-09-03-r166-gates`). Tool-eval on the same instrument: 91 vs 88.
 
-The fp8 shape scored SWE-Bench Verified 386/500 = 77.2% on 2026-09-03 (mini-SWE-agent 2.4.6, official harness, one attempt, `results/2026-09-02-miniswe-rh`). That number belongs to the rollback configuration, not to the served one. Earlier one-card configurations scored 331/500 = 66.2% (2026-08-21, saka checkpoint, R2E-Gym scaffold) and Terminal-Bench 2.1 50/89 = 56.2% (2026-08-23, gittensor checkpoint, Harbor with terminus-2).
+The served route scored SWE-Bench Verified 388/500 = 77.6% on 2026-09-04 (mini-SWE-agent 2.4.6, official harness, one attempt, 12 workers, 3 h 37 min, `results/2026-09-02-miniswe-rh-r174-nvfp4`). The fp8 shape scored 386/500 = 77.2% on 2026-09-03 with the same harness (`results/2026-09-02-miniswe-rh`). Paired on the 497 instances both runs completed, 351 were resolved by both, 34 only by the fp8 shape and 37 only by the served route, so the two score the same. Earlier one-card configurations scored 331/500 = 66.2% (2026-08-21, saka checkpoint, R2E-Gym scaffold) and Terminal-Bench 2.1 50/89 = 56.2% (2026-08-23, gittensor checkpoint, Harbor with terminus-2).
 
 ## Hardware
 
