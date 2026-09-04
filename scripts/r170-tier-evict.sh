@@ -83,7 +83,8 @@ arm(){ local A=$1 fail=0 ev bu
   [ "${ev:-0}" -gt 0 ] || { log "[$A] FAIL: evicted_files=$ev (no eviction fired under a flood that exceeds the cap)"; fail=1; }
   [ "${bu:-0}" -le $((CAP*1000000000)) ] || { log "[$A] FAIL: bytes_used $bu > cap"; fail=1; }
   dfb=$(df -B1 --output=used "$L2" | tail -1); [ "$dfb" -le $(( (CAP+8)*1000000000 )) ] || { log "[$A] FAIL: df used $dfb > cap+8G — accounting and disk disagree"; fail=1; }
-  # (2) concurrency: two floods + re-asks interleaved
+  # (2) concurrency: two floods + re-asks interleaved (SKIP_CONC=1 skips it: validated by the first run 2026-09-03 22:26 UTC)
+  if [ "${SKIP_CONC:-0}" != 1 ]; then
   python3 /srv/qwen5090/probes/needle_depth.py --url $U/v1 --model qwen3.8-27b --seed r170a --depths 131000 --samples 1 --evict 6 --evict-ctx 90000 --evict-reasks 2 --evict-reask-gap 5 --out "$R/needles-$A-conc-a.jsonl" > "$R/needles-$A-conc-a.out" 2>&1 & pa=$!
   python3 /srv/qwen5090/probes/needle_depth.py --url $U/v1 --model qwen3.8-27b --seed r170b --depths 131000 --samples 1 --evict 6 --evict-ctx 90000 --evict-reasks 2 --evict-reask-gap 5 --out "$R/needles-$A-conc-b.jsonl" > "$R/needles-$A-conc-b.out" 2>&1 & pb=$!
   wait $pa; ra=$?; wait $pb; rb=$?
@@ -92,6 +93,7 @@ arm(){ local A=$1 fail=0 ev bu
   [ $ra = 0 ] && [ $rb = 0 ] || fail=1
   curl -sf -m 5 $U/health >/dev/null || { log "[$A] FAIL: engine dead after the concurrent floods"; fail=1; }
   tmetrics "$A after-conc"; usage "$A after-conc"; errlines "$A after-conc" || fail=1
+  fi
   # (3) restart revisit: startup scan must repopulate the accounting
   # r170 first run (22:26 UTC): `docker restart` of the rc2 candidate faulted in capture_model (Xid 31 on both GPUs) and crash-looped
   # under restart=unless-stopped, while fresh boots of the same image never fail; the daily's real restart is a fresh container
