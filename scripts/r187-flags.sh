@@ -12,7 +12,7 @@
 # Every arm: bat_decode (decode_ss code c1×2 / prose c1×2 / code c8×2 / code c16×1) + decode ruler ctx0 vs bf16 + smi summary;
 # BASE/MNBT arms add ttft 8k/36k/120k; MNBT arms add the dense ruler. Queued behind miniswe-r183 (GPU_QUEUE_NAME registers it so
 # the campaign's finish() skips the daily restore); finish restores the daily unless another unit is queued (R188 arms will be).
-#   unit: sudo systemd-run --unit=r187-flags --collect -p User=adrienbrault -p RuntimeMaxSec=28800 -p TimeoutStopSec=900 \
+#   unit: sudo systemd-run --unit=r187-flags --collect -p User=adrienbrault -p RuntimeMaxSec=64800 -p TimeoutStopSec=900 \
 #         -E GPU_QUEUE_NAME=r187-flags bash -c '. /srv/qwen5090/lib/gpu-queue.sh; while systemctl is-active -q miniswe-r183; do sleep 30; done; exec bash /srv/qwen5090/r187-flags.sh'
 set -uo pipefail
 export PATH="$HOME/.local/bin:$PATH"

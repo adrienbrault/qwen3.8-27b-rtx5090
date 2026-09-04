@@ -16,7 +16,7 @@
 # (GPU_QUEUE_NAME registers it so R187's finish() skips the daily restore); finish restores the daily unless another unit is queued.
 # Rank arms on dense PPL / top-1 first, then agentic, then the decode cost; the interesting result is an arm that keeps most of
 # M-ALL's fidelity gain at a fraction of its c8/c16/TTFT cost.
-#   unit: sudo systemd-run --unit=r188-marlin --collect -p User=adrienbrault -p RuntimeMaxSec=57600 -p TimeoutStopSec=900 \
+#   unit: sudo systemd-run --unit=r188-marlin --collect -p User=adrienbrault -p RuntimeMaxSec=86400 -p TimeoutStopSec=900 \
 #         -E GPU_QUEUE_NAME=r188-marlin bash -c '. /srv/qwen5090/lib/gpu-queue.sh; while systemctl is-active -q r187-flags; do sleep 30; done; exec bash /srv/qwen5090/r188-marlin-allowlist.sh'
 set -uo pipefail
 export PATH="$HOME/.local/bin:$PATH"
