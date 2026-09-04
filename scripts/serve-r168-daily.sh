@@ -16,21 +16,27 @@
 # Bug B dodge ASSERTED (XQA off, MNBT 8192, FIWS 512 MiB): nvfp4 prefill above MNBT≈4,929 corrupts under XQA (R155).
 # EXP=1 → :8029 / vllm-exp / eval-l2 (batteries); EXP=eval → :8030 / vllm-eval; default → :8020 daily. Experiments may pass
 #   CAND_IMG / SPLIT_KV / OFFLOAD / KV_BYTES / SEQS / SPEC_NS / SPEC_DTP / TIER_* / CPUB; the daily port ignores the env. Since the
-#   promotion, experiments default to the DAILY image (fi0616) — pass CAND_IMG=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs for the 0.6.18 rc2 image.
+#   promotion, experiments default to the DAILY image (pcieipc since R185, knob off unless PCIE_IPC=1) — pass CAND_IMG=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs for the 0.6.18 rc2 image.
 # R182 (2026-09-04, user "Ok promote"): SSM state cached in bf16 (`--mamba-ssm-cache-dtype bfloat16`). The hybrid allocator stores a GDN
 #   state snapshot per block (mamba_cache_mode=align) and sizes the attention block to that page, so the fp32 state made a request cost
 #   6.4% of the pool at admission + ~0.2%/1K tokens (R178: 15 short or four 100K requests fill 903K "tokens"). bf16 halves the page:
 #   block 2,944 → 1,584, pool 1,020,596 at the same 13.98 GB pin (R179), fixed cost 3.5%, 100K prompt 16.5%, five 100K co-resident
 #   (R180); rulers vs bf16 neutral (dense 92.771%/+0.744% vs 92.716%/+0.770%), 80-chunk decode ruler at 30K 0.00576 vs 0.00443
 #   median |Δlogprob|, 31/31 per chunk, tails equal (R181). Block change = every tier hash changes; native-l2 wiped at promotion.
-# Rollback: bash /srv/qwen5090/launch-daily-r174-ssm-fp32-0904.sh (fp32 SSM, block 2,944, frozen copy; tear this one down first);
-#   older: launch-daily-redhat-fp8-0902.sh (v0.28 fp8 daily)
+# R185 (2026-09-05, user "seems like no brainer? Lets use?!"): FlashInfer main's pcie_ipc all-reduce (patch 0138 + package pcie_ipc_ar21;
+#   image `...-fi0616-pcieipc` = the S image + one 359 KB layer, Dockerfile.pcieipc) behind VLLM_SM12X_PCIE_IPC_AR=1, ASSERTED at boot
+#   ("PCIe IPC all-reduce enabled" + backend order PCIE_IPC, CUSTOM, PYNCCL). R185/R185b (results/2026-09-05-r185-pcieipc, knob on vs
+#   off on the same image, same night): code c1 +4.6%, prose c1 +5.4%, prose 30K +3.1%, c16 +2.6%, c8 flat in tok/s = +4.9% steps/s;
+#   numerics identical on every paired ruler (decode ctx0/30K, agentic). Experiments: PCIE_IPC=1 opts in (default OFF so batteries stay
+#   comparable with the R183 band); the daily port forces it on. Gates on the live daily: r189-promote-pcieipc.sh.
+# Rollback: bash /srv/qwen5090/launch-daily-r182-nopcie-0905.sh (fi0616 image, no 0138, frozen pre-R185 launcher; tear this one down
+#   first); older: launch-daily-r174-ssm-fp32-0904.sh (fp32 SSM), launch-daily-redhat-fp8-0902.sh (v0.28 fp8 daily)
 set -uo pipefail
 EXP=${EXP:-0}; EXP_SEQS=${SEQS:-8}; KV_BYTES=${KV_BYTES:-}; OFFLOAD=${OFFLOAD:-1}; SPLIT_KV=${SPLIT_KV:-0}; SSM_DTYPE=${SSM_DTYPE:-bfloat16}  # R182; experiments may pass SSM_DTYPE=float32 (NOT in the unset list below: R183 found every EXP boot dying on "SSM_DTYPE: unbound"; the daily branch forces bfloat16)
 # Daily: pool band 990K–1.05M around the deterministic 1,020,596 (SEQS 16 pin, bf16 SSM; fp32 SSM gave 903,793) and a 512 MiB free floor. Experiments
 # keep an 850K–1.1M band (fp32-SSM pins land at ~904K / ~869K, bf16-SSM at ~986K–1.02M) and the 384 MiB Bug C floor (the r17x boot_cand retry ladders expect it).
 if [ "$EXP" = 0 ]; then MIN_FREE_MIB=${MIN_FREE_MIB:-512}; P_MIN=990000; P_MAX=1050000; else MIN_FREE_MIB=${MIN_FREE_MIB:-384}; P_MIN=850000; P_MAX=1100000; fi
-DAILY_IMG=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616
+DAILY_IMG=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc   # R185: S image + patch 0138 (Dockerfile.pcieipc)
 # Tier knobs (0137): the daily boots with a 300 GB LRU cap on the 393 GB native-l2 fs, evict_scope root (stale namespaces from
 # other configs are evicted too), 40 GB min-free (the launcher's own GC threshold). Experiments (EXP≠0) honour the env, unset = no cap.
 if [ "$EXP" != 0 ] || [ "${DAILY_ALLOW_ENV:-0}" = 1 ]; then T_CAP=${TIER_CAP_GB:-}; T_SCOPE=${TIER_EVICT_SCOPE:-}; T_MINFREE=${TIER_MIN_FREE_GB:-}; CPU_B=${CPUB:-17179869184}; IMG=${CAND_IMG:-$DAILY_IMG}
@@ -56,6 +62,10 @@ SSM_ARGS="--mamba-ssm-cache-dtype $SSM_DTYPE"
 # re-enables it. The S image ships FlashInfer 0.6.16.post3 whose split path is on by default, so the daily runs SPLIT_KV=0 (r168e:
 # closest to bf16 of the three paths; r173c: its decode dumps are identical to rc2 ON's at ctx0 and 30K).
 SPLIT_ENV=""; [ "$SPLIT_KV" = 1 ] && SPLIT_ENV="-e VLLM_SM12X_NVFP4_PREFILL_SPLIT_KV=1"
+# R185: the daily forces the pcie_ipc all-reduce on; experiments opt in with PCIE_IPC=1 (an image without 0138 then fails the assert below).
+PCIE_IPC=1; [ "$EXP" = 0 ] || PCIE_IPC=${PCIE_IPC:-0}
+case "$PCIE_IPC" in 0|1) ;; *) echo "FAILED: PCIE_IPC must be 0 or 1 (got $PCIE_IPC)"; exit 1;; esac
+PCIE_ENV=""; [ "$PCIE_IPC" = 1 ] && PCIE_ENV="-e VLLM_SM12X_PCIE_IPC_AR=1"
 XARGS=""; XMOUNT=""; MNBT_=8192; FUS_=""; SPX_=""; XENV=""; CCX_=""
 # R183 EXP-only passthrough (the EXP=0 path is unchanged): EXP_MNBT (chunk size; the 8192 assert follows it), FUSIONS_APPEND (raw
 # pass_config pairs -> v0280 FUSIONS), SPEC_EXTRA (raw JSON pairs appended inside --speculative-config), EXTRA_ENV_APPEND (-e pairs), CC_EXTRA (raw top-level
@@ -65,15 +75,15 @@ case "$MNBT_" in *[!0-9]*|"") echo "FAILED: EXP_MNBT must be an integer (got $MN
 NS_=9; DTP_=2; if [ "$EXP" != 0 ]; then NS_=${SPEC_NS:-9}; DTP_=${SPEC_DTP:-2}; fi
 case "$NS_$DTP_" in *[!0-9]*) echo "FAILED: SPEC_NS/SPEC_DTP must be integers (got $NS_/$DTP_)"; exit 1;; esac
 [ -f "$MODEL/model.safetensors.index.json" ] || { echo "FAILED: checkpoint missing at $MODEL"; exit 1; }
-sudo docker image inspect "$IMG" >/dev/null 2>&1 || { echo "FAILED: image $IMG missing (build: build-v0290rc2.sh + the fi0616 swap layer)"; exit 1; }
+sudo docker image inspect "$IMG" >/dev/null 2>&1 || { echo "FAILED: image $IMG missing (build: build-v0290rc2.sh + the fi0616 swap layer + patches-v0290/Dockerfile.pcieipc)"; exit 1; }
 env PORT=$PORT NAME=$NAME BIND_ADDR=$BIND MODEL_DIR="$MODEL" TP=2 L2MNT="$L2" CPUB=$CPU_B ${T_CAP:+TIER_CAP_GB=$T_CAP} ${T_SCOPE:+TIER_EVICT_SCOPE=$T_SCOPE} ${T_MINFREE:+TIER_MIN_FREE_GB=$T_MINFREE} \
     IMAGE="$IMG" KVD_OVERRIDE=nvfp4 ALLOW_NO_XQA=1 \
     NO_TIER=0 FIWS=536870912 MNBT=$MNBT_ SEQS=$SEQS ${FUS_:+FUSIONS="$FUS_"} ${CCX_:+CCEXTRA="$CCX_"} UTIL=0.88 MAXLEN=262144 POOL_MIN=$P_MIN POOL_MAX=$P_MAX \
     EXTRA_MOUNT="-v $DRAFT:/draft:ro $XMOUNT" \
     EXTRA_ARGS="--kv-cache-memory-bytes $KV_BYTES $OFFLOAD_ARGS $SSM_ARGS $XARGS" \
     SPEC_JSON='{"method":"dflash","model":"/draft","num_speculative_tokens":'$NS_',"draft_tensor_parallel_size":'$DTP_',"attention_backend":"FLASHINFER"'"${SPX_:+,$SPX_}"'}' \
-    EXTRA_ENV="-e NCCL_P2P_LEVEL=SYS -e VLLM_SM12X_NVFP4_XQA=0 -e VLLM_SM12X_DFLASH_GRAPHS=1 $SPLIT_ENV $XENV" \
-    bash /srv/qwen5090/launch-daily-v0280.sh || { echo "0.29 nvfp4 DAILY FAILED — engine NOT up$([ "$EXP" != 0 ] || echo '; rollback: launch-daily-redhat-fp8-0902.sh')"; exit 1; }
+    EXTRA_ENV="-e NCCL_P2P_LEVEL=SYS -e VLLM_SM12X_NVFP4_XQA=0 -e VLLM_SM12X_DFLASH_GRAPHS=1 $SPLIT_ENV $PCIE_ENV $XENV" \
+    bash /srv/qwen5090/launch-daily-v0280.sh || { echo "0.29 nvfp4 DAILY FAILED — engine NOT up$([ "$EXP" != 0 ] || echo '; rollback: launch-daily-r182-nopcie-0905.sh')"; exit 1; }
 BOOTLOG=$(sudo docker logs "$NAME" 2>&1)
 ARGS=$(sudo docker inspect "$NAME" --format '{{json .Args}} {{json .Config.Env}}')
 fail(){ echo "FAILED: $1"; exit 1; }
@@ -109,8 +119,13 @@ else
 fi
 if [ "$SPLIT_KV" = 1 ]; then [ "$(echo "$BOOTLOG" | grep -ac "re-enabled FlashInfer split-KV")" -ge 1 ] || fail "SPLIT_KV=1 but 0136 did not engage (image without 0136?)"
 else [ "$(echo "$BOOTLOG" | grep -ac "re-enabled FlashInfer split-KV")" -eq 0 ] || fail "split-KV re-enabled although SPLIT_KV=0"; fi
+if [ "$PCIE_IPC" = 1 ]; then  # R185, fail closed: a silent fallback to CustomAllreduce is the failure mode this guards
+  [ "$(echo "$BOOTLOG" | grep -ac "PCIe IPC all-reduce enabled")" -ge 1 ] || fail "PCIE_IPC=1 but no 'PCIe IPC all-reduce enabled' line (image without 0138, or the kernel fell back to CUSTOM)"
+  [ "$(echo "$BOOTLOG" | grep -acF "Using ['PCIE_IPC', 'CUSTOM', 'PYNCCL'] all-reduce backends")" -ge 1 ] || fail "all-reduce backend order is not PCIE_IPC, CUSTOM, PYNCCL"
+  [ "$(echo "$ARGS" | grep -ac "VLLM_SM12X_PCIE_IPC_AR=1")" -ge 1 ] || fail "VLLM_SM12X_PCIE_IPC_AR=1 missing on the container"
+else [ "$(echo "$BOOTLOG" | grep -ac "PCIe IPC all-reduce enabled")" -eq 0 ] || fail "pcie_ipc all-reduce engaged although PCIE_IPC=0"; fi
 FREE=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | sort -n | head -1)
 [ "$FREE" -ge "$MIN_FREE_MIB" ] || fail "only $FREE MiB free after pre-warm (< $MIN_FREE_MIB) — Bug C headroom missing; lower KV_BYTES"
 POOL=$(echo "$BOOTLOG" | grep -a 'GPU KV cache size' | tail -1 | grep -oE 'cache size: [0-9,]+' | tr -dc 0-9)
 LABEL="0.29 nvfp4 DAILY UP"; [ "$EXP" = 0 ] || LABEL="0.29 nvfp4 EXP UP"
-echo "$LABEL on ${BIND}:${PORT} (vllm $VER, FlashInfer $FIVER, RedHat NVFP4 weights + NVFP4 KV pinned $KV_BYTES B/GPU + DFlash2 ns$NS_ draft_tp$DTP_ in CUDA graphs + SSM $SSM_DTYPE + 0131/0134 + embed offload=$OFFLOAD + split_kv=$SPLIT_KV + native disk tier${T_CAP:+ cap ${T_CAP} GB} + CPU tier $CPU_B B, dual 5090, image $IMG, SEQS $SEQS). Pool $POOL, min free VRAM $FREE MiB.$([ "$EXP" != 0 ] || echo ' Rollback: launch-daily-redhat-fp8-0902.sh')"
+echo "$LABEL on ${BIND}:${PORT} (vllm $VER, FlashInfer $FIVER, RedHat NVFP4 weights + NVFP4 KV pinned $KV_BYTES B/GPU + DFlash2 ns$NS_ draft_tp$DTP_ in CUDA graphs + SSM $SSM_DTYPE + 0131/0134 + embed offload=$OFFLOAD + split_kv=$SPLIT_KV + pcie_ipc=$PCIE_IPC + native disk tier${T_CAP:+ cap ${T_CAP} GB} + CPU tier $CPU_B B, dual 5090, image $IMG, SEQS $SEQS). Pool $POOL, min free VRAM $FREE MiB.$([ "$EXP" != 0 ] || echo ' Rollback: launch-daily-r182-nopcie-0905.sh')"
