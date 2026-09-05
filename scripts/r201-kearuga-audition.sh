@@ -73,7 +73,11 @@ dfid(){ local T=$1 ctx=$2
   python3 $PR/decode_fidelity.py run --url $U --corpus "$FD/corpus.jsonl" --out "$R/dec-$T-ctx$ctx.jsonl" --chunks 20 --ctx "$ctx" --tokens 256 > "$R/dec-$T-ctx$ctx.out" 2>&1
   log "[$T decode ctx$ctx vs bf16] $(python3 $PR/decode_fidelity.py compare "$DREF/dec-bf16-ctx$ctx.jsonl" "$R/dec-$T-ctx$ctx.jsonl" 2>&1 | tail -1 | cut -c1-300)"; }
 ruler_dense(){ local T=$1
-  timeout 3600 python3 $PR/fidelity_ladder.py --url $U --model qwen3.8-27b --corpus "$LADDER_CORPUS" --out "$R/dump-$T-dense.jsonl" --logprobs 20 --mode dense > "$R/score-$T-dense.out" 2>&1
+  # R201 run 2 (2026-09-05 23:02 UTC): the engine died at doc 523 with Xid 13 / Triton "illegal instruction" inside the GDN core
+  # (qwen_gdn_attention_core_fused_norm_packed, piecewise graph); the 522 scored docs stay in the dump and --resume continues at 523.
+  # If the engine dies again the ruler is void: log it loudly (ENGINE DIED) instead of scoring a partial dump.
+  timeout 3600 python3 $PR/fidelity_ladder.py --url $U --model qwen3.8-27b --corpus "$LADDER_CORPUS" --out "$R/dump-$T-dense.jsonl" --logprobs 20 --mode dense --resume > "$R/score-$T-dense.out" 2>&1
+  curl -sf -m 5 $U/health >/dev/null || { log "ENGINE DIED during the dense ruler ($(grep -ac '^\[warn\]' "$R/score-$T-dense.out") docs failed): $(sudo dmesg -T | grep -a Xid | tail -1 | cut -c1-160); $(sudo docker logs vllm-exp 2>&1 | grep -a 'Error \[CUDA\]\|illegal' | head -1 | cut -c1-160)"; finish ENGINE-DIED; exit 5; }
   python3 $PR/fidelity_compare.py --ref "$BF16_REF" --arm "$R/dump-$T-dense.jsonl" --label "$T" --json "$R/bf16-$T.json" 2>&1 | tee "$R/bf16-$T.txt" | grep -aE "overall top-1|corpus PPL|truncated KL" | cut -c1-200 | sed "s/^/[$T vs bf16 dense] /" | tee -a "$R/audit.log"; }
 tooleval(){ local T=$1
   ( cd "$HOME" && tool-eval-bench --base-url $U/v1 --model qwen3.8-27b --temperature 0.6 --top-p 0.95 --top-k 20 --trials 4 --parallel 8 --json-file "$R/tooleval-$T.json" > "$R/tooleval-$T.log" 2>&1 )
