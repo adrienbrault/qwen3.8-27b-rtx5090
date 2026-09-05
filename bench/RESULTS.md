@@ -1239,3 +1239,8 @@ The pp30000/pp90000 rows are prefill-lane arithmetic, not decode capability: per
 **Prefill lane (aggregate, flat with concurrency):** pp8192: 13,315 / 13,577 / 13,347 (c1/c4/c8) · pp30000: 10,117 / 10,001 / 9,878 · pp90000: 5,288 (c4).
 
 **Long context c1 (prefill / e2e TTFT / decode, tg128):** 30K: 10,167 / 2.7 s / 136 · 90K: 5,780 / 14.1 s / 140 · 180K: 3,472 / 47.0 s / 138.
+
+### SWE-Bench Verified rerun on the bf16-state daily at 16 workers: 386/500 = 77.2%, paired with R175 (2026-09-04 23:08 → 09-05 02:15 UTC, `results/2026-09-02-miniswe-rh-r183-bf16-w16`, `scripts/miniswe-full.sh`)
+
+Same harness, scaffold, dataset and single attempt as R160 and R175 (mini-SWE-agent 2.4.6, swebench 4.1.0, official harness scoring), on the served configuration after the bf16 SSM-state promotion (R182) and with 16 parallel agents (the SEQS 16 admission of R176; R175 ran 12). Result: 386/500 resolved, 499 completed, 0 scoring errors, 1 empty prediction. Paired per instance against R175 (388 resolved, fp32 state, 12 workers): 356 resolved by both, 32 only in R175, 30 only here. Against R160 (386, the fp8-KV shape): 354 by both, 32 and 32. The three shapes of this model on this benchmark read 386 / 388 / 386 with about 30 discordant instances each way every time; the benchmark does not separate them, and the bf16 SSM state costs nothing here. Wall time 3 h 05 min for 500 instances at 16 workers against 3 h 37 min at 12 (R175); chunks of 40 instances every 8 to 16 minutes, host load 2 to 13, disk tier 33% to 62% over the run.
+
