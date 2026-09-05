@@ -68,6 +68,12 @@ if [ "$EXP" != 0 ] && [ -n "${CAND_MODEL:-}" ]; then MODEL=$CAND_MODEL; fi
 if [ "$EXP" = 1 ]; then PORT=8029; NAME=vllm-exp; BIND=127.0.0.1; L2=/srv/qwen5090/eval-l2; SEQS=$EXP_SEQS
 elif [ "$EXP" = eval ]; then PORT=8030; NAME=vllm-eval; BIND=${EVAL_BIND:-127.0.0.1}; L2=/srv/qwen5090/eval-l2; SEQS=$EXP_SEQS
 else PORT=8020; NAME=vllm-27b; BIND=0.0.0.0; L2=/srv/qwen5090/native-l2; SEQS=16; SSM_DTYPE=bfloat16; fi   # SEQS 16 since 2026-09-04 (R176, user): R159 c16 = +34% aggregate on the fp8 shape; pin 13.98 GB → pool 903,793 (−3.6% vs SEQS 8)   # BIND 0.0.0.0 deliberate: owui-proxy/harbor reach the engine via 172.17.0.1
+# R197 rollback copy (2026-09-05): frozen ns9 launcher + the same native-l2 block stamp as the ns7 launcher, at ITS block (1,584), so a rollback
+# wipes the 1,552-token content and a later return to ns7 wipes the 1,584-token content. Only addition to the frozen copy.
+DAILY_BLOCK=1584
+if [ "$EXP" = 0 ]; then ST_=$(cat "$L2/.block" 2>/dev/null || true); if [ "$ST_" != "$DAILY_BLOCK" ]; then
+  echo "native-l2 block stamp '${ST_:-none}' != $DAILY_BLOCK: wiping the tier's _model_* content (was $(du -sh "$L2" 2>/dev/null | cut -f1))"
+  sudo find "$L2" -mindepth 1 -maxdepth 1 -name '_model_*' -exec rm -rf {} + ; sync; fi; fi
 if [ -z "$KV_BYTES" ]; then case "$SEQS" in
   8) KV_BYTES=14500000000;; 16) KV_BYTES=13980000000;; 32) KV_BYTES=13440000000;;   # bytes unchanged by R182; the 8/32 pools were read with fp32 SSM (937,795 / ~869K) and are ~+13% with bf16
   *) echo "FAILED: no pinned KV budget for SEQS=$SEQS (set KV_BYTES)"; exit 1;; esac; fi
@@ -138,6 +144,7 @@ fi
 if [ "$SSM_DTYPE" = bfloat16 ]; then
   if [ "$EXP" = 0 ] || { [ "$SPEC_METHOD_" = dflash ] && [ "$NS_" = 9 ]; }; then
     [ "$(echo "$BOOTLOG" | grep -ac 'Setting attention block size to 1584 tokens')" -ge 1 ] || fail "bf16 SSM state should give a 1,584-token attention block (R180); block line missing or different"
+    [ "$EXP" != 0 ] || echo "$DAILY_BLOCK" | sudo tee "$L2/.block" >/dev/null
   else
     BLK_=$(echo "$BOOTLOG" | grep -aoE 'Setting attention block size to [0-9]+ tokens' | head -1 | tr -dc 0-9)
     [ -n "$BLK_" ] || fail "attention block sizing line missing"; echo "EXP $SPEC_DESC: attention block $BLK_ tokens (daily ns9 = 1,584)"
