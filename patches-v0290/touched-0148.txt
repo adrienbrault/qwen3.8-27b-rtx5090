@@ -1,0 +1,4 @@
+vllm/envs.py
+vllm/distributed/device_communicators/cuda_communicator.py
+vllm/distributed/device_communicators/pcie_ipc_all_reduce.py
+vllm/v1/worker/gpu/spec_decode/autoregressive/speculator.py

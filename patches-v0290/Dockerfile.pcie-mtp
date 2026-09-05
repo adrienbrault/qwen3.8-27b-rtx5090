@@ -1,0 +1,10 @@
+# 0148: admit the sequential MTP drafter to the existing PCIe IPC all-reduce.
+# Built with the legacy builder (no buildx on the host): `sudo docker build --network=none -f Dockerfile.pcie-mtp -t <base>-mtppcie .` from patches-v0290.
+ARG BASE=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash
+FROM ${BASE}
+COPY 0148-pcie-ipc-mtp-drafter-v0290.diff touched-0148.txt /opt/prs-patches/
+RUN set -eu; SITE=/usr/local/lib/python3.12/dist-packages; \
+    python3 -c "import vllm; assert vllm.__version__.startswith('0.29')"; \
+    patch -d "$SITE" -p1 --fuzz=0 --batch --forward < /opt/prs-patches/0148-pcie-ipc-mtp-drafter-v0290.diff; \
+    while IFS= read -r p; do python3 -m py_compile "$SITE/$p"; done < /opt/prs-patches/touched-0148.txt; \
+    mkdir -p /opt/prs-markers; echo PRS-0148-PCIE-MTP-APPLIED > /opt/prs-markers/0148
