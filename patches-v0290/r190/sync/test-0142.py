@@ -70,7 +70,8 @@ scope = dict(contextlib=contextlib, functools=functools, sys=sys, threading=thre
              warnings=warnings, Counter=Counter, torch=fake, logger=log,
              _LOCK=threading.Lock(), __file__='census-test')
 extract(root/'vllm/v1/worker/gpu/sync_census.py',
-        {'_site', '_transfer', 'Census', 'install'}, scope)
+        {'_site', '_transfer', '_Hooks', 'Census', 'install'}, scope)
+scope['_HOOKS'] = scope['_Hooks']()
 Census = scope['Census']
 
 class Runner:
@@ -184,6 +185,99 @@ class Tests(unittest.TestCase):
         self.assertEqual(len(log.tables), 1)
         self.assertEqual(c.finished, 2)
         self.assertTrue(all(sum(row.values()) == 3 for row in c.rows.values()))
+    def test_async_overlap_attribution_and_last_output_report(self):
+        barrier = threading.Barrier(2, timeout=5)
+        release = threading.Event()
+        errors, outputs = [], []
+        original, hook = Tensor.item, warnings.showwarning
+        class AsyncRunner(Runner):
+            step = 0
+            def execute_model(self):
+                self.step += 1
+                super().execute_model()
+                if self.step == 2:
+                    barrier.wait()  # Output 1 already owns a scope.
+                    Tensor().item()
+                    warnings.warn('target synchronizing operation', UserWarning)
+                    barrier.wait()
+            def sample_tokens(self):
+                result = super().sample_tokens()
+                if self.step == 1:
+                    def output():
+                        barrier.wait()
+                        Event().synchronize()
+                        warnings.warn('output synchronizing operation', UserWarning)
+                        barrier.wait()
+                        barrier.wait()  # Still active during sample 2.
+                        barrier.wait()
+                        if not release.wait(5):
+                            raise TimeoutError('main thread did not release output')
+                    result.get_output = output
+                else:
+                    barrier.wait()
+                    barrier.wait()
+                return result
+        runner = AsyncRunner()
+        execute, sample = runner.execute_model, runner.sample_tokens
+        c = Census(runner, 2, 0)
+        runner.execute_model()
+        first = runner.sample_tokens()
+        def drain():
+            try:
+                first.get_output()
+                outputs[0].get_output()  # Final report must run on this thread.
+            except BaseException as exc:
+                errors.append(exc)
+        worker = threading.Thread(target=drain)
+        worker.start()
+        try:
+            runner.execute_model()
+            outputs.append(runner.sample_tokens())
+            self.assertIsNot(Tensor.item, original)
+            self.assertEqual(fake.mode, 'warn')
+            self.assertEqual(len(scope['_HOOKS'].active), 1)
+            self.assertEqual(runner.execute_model, execute)
+            self.assertEqual(runner.sample_tokens, sample)
+            self.assertFalse(log.tables)
+        finally:
+            release.set()
+            worker.join(6)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(c.finished, 2)
+        self.assertEqual(len(log.tables), 1)
+        c.report()
+        self.assertEqual(len(log.tables), 1)
+        def counts(step):
+            return Counter({(phase, op): n for (phase, op, site), n in c.rows[step].items()})
+        self.assertEqual(counts(1), Counter({
+            ('sample+draft', 'api:item'): 1, ('sample+draft', 'api:replay'): 1,
+            ('output', 'api:synchronize'): 1,
+            ('output', 'debug:output synchronizing operation'): 1}))
+        self.assertEqual(counts(2), Counter({
+            ('target', 'api:item'): 1,
+            ('target', 'debug:target synchronizing operation'): 1,
+            ('sample+draft', 'api:item'): 1, ('sample+draft', 'api:replay'): 1,
+            ('output', 'api:synchronize'): 1}))
+        self.assertIs(Tensor.item, original)
+        self.assertIs(warnings.showwarning, hook)
+        self.assertEqual(fake.mode, 0)
+        self.assertFalse(scope['_HOOKS'].active)
+
+    def test_unsupported_config_and_missing_output(self):
+        for method, pp in [('other', 1), ('dflash', 2)]:
+            runner = Runner()
+            runner.vllm_config = NS(speculative_config=NS(method=method),
+                                    parallel_config=NS(pipeline_parallel_size=pp))
+            with self.assertRaisesRegex(ValueError, 'DFlash and PP=1'):
+                scope['install'](runner, 1, 0)
+        runner = Runner()
+        runner.sample_tokens = lambda: None
+        Census(runner, 1, 0)
+        runner.execute_model()
+        with self.assertRaisesRegex(RuntimeError, 'AsyncOutput'):
+            runner.sample_tokens()
+
     def test_nested_scope_rejected(self):
         c = Census(Runner(), 1, 0)
         with c.scope(Counter(), 'target'):

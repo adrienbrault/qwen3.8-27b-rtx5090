@@ -1,7 +1,7 @@
 # R190 diagnostics image: served pcieipc base (0144 conflicts with 0142 in envs.py; fused norm is tested from its own image) + 0142 sync census + 0143 vocab collective tags. No enabling ENV.
 ARG BASE=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc
 FROM ${BASE}
-COPY w25/0142-dflash-sync-census-v0290.diff /opt/prs-patches/0142.diff
+COPY w25/0142c-dflash-sync-census-v0290.diff /opt/prs-patches/0142.diff
 COPY w26/0143-vocab-collective-tags-v0290.diff /opt/prs-patches/0143.diff
 COPY w26/touched-0143.txt /opt/prs-patches/0143-touched.txt
 COPY w26/prof-vocab-0143.py /opt/prof-vocab-0143.py
