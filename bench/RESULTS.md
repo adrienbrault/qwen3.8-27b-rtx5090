@@ -1297,3 +1297,17 @@ The engine is bitwise reproducible across boots (the two OFF boots even used dif
 Step rate in steps per second (tokens per second divided by 1 + 9 times the acceptance per draft token): code c8 371.6 and 372.1 OFF against 379.0 ON (+2.0%), code c16 485.6 and 484.6 against 505.0 (+4.1%), code c1 75.7 against 75.0, prose c1 75.4 and 75.9 against 74.7. The flag stays off; the fidelity ruler is the gate and the step-rate gain does not pass it.
 
 Boot note for this image with the pcie_ipc all-reduce: the 13.98 GB KV pin booted once with 725 MiB free and then failed twice in the Triton warmup (CUDA invalid argument, not the headroom assertion); the 13.5 GB pin booted every time (pool 985,621 tokens, 1.5 to 1.9 GB free).
+
+### R190b, fused all-reduce + residual + RMSNorm probe (patch 0144): bitwise at the c1 decode shape, one-ulp differences at c8/c16, 9 to 19 µs saved per call (2026-09-05 04:20 UTC, `results/2026-09-05-r190-microbench`, `scripts/r190b-fusednorm.sh`)
+
+Two GPUs, `--atol 0`, H = 5120, ascending then descending M sweep; both ranks and both directions gave the same numbers.
+
+| M | norm bit mismatches | residual bit mismatches | unfused µs | fused µs | saving µs |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 0 | 0 | 16.2 to 17.2 | 8.3 to 8.8 | 7.4 to 9.0 |
+| 10 | 0 | 0 | 22.6 to 23.6 | 10.3 | 12.2 to 13.3 |
+| 80 | 3 (one bf16 ulp) | 0 | 58.6 to 60.0 | 42.8 | 15.8 to 17.2 |
+| 160 | 4 (one bf16 ulp) | 0 | 94.3 to 94.5 | 74.9 to 75.2 | 19.2 to 19.4 |
+| 2048 | fallback | fallback | 1114 to 1119 | 1116 to 1117 | 0 |
+
+A decoder layer runs this sequence twice, so about 112 calls per step; the probe's saving would be about 1.4 ms per step at c1 if it carried into the graph-captured engine, which the eager probe cannot show. The engine A/B is `scripts/r190e-fusednorm.sh` (control, fused, fused repeat; decode probes, greedy decode ruler, agentic ruler).
