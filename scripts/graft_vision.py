@@ -5,7 +5,7 @@ Shiftedx/Qwopus3.8-27B-Flash-NVFP4-MTP ships no `model.visual.*` tensors and no 
 vision tower with the NVFP4 linear method and dies in create_weights ("in features size is not multiple of 16"); with the
 exclusion alone it would die on the missing weights instead. Every ModelOpt checkpoint that boots on this route (gittensor,
 natfii, inferact, heretic) carries `model.visual*` in exclude_modules AND the bf16 vision weights. This script builds a new
-checkpoint directory: symlinks to every file of the quant, plus one extra safetensors shard holding the bf16 source's
+checkpoint directory: hard links to every file of the quant, plus one extra safetensors shard holding the bf16 source's
 `model.visual.*` tensors copied byte-for-byte (no torch/numpy needed), the index merged, `vision_config` taken from the bf16
 source (the weights must match it), and `model.visual*` appended to both exclusion lists (config.json `ignore`,
 hf_quant_config.json `exclude_modules`). The language model, MTP head and every quantized tensor are untouched.
@@ -32,7 +32,11 @@ def main():
     os.makedirs(a.out)
     for name in os.listdir(a.quant):
         if name in ("config.json", "hf_quant_config.json", "model.safetensors.index.json") or name.startswith("."): continue
-        os.symlink(os.path.join(a.quant, name), os.path.join(a.out, name))
+        # hard links, not symlinks: the serving container mounts ONLY the output dir, so a symlink into the quant dir dangles inside it
+        # (R199 second run: dangling tokenizer files -> "ReasoningConfig: failed to tokenize reasoning strings").
+        src, dst = os.path.join(a.quant, name), os.path.join(a.out, name)
+        try: os.link(src, dst)
+        except OSError: import shutil; shutil.copy2(src, dst)
     # gather tensors per source shard, write one new shard
     shard_name = "model-visual-from-bf16.safetensors"; header = {"__metadata__": {"format": "pt", "grafted_from": os.path.basename(a.bf16)}}
     chunks = []; off = 0

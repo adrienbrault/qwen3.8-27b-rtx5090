@@ -26,6 +26,10 @@
 # vLLM's Qwen3.5 wrapper built the vision tower under the NVFP4 linear method. X now points at qwopus-27b-flash-shiftedx-nvfp4-visgraft:
 # probes/graft_vision.py = symlinks to the Shiftedx files + one shard with the Qwopus bf16 vision tensors (0.92 GB, byte-copied) + the
 # model.visual* exclusion every booting ModelOpt checkpoint here carries (gittensor/natfii/inferact). Text path, MTP head, quantized tensors untouched.
+# Second run: X failed again — the graft dir used SYMLINKS into the quant dir and the container mounts only the graft dir, so tokenizer files
+# dangled inside it (ReasoningConfig could not tokenize <think>); graft_vision.py now hard-links. X re-queued as r199b (ARMS=X SKIP_BF16=1) behind this run.
+#   r199b: sudo systemd-run --unit=r199b-qwopus-x --collect -p User=adrienbrault -p RuntimeMaxSec=43200 -p TimeoutStopSec=900 -E GPU_QUEUE_NAME=r199b-qwopus-x -E ARMS=X -E SKIP_BF16=1 \
+#         bash -c '. /srv/qwen5090/lib/gpu-queue.sh; while systemctl is-active -q r199-qwopus; do sleep 30; done; exec bash /srv/qwen5090/r199-qwopus-audition.sh'
 #   unit: sudo systemd-run --unit=r199-qwopus --collect -p User=adrienbrault -p RuntimeMaxSec=43200 -p TimeoutStopSec=900 \
 #         -E GPU_QUEUE_NAME=r199-qwopus bash -c '. /srv/qwen5090/lib/gpu-queue.sh; exec bash /srv/qwen5090/r199-qwopus-audition.sh'
 set -uo pipefail
@@ -40,6 +44,7 @@ BF16_DIR=/srv/qwen5090/results/2026-09-01-r156-bf16-ladder; DREF=/srv/qwen5090/r
 FD=/srv/qwen5090/results/2026-08-23-fidelity; LADDER_CORPUS=/srv/qwen5090/r156-corpus.jsonl; P=/srv/qwen5090/r156-agentic-prompts.jsonl
 PYT=/srv/qwen5090/venv-lmeval/bin/python
 PINS="13980000000 13500000000"
+ARMS=${ARMS:-X J}; SKIP_BF16=${SKIP_BF16:-0}   # r199b: ARMS=X SKIP_BF16=1 re-runs one arm against the references this dir already holds
 MTP_PIN_ENV="EXTRA_ENV_APPEND=-e VLLM_TRITON_FORCE_FIRST_CONFIG=1 -e VLLM_SM12X_PCIE_IPC_MTP=1"
 for i in "$IMG" "$MTP_IMG"; do sudo docker image inspect "$i" >/dev/null 2>&1 || { log "ABORT: image $i missing"; exit 3; }; done
 for d in "$QB" "$SX" "$SJ"; do [ -f "$d/config.json" ] && [ -f "$d/model.safetensors.index.json" ] || { log "ABORT: checkpoint incomplete: $d"; exit 3; }; done
@@ -113,11 +118,12 @@ smoke(){ local tag=$1 mdir=$2; teardown; wipe_l2
   if boot_arm "$tag" "$mdir"; then sleep 15; p1 $tag code-c1 --conc 1 --tokens 1024 --runs 3 --kind code; log "[$tag smoke] engine error-lines=$(errs)"; teardown; return 0; fi
   log "[$tag] BOOT FAILED on every pin (smoke)"; return 1; }
 OK_X=0; OK_J=0
-smoke X "$SX" && OK_X=1
-smoke J "$SJ" && OK_J=1
+case " $ARMS " in *" X "*) smoke X "$SX" && OK_X=1 ;; esac
+case " $ARMS " in *" J "*) smoke J "$SJ" && OK_J=1 ;; esac
 if [ $OK_X = 0 ] && [ $OK_J = 0 ]; then log "neither quant boots on the daily route: loader problem, engine logs in $R/engine-bootfail-*.log — bf16 references NOT generated"; finish "ABORTED (no quant boots)"; exit 1; fi
 
 # ---------- phase B: Qwopus bf16 references (R156 arm a / r156-agentic a / r173c method, v0280 launcher) ----------
+bf16_refs(){
 boot_bf16(){ local maxlen=$1 util=$2 seqs=$3 mnbt=$4 att
   for att in 1 2; do
     env -i PATH="$PATH" HOME="$HOME" USER="$USER" MODEL_DIR="$QB" TP=2 PORT=8029 NAME=vllm-exp BIND_ADDR=127.0.0.1 UTIL=$util KVD_OVERRIDE=bfloat16 NOSPEC=1 NO_TIER=1 PREFIX_CACHE=0 \
@@ -139,6 +145,8 @@ if boot_bf16 40960 0.92 4 2048 || boot_bf16 6144 0.92 4 2048; then
   if grep -aq "maxlen=40960" "$R/audit.log"; then dfid_run QB 30000; cmp_dec "QB-vs-QwenBF16 decode ctx30000" "$DREF/dec-bf16-ctx30000.jsonl" "$R/dec-QB-ctx30000.jsonl"; else log "[bf16 decode ctx30000] SKIPPED (maxlen 6144 fallback)"; fi
   log "[bf16 agentic boot] engine error-lines=$(errs)"; teardown
 else log "[bf16] agentic + decode-30K references SKIPPED (boot failed)"; fi
+}
+if [ "$SKIP_BF16" = 1 ]; then log "[bf16] reference generation SKIPPED (SKIP_BF16=1): dense=$([ -s "$R/dump-QB-dense.jsonl" ] && echo present || echo MISSING) agentic=$([ -s "$R/agentic-ids-QB.jsonl" ] && echo present || echo MISSING) decode=$(ls "$R"/dec-QB-ctx*.jsonl 2>/dev/null | wc -l) dumps"; else bf16_refs; fi
 
 # ---------- phase C: full battery per quant, one boot each, DFlash2 ns7 syvai drafter ----------
 battery(){ local tag=$1 mdir=$2 full=$3; teardown; wipe_l2
