@@ -1,0 +1,146 @@
+--- a/vllm/envs.py
++++ b/vllm/envs.py
+@@ -128,6 +128,8 @@
+     VLLM_USE_HW_AGNOSTIC: bool = False
+     VLLM_ENABLE_FLA_PACKED_RECURRENT_DECODE: bool = True
+     VLLM_SM12X_GDN_PACKED_BV: int | None = None
++    VLLM_SM12X_NVFP4_MARLIN_LAYERS: str | None = None
++    VLLM_SM12X_NVFP4_A16_KERNEL: str = "marlin"
+     VLLM_GDN_DECODE_KERNEL: Literal["cuda", "triton"] = "cuda"
+     VLLM_DISABLE_PYNCCL: bool = False
+     VLLM_USE_OINK_OPS: bool = False
+@@ -1205,6 +1207,12 @@
+     "VLLM_ENABLE_FLA_PACKED_RECURRENT_DECODE": lambda: bool(
+         int(os.getenv("VLLM_ENABLE_FLA_PACKED_RECURRENT_DECODE", "1"))
+     ),
++    "VLLM_SM12X_NVFP4_A16_KERNEL": lambda: os.getenv(
++        "VLLM_SM12X_NVFP4_A16_KERNEL", "marlin"
++    ),
++    "VLLM_SM12X_NVFP4_MARLIN_LAYERS": lambda: (
++        os.getenv("VLLM_SM12X_NVFP4_MARLIN_LAYERS") or None
++    ),
+     "VLLM_SM12X_GDN_PACKED_BV": lambda: (
+         None
+         if "VLLM_SM12X_GDN_PACKED_BV" not in os.environ
+--- a/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors.py
++++ b/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors.py
+@@ -740,7 +740,7 @@
+                     "For NVFP4 weights, input quantization must also be NVFP4 "
+                     "format, None for NVFP4A16"
+                 )
+-            return CompressedTensorsW4A4Fp4()
++            return CompressedTensorsW4A4Fp4(use_a16=False, layer_name=layer_name)
+ 
+         if self._is_mxfp4(weight_quant):
+             return CompressedTensorsW4A4Mxfp4()
+--- a/vllm/model_executor/layers/quantization/compressed_tensors/schemes/compressed_tensors_w4a4_nvfp4.py
++++ b/vllm/model_executor/layers/quantization/compressed_tensors/schemes/compressed_tensors_w4a4_nvfp4.py
+@@ -26,9 +26,11 @@
+ 
+ 
+ class CompressedTensorsW4A4Fp4(CompressedTensorsScheme):
+-    def __init__(self, use_a16: bool = False):
++    def __init__(self, use_a16: bool = False, *, layer_name: str | None = None):
+         self.use_a16 = use_a16
+-        self.kernel = init_nvfp4_linear_kernel(use_a16=use_a16)
++        self.kernel = init_nvfp4_linear_kernel(
++            use_a16=use_a16, layer_name=layer_name
++        )
+         self.group_size = 16
+ 
+     @classmethod
+--- a/vllm/model_executor/kernels/linear/__init__.py
++++ b/vllm/model_executor/kernels/linear/__init__.py
+@@ -19,6 +19,11 @@
+ 
+ import vllm.envs as envs
+ from vllm.logger import init_logger
++from vllm.nvfp4_marlin_allowlist import (
++    matches_allowlist,
++    parse_a16_kernel,
++    parse_allowlist,
++)
+ from vllm.model_executor.kernels.linear.base import (
+     MMLinearKernel,
+     MMLinearLayerConfig,
+@@ -1010,11 +1015,41 @@
+     )
+ 
+ 
+-def init_nvfp4_linear_kernel(use_a16: bool = False) -> NvFp4LinearKernel:
++def init_nvfp4_linear_kernel(
++    use_a16: bool = False, *, layer_name: str | None = None
++) -> NvFp4LinearKernel:
+     """Select and instantiate the best NVFP4 linear kernel for the
+     current platform."""
+     config = NvFp4LinearLayerConfig()
+     a16_kernels = (MarlinNvFp4LinearKernel, HummingNvFp4LinearKernel)
++
++    if not use_a16 and layer_name is not None:
++        pattern = parse_allowlist(envs.VLLM_SM12X_NVFP4_MARLIN_LAYERS)
++        if matches_allowlist(pattern, layer_name):
++            choice = parse_a16_kernel(envs.VLLM_SM12X_NVFP4_A16_KERNEL)
++            kernel = a16_kernels[0 if choice == "marlin" else 1]
++            conflict = None
++            if _get_linear_backend() != "auto":
++                conflict = "requires --linear-backend=auto"
++            elif kernel.__name__ in envs.VLLM_DISABLED_KERNELS:
++                conflict = f"{kernel.__name__} is in VLLM_DISABLED_KERNELS"
++            elif envs.VLLM_BATCH_INVARIANT:
++                conflict = "conflicts with VLLM_BATCH_INVARIANT"
++            if conflict:
++                raise ValueError(f"NVFP4 A16 allowlist for {layer_name}: {conflict}")
++            supported, reason = kernel.is_supported()
++            if not supported:
++                raise ValueError(
++                    f"NVFP4 A16 allowlist for {layer_name}: "
++                    f"{kernel.__name__} is not supported: {reason}"
++                )
++            selected = kernel(config)
++            logger.info_once(
++                "NVFP4 A16 allowlist regex: %s kernel=%s",
++                pattern.pattern, kernel.__name__,
++            )
++            logger.info("NVFP4 A16 allowlist: %s for %s", kernel.__name__, layer_name)
++            return selected
+ 
+     # VLLM_BATCH_INVARIANT forces deterministic execution. Prefer the
+     # batch-invariant CUTLASS implementation when available, otherwise fall
+--- a/vllm/nvfp4_marlin_allowlist.py
++++ b/vllm/nvfp4_marlin_allowlist.py
+@@ -0,0 +1,35 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""Dependency-free parsing and matching for compressed-tensors NVFP4 opt-in."""
++
++import re
++from functools import lru_cache
++
++
++@lru_cache(maxsize=8)
++def parse_allowlist(value: str | None) -> re.Pattern[str] | None:
++    if not value:
++        return None
++    try:
++        return re.compile(value)
++    except re.error as exc:
++        raise ValueError(
++            f"Invalid VLLM_SM12X_NVFP4_MARLIN_LAYERS regex {value!r}: {exc}"
++        ) from exc
++
++
++def matches_allowlist(pattern: re.Pattern[str] | None, layer_name: str | None) -> bool:
++    return pattern is not None and layer_name is not None and bool(
++        pattern.search(layer_name)
++    )
++
++
++def parse_a16_kernel(value: str | None) -> str:
++    if value is None:
++        return "marlin"
++    if value not in ("marlin", "humming"):
++        raise ValueError(
++            f"Invalid VLLM_SM12X_NVFP4_A16_KERNEL {value!r}: "
++            "expected 'marlin' or 'humming'"
++        )
++    return value

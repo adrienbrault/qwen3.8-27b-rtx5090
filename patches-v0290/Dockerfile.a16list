@@ -1,0 +1,14 @@
+ARG BASE
+FROM ${BASE}
+COPY 0139b-nvfp4-a16-allowlist-v0290.diff /opt/a16list-layer/
+RUN --network=none set -eux; \
+    python3 -c 'from importlib.metadata import version; assert version("vllm") == "0.29.0rc2"'; \
+    PKG_ROOT="$(python3 -c 'import importlib.util, pathlib; print(pathlib.Path(importlib.util.find_spec("vllm").origin).parent.parent)')"; \
+    cd "$PKG_ROOT"; \
+    patch --batch --forward -p1 --fuzz=0 < /opt/a16list-layer/0139b-nvfp4-a16-allowlist-v0290.diff; \
+    python3 -m py_compile vllm/envs.py \
+        vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors.py \
+        vllm/model_executor/layers/quantization/compressed_tensors/schemes/compressed_tensors_w4a4_nvfp4.py \
+        vllm/model_executor/kernels/linear/__init__.py \
+        vllm/nvfp4_marlin_allowlist.py; \
+    rm -rf /opt/a16list-layer; echo PRS-0139B-NVFP4-A16-ALLOWLIST-APPLIED
