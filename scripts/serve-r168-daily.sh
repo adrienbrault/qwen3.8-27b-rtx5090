@@ -141,7 +141,7 @@ else
   [ "$(echo "$BOOTLOG" | grep -ac "Capturing dflash2 CUDA graphs")" -eq 0 ] || fail "SPEC_METHOD=mtp but the DFlash2 drafter captured graphs"
 fi
 [ "$(echo "$BOOTLOG" | grep -ac "decode_backend=xqa")" -eq 0 ] || fail "XQA decode engaged — Bug B dodge not in force"
-[ "$(echo "$BOOTLOG" | grep -ac "$(basename "$MODEL")\|compressed-tensors")" -ge 1 ] || fail "checkpoint identity"
+[ "$(echo "$BOOTLOG" | grep -ac "$(basename "$MODEL")\|compressed-tensors\|quantization=modelopt")" -ge 1 ] || fail "checkpoint identity"   # R199: ModelOpt candidates (CAND_MODEL) log quantization=modelopt, never their dir name
 [ "$(echo "$ARGS" | grep -ac -- "--max-num-batched-tokens $MNBT_")" -ge 1 ] || fail "MNBT is not $MNBT_ (Bug B dodge = 8192 on the daily)"
 [ "$(echo "$ARGS" | grep -ac -- "--mamba-ssm-cache-dtype $SSM_DTYPE")" -ge 1 ] || fail "SSM cache dtype is not $SSM_DTYPE on the container"
 # R197: the attention block is sized to the mamba page, which grows with the number of speculative slots (ns9 → 1,584; ns7 → 1,552; ns6 → 1,536),

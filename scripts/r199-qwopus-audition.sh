@@ -20,6 +20,12 @@
 # quant faithful to Qwopus bf16" (rulers) and "is Qwopus worth serving" (tool-eval, agentic completion lengths, later SWE-bench paired vs R175).
 # Context rows: Qwopus bf16 vs Qwen3.8 bf16 (dense/decode/agentic) = the size of the fine-tune's own shift, the yardstick the quant deltas
 # are read against. Numerics caveat as R196 (each arm = its own compile artifact, lottery noise ±0.035 % dense PPL). Restores the daily at the end.
+# First run (15:48-16:07 UTC, audit-aborted-1548.log): neither quant booted. J (sojufx) was UP and only failed the launcher's checkpoint-identity
+# grep (it knew compressed-tensors, not ModelOpt; launch-daily.sh now also accepts "quantization=modelopt"). X (Shiftedx) died in
+# create_weights ("in features size is not multiple of 16"): the export ships NO model.visual.* tensors and no model.visual* exclusion, so
+# vLLM's Qwen3.5 wrapper built the vision tower under the NVFP4 linear method. X now points at qwopus-27b-flash-shiftedx-nvfp4-visgraft:
+# probes/graft_vision.py = symlinks to the Shiftedx files + one shard with the Qwopus bf16 vision tensors (0.92 GB, byte-copied) + the
+# model.visual* exclusion every booting ModelOpt checkpoint here carries (gittensor/natfii/inferact). Text path, MTP head, quantized tensors untouched.
 #   unit: sudo systemd-run --unit=r199-qwopus --collect -p User=adrienbrault -p RuntimeMaxSec=43200 -p TimeoutStopSec=900 \
 #         -E GPU_QUEUE_NAME=r199-qwopus bash -c '. /srv/qwen5090/lib/gpu-queue.sh; exec bash /srv/qwen5090/r199-qwopus-audition.sh'
 set -uo pipefail
@@ -28,7 +34,7 @@ R=/srv/qwen5090/results/2026-09-05-r199-qwopus; mkdir -p "$R/report"
 log(){ echo "$(date -Is) $*" | tee -a "$R/audit.log"; }
 IMG=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash
 MTP_IMG=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash-mtppcie
-M=/srv/qwen5090/models; QB=$M/qwopus-27b-flash-bf16; SX=$M/qwopus-27b-flash-shiftedx-nvfp4; SJ=$M/qwopus-27b-flash-sojufx-nvfp4
+M=/srv/qwen5090/models; QB=$M/qwopus-27b-flash-bf16; SX=$M/qwopus-27b-flash-shiftedx-nvfp4-visgraft; SJ=$M/qwopus-27b-flash-sojufx-nvfp4
 U=http://127.0.0.1:8029; CAND=/srv/qwen5090/launch-daily.sh; LAUNCH_BF16=/srv/qwen5090/launch-daily-v0280.sh; L2=/srv/qwen5090/eval-l2; PR=/srv/qwen5090/probes
 BF16_DIR=/srv/qwen5090/results/2026-09-01-r156-bf16-ladder; DREF=/srv/qwen5090/results/2026-09-04-r173c-bf16-decode
 FD=/srv/qwen5090/results/2026-08-23-fidelity; LADDER_CORPUS=/srv/qwen5090/r156-corpus.jsonl; P=/srv/qwen5090/r156-agentic-prompts.jsonl
