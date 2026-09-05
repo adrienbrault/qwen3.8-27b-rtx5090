@@ -14,14 +14,18 @@
 # bf16 dumps; decode_ss code-c1 x3 / prose-c1 / code-c8 / prose-c8 / code-c16; tool-eval 69x4; needle gate (131K + 220K + evicted re-asks
 # through the eval-l2 tier). Chat template: Kearuga copies the base's; if it differs from RedHat's it is swapped to RedHat's for the run
 # (R196 rule: the agentic ruler and tool-eval measure the quantization, not the template), original kept as chat_template.jinja.kearuga-orig.
-#   unit: sudo systemd-run --unit=r201-kearuga --collect -p User=adrienbrault -p RuntimeMaxSec=14400 -p TimeoutStopSec=900 \
-#         -E GPU_QUEUE_NAME=r201-kearuga bash -c '. /srv/qwen5090/lib/gpu-queue.sh; while systemctl is-active -q r201-fetch; do sleep 20; done; exec bash /srv/qwen5090/r201-kearuga-audition.sh'
+#   unit (re-issued 2026-09-06 after the cfgfix): sudo systemd-run --unit=r201-kearuga --collect -p User=adrienbrault -p RuntimeMaxSec=14400 -p TimeoutStopSec=900 \
+#         -E GPU_QUEUE_NAME=r201-kearuga bash -c '. /srv/qwen5090/lib/gpu-queue.sh; exec bash /srv/qwen5090/r201-kearuga-audition.sh'
 set -uo pipefail
 export PATH="$HOME/.local/bin:$PATH"
 R=/srv/qwen5090/results/2026-09-06-r201-kearuga; mkdir -p "$R"
 log(){ echo "$(date -Is) $*" | tee -a "$R/audit.log"; }
 IMG=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash
-KEARUGA=/srv/qwen5090/models/qwen3.8-27b-kearuga; REDHAT=/srv/qwen5090/models/qwen3.8-27b-redhat-nvfp4
+# R201 boot 1 (2026-09-05 22:41 UTC) died in load_weights: `no module or parameter named 'layers.0.mlp.down_proj.input_scale'` — the
+# checkpoint's config.json quantized_layers (375, what vLLM reads first) lacks the 10 FP8 boundary MLPs that hf_quant_config.json (385)
+# and the tensors declare, so vLLM built them unquantized. probes/merge_quantized_layers.py writes the -cfgfix sibling (hard links,
+# config.json = union of both maps); that sibling is what boots here.
+KEARUGA=/srv/qwen5090/models/qwen3.8-27b-kearuga-cfgfix; REDHAT=/srv/qwen5090/models/qwen3.8-27b-redhat-nvfp4
 U=http://127.0.0.1:8029; CAND=/srv/qwen5090/launch-daily.sh; L2=/srv/qwen5090/eval-l2; PR=/srv/qwen5090/probes
 BF16_DIR=/srv/qwen5090/results/2026-09-01-r156-bf16-ladder
 FD=/srv/qwen5090/results/2026-08-23-fidelity; DREF=/srv/qwen5090/results/2026-09-04-r173c-bf16-decode
