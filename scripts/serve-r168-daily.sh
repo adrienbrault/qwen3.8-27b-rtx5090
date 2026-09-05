@@ -130,7 +130,16 @@ fi
 [ "$(echo "$BOOTLOG" | grep -ac "$(basename "$MODEL")\|compressed-tensors")" -ge 1 ] || fail "checkpoint identity"
 [ "$(echo "$ARGS" | grep -ac -- "--max-num-batched-tokens $MNBT_")" -ge 1 ] || fail "MNBT is not $MNBT_ (Bug B dodge = 8192 on the daily)"
 [ "$(echo "$ARGS" | grep -ac -- "--mamba-ssm-cache-dtype $SSM_DTYPE")" -ge 1 ] || fail "SSM cache dtype is not $SSM_DTYPE on the container"
-if [ "$SSM_DTYPE" = bfloat16 ]; then [ "$(echo "$BOOTLOG" | grep -ac 'Setting attention block size to 1584 tokens')" -ge 1 ] || fail "bf16 SSM state should give a 1,584-token attention block (R180); block line missing or different"; fi
+# R197: the attention block is sized to the mamba page, which grows with the number of speculative slots (ns9 → 1,584; ns6 → 1,536), so the
+# exact-value assert holds for the daily's dflash ns9 only; EXP arms with another ns/method must still show the sizing line, and log its value.
+if [ "$SSM_DTYPE" = bfloat16 ]; then
+  if [ "$EXP" = 0 ] || { [ "$SPEC_METHOD_" = dflash ] && [ "$NS_" = 9 ]; }; then
+    [ "$(echo "$BOOTLOG" | grep -ac 'Setting attention block size to 1584 tokens')" -ge 1 ] || fail "bf16 SSM state should give a 1,584-token attention block (R180); block line missing or different"
+  else
+    BLK_=$(echo "$BOOTLOG" | grep -aoE 'Setting attention block size to [0-9]+ tokens' | head -1 | tr -dc 0-9)
+    [ -n "$BLK_" ] || fail "attention block sizing line missing"; echo "EXP $SPEC_DESC: attention block $BLK_ tokens (daily ns9 = 1,584)"
+  fi
+fi
 if [ "$SPEC_METHOD_" = dflash ]; then
   [ "$(echo "$ARGS" | grep -acE "num_speculative_tokens.{1,5}$NS_[,}]")" -ge 1 ] && [ "$(echo "$ARGS" | grep -acE "draft_tensor_parallel_size.{1,5}$DTP_[,}]")" -ge 1 ] || fail "speculative config is not ns$NS_ draft_tp$DTP_ on the container"
 else

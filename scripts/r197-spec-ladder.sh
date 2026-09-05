@@ -83,13 +83,14 @@ arm(){ local tag=$1 method=$2 ns=$3
     p1 $tag code-c16 --conc 16 --tokens 1024 --runs 2 --kind code
     log "[$tag engine error-lines] $(errs)  preemptions: $(curl -s -m 5 $U/metrics | grep -a '^vllm:num_preemptions_total' | awk '{print $NF}')"
   else log "[$tag] BOOT FAILED on every pin"; fi; }
-arm D9  dflash 9
-arm D6  dflash 6
-arm D7  dflash 7
-arm D8  dflash 8
-arm D9b dflash 9
-arm M3  mtp 3
-arm M4  mtp 4
+# ARMS override (R197 rerun 2026-09-05 12:2x UTC): the first D6 boot failed on the launcher's ns9-only 1,584-token block assert (ns6 sizes the
+# block to 1,536; launcher now asserts the exact value for dflash ns9 only). A rerun unit re-does the failed arm(s) into the SAME results dir,
+# then the analysis below re-runs over every arm present; audit.log keeps both passes.
+#   rerun unit: sudo systemd-run --unit=r197-d6-rerun --collect -p User=adrienbrault -p RuntimeMaxSec=43200 -p TimeoutStopSec=900 \
+#         -E GPU_QUEUE_NAME=r197-d6-rerun -E ARMS="D6 dflash 6" bash -c '. /srv/qwen5090/lib/gpu-queue.sh; while systemctl is-active -q r197-spec-ladder; do sleep 30; done; exec bash /srv/qwen5090/r197-spec-ladder.sh'
+ARMS="${ARMS:-D9 dflash 9;D6 dflash 6;D7 dflash 7;D8 dflash 8;D9b dflash 9;M3 mtp 3;M4 mtp 4}"
+log "arms: $ARMS"
+echo "$ARMS" | tr ';' '\n' | while read -r t m n; do [ -n "$t" ] && arm "$t" "$m" "$n"; done
 # numerics: every arm vs D9 (same artifact for the D arms = the draft length's own numerics; M arms = fresh artifact, caveat)
 for T in D6 D7 D8 D9b M3 M4; do for ctx in 0 30000; do
   [ -f "$R/dec-D9-ctx$ctx.jsonl" ] && [ -f "$R/dec-$T-ctx$ctx.jsonl" ] && log "[$T vs D9 decode ctx$ctx] $(python3 $PR/decode_fidelity.py compare "$R/dec-D9-ctx$ctx.jsonl" "$R/dec-$T-ctx$ctx.jsonl" 2>&1 | tail -1 | cut -c1-300)"
