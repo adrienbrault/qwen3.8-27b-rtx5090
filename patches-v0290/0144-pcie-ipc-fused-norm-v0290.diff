@@ -242,7 +242,7 @@ diff --color -ruN -x __pycache__ a/vllm/distributed/device_communicators/cuda_co
          self.pcie_ipc_comm = None
          if (os.environ.get("VLLM_SM12X_PCIE_IPC_AR", "0") == "1"
                  and tcp_store_group is None):
-@@ -139,6 +140,14 @@
+@@ -139,6 +140,21 @@
              )
          else:
              logger.info("PCIe IPC all-reduce disabled: knob off or stateless group")
@@ -250,6 +250,13 @@ diff --color -ruN -x __pycache__ a/vllm/distributed/device_communicators/cuda_co
 +        if fused_norm and "tp" in unique_name:
 +            if self.pcie_ipc_comm is None or self.pcie_ipc_comm.disabled:
 +                raise RuntimeError("PCIe fused norm requires an enabled TP2 IPC workspace")
++            # R190e (2026-09-05 07:20 UTC): register torch.ops.vllm.pcie_ipc_fused_norm
++            # in the worker BEFORE any saved compile artifact is loaded. A cached AOT
++            # graph calls the op without running the fusion pass, and the pass was
++            # the only importer of the module that registers it ("'_OpNamespace'
++            # 'vllm' object has no attribute 'pcie_ipc_fused_norm'" on the 2nd boot).
++            from vllm.distributed.device_communicators import (  # noqa: F401
++                pcie_ipc_fused_norm)
 +            cfg = self.pcie_ipc_comm.config
 +            if (cfg.compilation_config.mode.name != "VLLM_COMPILE"
 +                    or cfg.model_config.enforce_eager):
