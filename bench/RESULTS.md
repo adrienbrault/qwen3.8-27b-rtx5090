@@ -1405,6 +1405,24 @@ Two more boots on the R193b artifact, sharded sampling off and on, compared with
 
 Consequences. The R193b section above, which read the sharded sampler as a numerics change, is withdrawn: on this evidence batch-sharded sampling changes nothing in the numerics and reads +3.0 % steps/s at 8 streams and +4.3 % at 16 here (+2.1 % and +4.6 % in R193b), −1 % at 1 stream, inside noise. Every same-artifact pair reported as bitwise before this (R191, R190e, R194, R193) was two boots that drew the same outcome. Until the draw is pinned, a difference between two boots below about 0.005 at 30K, or rare flips with median 0 at ctx 0, is not evidence of anything. R193d, queued next, boots twice on this artifact with `VLLM_TRITON_FORCE_FIRST_CONFIG=1`, vLLM's own knob that makes every autotuned Triton kernel take its first config; two bitwise boots at both contexts would name the cause and give the rulers a deterministic setting.
 
+### R195: batch-sharded sampling promoted, gated on the serving port (2026-09-05 10:59 to 11:22 UTC, results `2026-09-05-r195-promote-bss`, [scripts/r195-promote-bss.sh](../scripts/r195-promote-bss.sh))
+
+The served launcher now boots the image with patch 0147 and `--enable-batch-sharded-sampling`, and asserts the sampler's log line, the flag on the container and the patch marker at boot. The previous launcher is frozen as [scripts/serve-r189-daily.sh](../scripts/serve-r189-daily.sh). The compile artifact changed with the image, since patch 0147 changes the configuration hash string: the engine loaded the artifact R193b's unsharded arm had compiled (nothing saved), a different draw of the compile lottery described in R193. Its position against the bf16 decode reference: median |Δlogprob| 0.00044 at ctx 0 (2 of 20 chunks agree in full) and 0.00805 at 30K (3 of 20), inside the day's spread.
+
+Gates on the serving port: first-try boot at the 13.98 GB pin, pool 1,020,596, 599 MiB free; a short request 3.4% of the pool, a 100K prompt 11.7% (served from the kept disk tier in 2.5 s), five 100K contexts 59.6%, 0 preemptions; needle 4 of 4 cold and 4 of 4 tier re-asks; tool-eval 90 ± 0.8 over 69 × 4 (91.2 ± 1.3 and 90.5 ± 2.1 on the two previous days, the instrument's spread); 0 engine error lines.
+
+Decode on the promoted configuration, derived steps/s (tokens per second divided by 1 + 9 × acceptance per draft token) against R189b's rows:
+
+| probe | R189b t/s | R195 t/s | R189b steps/s | R195 steps/s |
+|---|---|---|---|---|
+| code, 1 stream | 333 @ 0.38 | 313 @ 0.358 | 75.4 | 74.2 |
+| prose, 1 stream | 180 @ 0.154 | 171 @ 0.144 | 75.4 | 74.5 |
+| prose at 30K | 160 @ 0.132 | 159 @ 0.137 | 73.0 | 71.5 |
+| code, 8 streams | 1,308 @ 0.281 | 1,406 @ 0.303 | 371 | 377.6 |
+| code, 16 streams | 1,870 @ 0.318 | 1,997 @ 0.329 | 484 | 504.1 |
+
+Single-stream step rates are within the 2% run-to-run band; the single-stream tokens-per-second differences are the acceptance draw. At 8 and 16 streams the gain is the R193b/c/e size. Requests that pass a seed at temperature above 0 draw a different sample stream than the unsharded sampler did.
+
 ### R193e: the pin on three boots, and batch-sharded sampling under the protocol (2026-09-05, results `2026-09-05-r193e-pin-bss`)
 
 Two more engines on R193d's compile artifact (all six AOT entries loaded, none saved) with `VLLM_TRITON_FORCE_FIRST_CONFIG=1`: P3 with sharded sampling off, B3 with `--enable-batch-sharded-sampling`. P3 against R193d's P1 agrees on 20 of 20 chunks with median 0 at ctx 0 and at 30K, so the pin now holds across three boots on one artifact. B3 against P3, and B3 against P1, agree on 20 of 20 with median 0 at both contexts: the sharded sampler is numerically inert under the protocol, the third independent bitwise pair across modes (after R193 and R193c). Both arms sit where P1 sat against bf16 (ctx 0 median 0.00062, 30K 0.00818), the far end of the day's 30K spread, so the knob is a measuring tool, not a fidelity setting.
