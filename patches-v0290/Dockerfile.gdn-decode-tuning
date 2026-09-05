@@ -1,0 +1,14 @@
+# syntax=docker/dockerfile:1
+ARG BASE=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc
+FROM ${BASE}
+COPY 0141-gdn-decode-tuning-v0290.diff /tmp/0141.diff
+RUN --network=none python3 -c "import vllm; assert vllm.__version__.startswith('0.29')" && \
+    SITE=$(python3 -c "import pathlib,vllm; print(pathlib.Path(vllm.__file__).resolve().parent.parent)") && \
+    patch -d "$SITE" -p1 --fuzz=0 --batch --forward < /tmp/0141.diff && \
+    python3 -m py_compile "$SITE/vllm/envs.py" \
+      "$SITE/vllm/third_party/flash_linear_attention/ops/fused_recurrent.py" \
+      "$SITE/vllm/third_party/flash_linear_attention/ops/gdn_decode_config.py" && \
+    mkdir -p /opt/prs-markers && \
+    echo PRS-0141-GDN-DECODE-TUNING-APPLIED > /opt/prs-markers/0141
+COPY gdn_decode_microbench.py /opt/gdn_decode_microbench.py
+RUN --network=none python3 -m py_compile /opt/gdn_decode_microbench.py

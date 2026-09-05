@@ -1,0 +1,7 @@
+vllm/envs.py
+vllm/model_executor/layers/logits_processor.py
+vllm/model_executor/models/qwen3_dflash.py
+vllm/model_executor/models/qwen3_dflash2.py
+vllm/utils/vocab_collective_tags.py
+vllm/v1/worker/gpu/sample/batch_shard.py
+vllm/v1/worker/gpu/sample/prompt_logprob.py

@@ -1,0 +1,14 @@
+# syntax=docker/dockerfile:1
+ARG BASE=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc
+FROM ${BASE}
+COPY 0145-gdn-spec-update-tuning-v0290.diff /tmp/0145.diff
+RUN --network=none python3 -c "import vllm; assert vllm.__version__.startswith('0.29')" && \
+    SITE=$(python3 -c "import pathlib,vllm; print(pathlib.Path(vllm.__file__).resolve().parent.parent)") && \
+    patch -d "$SITE" -p1 --fuzz=0 --batch --forward < /tmp/0145.diff && \
+    python3 -m py_compile "$SITE/vllm/envs.py" \
+      "$SITE/vllm/third_party/flash_linear_attention/ops/fused_sigmoid_gating.py" \
+      "$SITE/vllm/third_party/flash_linear_attention/ops/gdn_spec_config.py" && \
+    mkdir -p /opt/prs-markers && \
+    echo PRS-0145-GDN-SPEC-UPDATE-TUNING-APPLIED > /opt/prs-markers/0145
+COPY gdn_spec_microbench.py /opt/gdn_spec_microbench.py
+RUN --network=none python3 -m py_compile /opt/gdn_spec_microbench.py

@@ -1,0 +1,10 @@
+# syntax=docker/dockerfile:1
+ARG BASE=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc
+FROM ${BASE}
+COPY 0140a-nvfp4-shape-dispatch-v0290.diff /tmp/0140a-nvfp4-shape-dispatch-v0290.diff
+RUN --network=none set -eu; python3 -c "import vllm; assert vllm.__version__.startswith('0.29')" && \
+    SITE=$(python3 -c "import os, vllm; print(os.path.dirname(os.path.dirname(vllm.__file__)))") && \
+    patch -d "$SITE" -p1 --fuzz=0 --batch --forward < /tmp/0140a-nvfp4-shape-dispatch-v0290.diff && \
+    python3 -m py_compile "$SITE/vllm/v1/worker/gpu/model_runner.py" "$SITE/vllm/envs.py" "$SITE/vllm/model_executor/kernels/linear/nvfp4/dispatch.py" "$SITE/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors.py" "$SITE/vllm/model_executor/layers/quantization/compressed_tensors/schemes/compressed_tensors_w4a4_nvfp4.py" "$SITE/vllm/nvfp4_dispatch_table.py" "$SITE/vllm/v1/worker/gpu_model_runner.py" && \
+    mkdir -p /opt/prs-markers && \
+    echo PRS-0140-NVFP4-SHAPE-DISPATCH-APPLIED > /opt/prs-markers/0140

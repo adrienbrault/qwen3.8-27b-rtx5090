@@ -1,0 +1,248 @@
+--- a/vllm/envs.py
++++ b/vllm/envs.py
+@@ -127,6 +127,7 @@
+     VLLM_DISABLED_KERNELS: list[str] = []
+     VLLM_USE_HW_AGNOSTIC: bool = False
+     VLLM_ENABLE_FLA_PACKED_RECURRENT_DECODE: bool = True
++    VLLM_SM12X_COLLECTIVE_TAGS: str = "0"
+     VLLM_SM12X_GDN_PACKED_BV: int | None = None
+     VLLM_GDN_DECODE_KERNEL: Literal["cuda", "triton"] = "cuda"
+     VLLM_DISABLE_PYNCCL: bool = False
+@@ -1205,6 +1206,9 @@
+     "VLLM_ENABLE_FLA_PACKED_RECURRENT_DECODE": lambda: bool(
+         int(os.getenv("VLLM_ENABLE_FLA_PACKED_RECURRENT_DECODE", "1"))
+     ),
++    "VLLM_SM12X_COLLECTIVE_TAGS": env_with_choices(
++        "VLLM_SM12X_COLLECTIVE_TAGS", "0", ["0", "1"]
++    ),
+     "VLLM_SM12X_GDN_PACKED_BV": lambda: (
+         None
+         if "VLLM_SM12X_GDN_PACKED_BV" not in os.environ
+--- a/vllm/model_executor/layers/logits_processor.py
++++ b/vllm/model_executor/layers/logits_processor.py
+@@ -22,6 +22,7 @@
+ )
+ from vllm.platforms import current_platform
+ from vllm.utils.flashinfer import has_flashinfer
++from vllm.utils.vocab_collective_tags import validate_collective_tags, vocab_range
+ 
+ logger = init_logger(__name__)
+ 
+@@ -73,12 +74,15 @@
+         scale: float = 1.0,
+         logits_as_input: bool = False,
+         soft_cap: float | None = None,
++        collective_phase: str = "target_logits",
+     ) -> None:
+         """
+         Args:
+             scale: A scaling factor to apply to the logits.
+         """
+         super().__init__()
++        validate_collective_tags()
++        self.collective_phase = collective_phase
+         self.scale = scale
+         self.vocab_size = vocab_size
+         # Whether the input is logits (default is hidden states).
+@@ -127,10 +131,12 @@
+             # NOTE(woosuk): Here, the outputs of every device should not be None
+             # because XLA requires strict SPMD among all devices. Every device
+             # should execute the same operations after gathering the logits.
+-            logits = tensor_model_parallel_all_gather(logits)
++            with vocab_range(logits, self.collective_phase + "_allgather"):
++                logits = tensor_model_parallel_all_gather(logits)
+         else:
+             # None may be returned for rank > 0
+-            logits = tensor_model_parallel_gather(logits)
++            with vocab_range(logits, self.collective_phase + "_gather"):
++                logits = tensor_model_parallel_gather(logits)
+         return logits
+ 
+     def _apply_head(
+@@ -243,7 +249,8 @@
+             [local_max_vals.float(), global_indices.float()], dim=-1
+         )
+         # [batch, 2] -> [batch, 2 * tp_size]
+-        gathered = tensor_model_parallel_all_gather(local_pair, dim=-1)
++        with vocab_range(local_pair, self.collective_phase + "_argmax_pairs"):
++            gathered = tensor_model_parallel_all_gather(local_pair, dim=-1)
+         # [batch, tp_size, 2] where [:, :, 0]=values, [:, :, 1]=indices
+         gathered = gathered.view(hidden_states.shape[0], tp_size, 2)
+         max_rank_idx = gathered[:, :, 0].argmax(dim=-1, keepdim=True)
+@@ -285,8 +292,10 @@
+         ids = ids.to(torch.int64) + lm_head.shard_indices.org_vocab_start_index
+ 
+         if lm_head.tp_size > 1:
+-            values = tensor_model_parallel_all_gather(values, dim=-1)
+-            ids = tensor_model_parallel_all_gather(ids, dim=-1)
++            with vocab_range(values, self.collective_phase + "_topk_values"):
++                values = tensor_model_parallel_all_gather(values, dim=-1)
++            with vocab_range(ids, self.collective_phase + "_topk_ids"):
++                ids = tensor_model_parallel_all_gather(ids, dim=-1)
+             values, selected = _topk(values, k)
+             ids = ids.gather(-1, selected)
+ 
+--- a/vllm/model_executor/models/qwen3_dflash.py
++++ b/vllm/model_executor/models/qwen3_dflash.py
+@@ -723,7 +723,8 @@
+             prefix=maybe_prefix(prefix, "lm_head"),
+         )
+         self.logits_processor = LogitsProcessor(
+-            self.config.draft_vocab_size, scale=logit_scale
++            self.config.draft_vocab_size, scale=logit_scale,
++            collective_phase="draft_logits",
+         )
+         target_vocab_size = vllm_config.model_config.get_vocab_size()
+         if self.config.draft_vocab_size != target_vocab_size:
+--- a/vllm/model_executor/models/qwen3_dflash2.py
++++ b/vllm/model_executor/models/qwen3_dflash2.py
+@@ -280,6 +280,7 @@
+             vllm_config.model_config.get_vocab_size(),
+             scale=float(draft_config.get("output_multiplier", 1.0)),
+             soft_cap=softcap if softcap > 0 else None,
++            collective_phase="draft_candidates",
+         )
+ 
+     def compute_candidates(
+--- a/vllm/utils/vocab_collective_tags.py
++++ b/vllm/utils/vocab_collective_tags.py
+@@ -0,0 +1,64 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""Host annotations only: capture ranges do not execute on graph replay."""
++from contextlib import contextmanager, nullcontext
++from contextvars import ContextVar
++
++import torch
++
++from vllm import envs
++from vllm.config import get_current_vllm_config
++from vllm.logger import init_logger
++from vllm.platforms import current_platform
++
++logger = init_logger(__name__)
++ENABLED = envs.VLLM_SM12X_COLLECTIVE_TAGS == "1"
++_phase = ContextVar("vocab_collective_phase", default=None)
++
++
++def validate_collective_tags() -> None:
++    if not ENABLED:
++        return
++    config = get_current_vllm_config()
++    parallel = config.parallel_config
++    if (not current_platform.is_cuda() or not config.use_v2_model_runner
++            or parallel.tensor_parallel_size != 2
++            or parallel.pipeline_parallel_size != 1):
++        raise ValueError(
++            "VLLM_SM12X_COLLECTIVE_TAGS=1 requires CUDA, V2 runner, TP2, PP1"
++        )
++
++
++@contextmanager
++def vocab_phase(phase: str):
++    if not ENABLED:
++        yield
++        return
++    token = _phase.set(phase)
++    try:
++        yield
++    finally:
++        _phase.reset(token)
++
++
++def vocab_range(tensor: torch.Tensor, phase: str):
++    if not ENABLED:
++        return nullcontext()
++    if not tensor.is_cuda or tensor.ndim != 2:
++        raise ValueError("vocab tags require a two-dimensional CUDA tensor")
++    logger.info_once(
++        "VLLM_SM12X_COLLECTIVE_TAGS=1 active; vocab_ag host ranges "
++        "(CUDA graph capture only, not replay)", scope="process"
++    )
++    phase = _phase.get() or phase
++    rows, cols = tensor.shape
++    name = f"vocab_ag:{phase}:{rows}x{cols}"
++    return _tagged_range(name, tensor.numel() * tensor.element_size(), tensor.dtype)
++
++
++@contextmanager
++def _tagged_range(name: str, num_bytes: int, dtype):
++    # NVTX for Nsight; record_function also exports into torch Chrome traces.
++    with torch.cuda.nvtx.range(name):
++        with torch.profiler.record_function(f"{name}:bytes={num_bytes}:dtype={dtype}"):
++            yield
+--- a/vllm/v1/worker/gpu/sample/batch_shard.py
++++ b/vllm/v1/worker/gpu/sample/batch_shard.py
+@@ -10,6 +10,7 @@
+ from vllm.distributed.communication_op import tensor_model_parallel_all_gather
+ from vllm.distributed.parallel_state import get_tp_group
+ from vllm.triton_utils import tl, triton
++from vllm.utils.vocab_collective_tags import vocab_range
+ from vllm.v1.core.sched.output import GrammarOutput
+ from vllm.v1.outputs import LogprobsTensors
+ from vllm.v1.worker.gpu.input_batch import InputBatch
+@@ -299,13 +300,14 @@
+     recv = logits_shard.new_empty(
+         metadata.tp_size * metadata.num_local_logits, logits_shard.shape[-1]
+     )
+-    torch.distributed.all_to_all_single(
+-        recv,
+-        logits_shard.contiguous(),
+-        output_split_sizes=[metadata.num_local_logits] * metadata.tp_size,
+-        input_split_sizes=metadata.num_logits_per_rank,
+-        group=get_tp_group().device_group,
+-    )
++    with vocab_range(logits_shard, "target_logits_alltoall"):
++        torch.distributed.all_to_all_single(
++            recv,
++            logits_shard.contiguous(),
++            output_split_sizes=[metadata.num_local_logits] * metadata.tp_size,
++            input_split_sizes=metadata.num_logits_per_rank,
++            group=get_tp_group().device_group,
++        )
+     shard_width = recv.shape[-1]
+     return (
+         recv.view(metadata.tp_size, metadata.num_local_logits, shard_width)
+@@ -555,8 +557,10 @@
+             BLOCK_SIZE=block_size,
+         )
+ 
+-    gathered_ids_ranks = tensor_model_parallel_all_gather(send_ids_ranks, dim=0)
+-    gathered_logprobs = tensor_model_parallel_all_gather(send_logprobs, dim=0)
++    with vocab_range(send_ids_ranks, "bss_logprob_ids_ranks"):
++        gathered_ids_ranks = tensor_model_parallel_all_gather(send_ids_ranks, dim=0)
++    with vocab_range(send_logprobs, "bss_logprob_values"):
++        gathered_logprobs = tensor_model_parallel_all_gather(send_logprobs, dim=0)
+ 
+     num_reqs = global_batch.num_reqs
+     num_logits = int(global_batch.cu_num_logits_np[-1])
+@@ -634,7 +638,8 @@
+         )
+ 
+     # All-gather the sampler output tensors (excluding logprobs).
+-    gathered = tensor_model_parallel_all_gather(packed, dim=0)
++    with vocab_range(packed, "bss_sampled_ids_counts"):
++        gathered = tensor_model_parallel_all_gather(packed, dim=0)
+     # All-gather the logprobs tensors.
+     logprobs_tensors = None
+     if logprobs_dims is not None:
+--- a/vllm/v1/worker/gpu/sample/prompt_logprob.py
++++ b/vllm/v1/worker/gpu/sample/prompt_logprob.py
+@@ -8,6 +8,7 @@
+ from vllm.config.model import LogprobsMode
+ from vllm.sampling_params import SamplingParams
+ from vllm.triton_utils import tl, triton
++from vllm.utils.vocab_collective_tags import vocab_phase
+ from vllm.v1.outputs import LogprobsTensors
+ from vllm.v1.worker.gpu.input_batch import InputBatch
+ from vllm.v1.worker.gpu.sample.logprob import compute_topk_scores
+@@ -214,7 +215,8 @@
+     for start_idx in range(0, prompt_token_ids.shape[0], CHUNK_SIZE):
+         end_idx = start_idx + CHUNK_SIZE
+         # NOTE(woosuk): logits_fn can be slow because it involves all-gather.
+-        prompt_logits = logits_fn(prompt_hidden_states[start_idx:end_idx])
++        with vocab_phase("prompt_logprobs_allgather"):
++            prompt_logits = logits_fn(prompt_hidden_states[start_idx:end_idx])
+         requested_num = (
+             prompt_logits.shape[-1]
+             if num_prompt_logprobs == -1

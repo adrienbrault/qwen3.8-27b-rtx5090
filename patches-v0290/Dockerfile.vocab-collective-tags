@@ -1,0 +1,11 @@
+ARG BASE=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc
+FROM ${BASE}
+COPY deliver/0143-vocab-collective-tags-v0290.diff /opt/0143.diff
+COPY deliver/touched-0143.txt /opt/0143-touched.txt
+RUN --network=none set -eu; \
+    python3 -c "import vllm; assert vllm.__version__.startswith('0.29')"; \
+    site=$(python3 -c 'import pathlib, vllm; print(pathlib.Path(vllm.__file__).resolve().parent.parent)'); \
+    patch -d "$site" -p1 --fuzz=0 --batch --forward < /opt/0143.diff; \
+    while IFS= read -r path; do python3 -m py_compile "$site/$path"; done < /opt/0143-touched.txt; \
+    mkdir -p /opt/prs-markers; \
+    echo PRS-0143-VOCAB-COLLECTIVE-TAGS-APPLIED > /opt/prs-markers/0143

@@ -1,0 +1,221 @@
+--- a/vllm/envs.py
++++ b/vllm/envs.py
+@@ -127,6 +127,7 @@
+     VLLM_DISABLED_KERNELS: list[str] = []
+     VLLM_USE_HW_AGNOSTIC: bool = False
+     VLLM_ENABLE_FLA_PACKED_RECURRENT_DECODE: bool = True
++    VLLM_SM12X_NVFP4_DISPATCH_TABLE: str | None = None
+     VLLM_SM12X_GDN_PACKED_BV: int | None = None
+     VLLM_GDN_DECODE_KERNEL: Literal["cuda", "triton"] = "cuda"
+     VLLM_DISABLE_PYNCCL: bool = False
+@@ -1205,6 +1206,9 @@
+     "VLLM_ENABLE_FLA_PACKED_RECURRENT_DECODE": lambda: bool(
+         int(os.getenv("VLLM_ENABLE_FLA_PACKED_RECURRENT_DECODE", "1"))
+     ),
++    "VLLM_SM12X_NVFP4_DISPATCH_TABLE": lambda: os.getenv(
++        "VLLM_SM12X_NVFP4_DISPATCH_TABLE"
++    ),
+     "VLLM_SM12X_GDN_PACKED_BV": lambda: (
+         None
+         if "VLLM_SM12X_GDN_PACKED_BV" not in os.environ
+--- a/vllm/model_executor/kernels/linear/nvfp4/dispatch.py
++++ b/vllm/model_executor/kernels/linear/nvfp4/dispatch.py
+@@ -0,0 +1,78 @@
++# SPDX-License-Identifier: Apache-2.0
++"""One shared weight layout, static-shape Python dispatch (no device decisions)."""
++import vllm.envs as envs
++from vllm.logger import init_logger
++from vllm.nvfp4_dispatch_table import SHARED, buckets, module_rules, read_table
++from vllm.platforms import current_platform
++
++logger = init_logger(__name__)
++_affected = {}
++
++
++def wrap_kernel(default, layer_name, use_a16):
++    path = envs.VLLM_SM12X_NVFP4_DISPATCH_TABLE
++    if path is None:
++        return default
++    rules = read_table(path)
++    from vllm.model_executor.kernels import linear
++
++    if not current_platform.is_device_capability_family(120):
++        raise ValueError("NVFP4 dispatch requires SM12x")
++    if envs.VLLM_BATCH_INVARIANT or linear._get_linear_backend() != "auto":
++        raise ValueError("NVFP4 dispatch requires auto backend and no batch invariant")
++    if getattr(envs, "VLLM_SM12X_NVFP4_MARLIN_LAYERS", None) is not None:
++        raise ValueError("NVFP4 dispatch conflicts with the 0139 Marlin allowlist")
++    matched = module_rules(rules, layer_name)
++    if not matched:
++        return default
++    if use_a16:
++        raise ValueError(f"NVFP4 dispatch does not support W4A16: {layer_name}")
++    names = {name for _, name in matched} | {type(default).__name__}
++    if not names.issubset(SHARED):
++        raise ValueError(f"NVFP4 dispatch requires shared layout, got {names}")
++    kernels = {type(default).__name__: default}
++    for name in sorted(names):
++        cls = getattr(linear, name)
++        if name in envs.VLLM_DISABLED_KERNELS:
++            raise ValueError(f"NVFP4 dispatch kernel disabled: {name}")
++        for ok, reason in (cls.is_supported(), cls.can_implement(default.config)):
++            if not ok:
++                raise ValueError(f"NVFP4 dispatch {layer_name}: {name}: {reason}")
++        if name not in kernels:
++            kernels[name] = cls(default.config)
++    table = buckets(matched, type(default).__name__)
++    _affected[layer_name] = names
++    logger.debug("NVFP4 dispatch module %s: %s", layer_name, table)
++    return SharedLayoutDispatch(default, tuple((m, kernels[n]) for m, n in table))
++
++
++class SharedLayoutDispatch:
++    def __init__(self, default, table):
++        self.default = default
++        self.table = table
++
++    def input_quant_key(self):
++        # Candidate activation quantizers differ. Keep activation BF16 until apply.
++        return None
++
++    def process_weights_after_loading(self, layer):
++        # All allowed classes have identical swizzle/pad processing.
++        self.default.process_weights_after_loading(layer)
++
++    def apply_weights(self, layer, x, bias=None):
++        m = x.numel() // x.shape[-1]
++        for bound, kernel in self.table:
++            if bound is None or m <= bound:
++                return kernel.apply_weights(layer, x, bias)
++        raise AssertionError("missing unbounded NVFP4 dispatch bucket")
++
++
++def report_dispatch():
++    path = envs.VLLM_SM12X_NVFP4_DISPATCH_TABLE
++    if path is not None:
++        rules = read_table(path)
++        names = sorted(set().union(*_affected.values()))
++        logger.info_once(
++            "NVFP4 dispatch table: %d rules, %d modules affected, kernels {%s}",
++            len(rules), len(_affected), ", ".join(names), scope="process",
++        )
+--- a/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors.py
++++ b/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors.py
+@@ -740,7 +740,7 @@
+                     "For NVFP4 weights, input quantization must also be NVFP4 "
+                     "format, None for NVFP4A16"
+                 )
+-            return CompressedTensorsW4A4Fp4()
++            return CompressedTensorsW4A4Fp4(use_a16=False, layer_name=layer_name)
+ 
+         if self._is_mxfp4(weight_quant):
+             return CompressedTensorsW4A4Mxfp4()
+--- a/vllm/model_executor/layers/quantization/compressed_tensors/schemes/compressed_tensors_w4a4_nvfp4.py
++++ b/vllm/model_executor/layers/quantization/compressed_tensors/schemes/compressed_tensors_w4a4_nvfp4.py
+@@ -26,9 +26,15 @@
+ 
+ 
+ class CompressedTensorsW4A4Fp4(CompressedTensorsScheme):
+-    def __init__(self, use_a16: bool = False):
++    def __init__(self, use_a16: bool = False, *, layer_name: str | None = None):
+         self.use_a16 = use_a16
+         self.kernel = init_nvfp4_linear_kernel(use_a16=use_a16)
++        import vllm.envs as envs
++
++        if envs.VLLM_SM12X_NVFP4_DISPATCH_TABLE is not None:
++            from vllm.model_executor.kernels.linear.nvfp4.dispatch import wrap_kernel
++
++            self.kernel = wrap_kernel(self.kernel, layer_name, use_a16)
+         self.group_size = 16
+ 
+     @classmethod
+--- a/vllm/nvfp4_dispatch_table.py
++++ b/vllm/nvfp4_dispatch_table.py
+@@ -0,0 +1,57 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Strict, dependency-free dispatch table parsing and bucket construction."""
++import json
++import re
++from functools import lru_cache
++
++SHARED = (
++    "CutlassNvFp4LinearKernel",
++    "FlashInferCutlassNvFp4LinearKernel",
++    "FlashInferB12xNvFp4LinearKernel",
++    "FlashInferCudnnNvFp4LinearKernel",
++)
++
++
++@lru_cache(maxsize=1)
++def read_table(path):
++    if not isinstance(path, str) or not path.strip():
++        raise ValueError("VLLM_SM12X_NVFP4_DISPATCH_TABLE requires a JSON file path")
++    try:
++        with open(path) as stream:
++            data = json.load(stream)
++        if not isinstance(data, dict) or set(data) != {"rules"}:
++            raise ValueError("expected exactly {'rules': [...]}")
++        if not isinstance(data["rules"], list):
++            raise ValueError("rules must be a list")
++        rules = []
++        for rule in data["rules"]:
++            if not isinstance(rule, dict) or set(rule) != {"layer", "m_max", "kernel"}:
++                raise ValueError("each rule requires layer, m_max, kernel")
++            if not isinstance(rule["layer"], str) or not rule["layer"]:
++                raise ValueError("layer must be a nonempty regex")
++            limit = rule["m_max"]
++            if limit is not None and (type(limit) is not int or limit < 1):
++                raise ValueError("m_max must be a positive integer or null")
++            if rule["kernel"] not in SHARED:
++                raise ValueError(f"unknown or non-shared-layout kernel: {rule['kernel']}")
++            rules.append((re.compile(rule["layer"]), limit, rule["kernel"]))
++        return tuple(rules)
++    except (OSError, ValueError, TypeError, re.error) as exc:
++        raise ValueError(f"Invalid NVFP4 dispatch table {path!r}: {exc}") from exc
++
++
++def module_rules(rules, name):
++    return tuple((limit, kernel) for regex, limit, kernel in rules
++                 if name is not None and regex.search(name))
++
++
++def buckets(rules, default):
++    """Inclusive upper bounds; preserve file order even for overlapping rules."""
++    limits = sorted({limit for limit, _ in rules if limit is not None})
++    result = []
++    for bound in [*limits, None]:
++        probe = bound if bound is not None else (limits[-1] + 1 if limits else 1)
++        selected = next((kernel for limit, kernel in rules
++                         if limit is None or probe <= limit), default)
++        result.append((bound, selected))
++    return tuple(result)
+--- a/vllm/v1/worker/gpu_model_runner.py
++++ b/vllm/v1/worker/gpu_model_runner.py
+@@ -5395,6 +5395,12 @@
+                 self.model = model_loader.load_model(
+                     vllm_config=self.vllm_config, model_config=self.model_config
+                 )
++                if envs.VLLM_SM12X_NVFP4_DISPATCH_TABLE is not None:
++                    from vllm.model_executor.kernels.linear.nvfp4.dispatch import (
++                        report_dispatch,
++                    )
++
++                    report_dispatch()
+                 if self.lora_config:
+                     self.model = self.load_lora_model(
+                         self.model, self.vllm_config, self.device
+--- a/vllm/v1/worker/gpu/model_runner.py
++++ b/vllm/v1/worker/gpu/model_runner.py
+@@ -385,6 +385,12 @@
+             self.model = model_loader.load_model(
+                 vllm_config=self.vllm_config, model_config=self.vllm_config.model_config
+             )
++            if envs.VLLM_SM12X_NVFP4_DISPATCH_TABLE is not None:
++                from vllm.model_executor.kernels.linear.nvfp4.dispatch import (
++                    report_dispatch,
++                )
++
++                report_dispatch()
+             if self.lora_config:
+                 self.model = self.load_lora_model(
+                     self.model, self.vllm_config, self.device

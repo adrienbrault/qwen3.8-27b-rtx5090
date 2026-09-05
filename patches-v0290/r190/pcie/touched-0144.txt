@@ -1,0 +1,6 @@
+vllm/envs.py
+vllm/distributed/device_communicators/cuda_communicator.py
+vllm/distributed/device_communicators/pcie_ipc_fused_norm.py
+vllm/compilation/passes/pass_manager.py
+vllm/compilation/passes/fusion/allreduce_rms_fusion.py
+pcie_ipc_ar21/build.py

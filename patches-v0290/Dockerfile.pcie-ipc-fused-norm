@@ -1,0 +1,13 @@
+# Usage: docker build --network=none -f deliver/Dockerfile.pcie-ipc-fused-norm deliver -t vllm-qwen38:r144
+ARG BASE=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc
+FROM ${BASE}
+COPY 0144-pcie-ipc-fused-norm-v0290.diff touched-python.txt /opt/r144/
+COPY pcie_fused_norm_check.py /opt/pcie_fused_norm_check.py
+RUN --network=none python3 -c "import vllm; assert vllm.__version__.startswith('0.29')" \
+ && site_dir="$(python3 -c 'import pathlib,vllm; print(pathlib.Path(vllm.__file__).resolve().parent.parent)')" \
+ && patch -d "$site_dir" -p1 --fuzz=0 --batch --forward < /opt/r144/0144-pcie-ipc-fused-norm-v0290.diff \
+ && while IFS= read -r file; do python3 -m py_compile "$site_dir/$file" || exit 1; done < /opt/r144/touched-python.txt \
+ && python3 -m py_compile /opt/pcie_fused_norm_check.py \
+ && python3 -m pcie_ipc_ar21.build --output "$site_dir/pcie_ipc_ar21/_C.so" --build-root /tmp/pcie-r144-build \
+ && mkdir -p /opt/prs-markers \
+ && echo PRS-0144-PCIE-IPC-FUSED-NORM-APPLIED > /opt/prs-markers/0144

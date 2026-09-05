@@ -1,0 +1,13 @@
+# R190 diagnostics image: served pcieipc base (0144 conflicts with 0142 in envs.py; fused norm is tested from its own image) + 0142 sync census + 0143 vocab collective tags. No enabling ENV.
+ARG BASE=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc
+FROM ${BASE}
+COPY w25/0142-dflash-sync-census-v0290.diff /opt/prs-patches/0142.diff
+COPY w26/0143-vocab-collective-tags-v0290.diff /opt/prs-patches/0143.diff
+COPY w26/touched-0143.txt /opt/prs-patches/0143-touched.txt
+COPY w26/prof-vocab-0143.py /opt/prof-vocab-0143.py
+RUN --network=none set -eu; SITE=/usr/local/lib/python3.12/dist-packages; \
+    patch -d "$SITE" -p1 --fuzz=0 --batch --forward < /opt/prs-patches/0142.diff; \
+    python3 -m py_compile "$SITE/vllm/envs.py" "$SITE/vllm/v1/worker/gpu/model_runner.py" "$SITE/vllm/v1/worker/gpu/sync_census.py"; \
+    patch -d "$SITE" -p1 --fuzz=0 --batch --forward < /opt/prs-patches/0143.diff; \
+    while IFS= read -r p; do python3 -m py_compile "$SITE/$p"; done < /opt/prs-patches/0143-touched.txt; \
+    mkdir -p /opt/prs-markers; echo PRS-0142-DFLASH-SYNC-CENSUS-APPLIED > /opt/prs-markers/0142; echo PRS-0143-VOCAB-COLLECTIVE-TAGS-APPLIED > /opt/prs-markers/0143

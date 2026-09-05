@@ -1,0 +1,240 @@
+--- a/vllm/envs.py
++++ b/vllm/envs.py
+@@ -599,7 +599,22 @@
+     return raw
+ 
+ 
++def _sm12x_sync_census(name="VLLM_SM12X_SYNC_CENSUS", default="0", minimum=0):
++    value = os.environ.get(name, default)
++    if not value.isascii() or not value.isdecimal() or str(int(value)) != value:
++        raise ValueError(f"{name}: expected a canonical nonnegative integer")
++    number = int(value)
++    if number < minimum or (name == "VLLM_SM12X_SYNC_CENSUS" and number > 1):
++        raise ValueError(f"{name}: unsupported value {value}")
++    return number
++
++
+ environment_variables: dict[str, Callable[[], Any]] = {
++    "VLLM_SM12X_SYNC_CENSUS": lambda: _sm12x_sync_census(),
++    "VLLM_SM12X_SYNC_CENSUS_STEPS": lambda: _sm12x_sync_census(
++        "VLLM_SM12X_SYNC_CENSUS_STEPS", "50", 1),
++    "VLLM_SM12X_SYNC_CENSUS_WARMUP": lambda: _sm12x_sync_census(
++        "VLLM_SM12X_SYNC_CENSUS_WARMUP", "20"),
+     # ================== Installation Time Env Vars ==================
+     # Target device of vLLM, supporting [cuda (by default),
+     # rocm, cpu]
+--- a/vllm/v1/worker/gpu/model_runner.py
++++ b/vllm/v1/worker/gpu/model_runner.py
+@@ -348,6 +348,12 @@
+ 
+         set_offloader(create_offloader(self.vllm_config.offload_config))
+ 
++        if envs.VLLM_SM12X_SYNC_CENSUS:
++            from vllm.v1.worker.gpu.sync_census import install
++
++            install(self, envs.VLLM_SM12X_SYNC_CENSUS_STEPS,
++                    envs.VLLM_SM12X_SYNC_CENSUS_WARMUP)
++
+     def update_max_model_len(self, max_model_len: int) -> None:
+         self.max_model_len = max_model_len
+         self.req_states.max_model_len = max_model_len
+--- /dev/null
++++ b/vllm/v1/worker/gpu/sync_census.py
+@@ -0,0 +1,197 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Temporary, process-global diagnostic hooks; never enabled in timing runs."""
++import contextlib
++import functools
++import sys
++import threading
++import warnings
++from collections import Counter
++
++import torch
++
++from vllm.logger import init_logger
++
++logger = init_logger(__name__)
++_LOCK = threading.Lock()
++
++
++def _site():
++    frame = sys._getframe(1)
++    while frame:
++        path = frame.f_code.co_filename.replace("\\", "/")
++        if "/vllm/" in path and path != __file__.replace("\\", "/"):
++            return f"vllm/{path.split('/vllm/', 1)[1]}:{frame.f_lineno}"
++        frame = frame.f_back
++    return "<outside-vllm>"
++
++
++def _transfer(name, args, kwargs):
++    """Classify blocking cross-device calls without reading tensor contents."""
++    tensor = args[0]
++    source = tensor.device.type
++    if name == "copy_":
++        target, source = source, args[1].device.type
++        nb = kwargs.get("non_blocking", args[2] if len(args) > 2 else False)
++    else:
++        dest = kwargs.get("device", args[1] if len(args) > 1 else None)
++        if name in ("cpu", "cuda"):
++            target = name
++        elif isinstance(dest, torch.Tensor):
++            target = dest.device.type
++        elif isinstance(dest, (str, torch.device, int)):
++            target = "cuda" if isinstance(dest, int) else torch.device(dest).type
++        else:  # dtype-only overload: no device transfer
++            return False
++        nb_index = 2 if name == "cuda" or isinstance(dest, torch.Tensor) else 3
++        nb = kwargs.get("non_blocking", args[nb_index] if len(args) > nb_index else False)
++    return not nb and {source, target} == {"cpu", "cuda"}
++
++
++class Census:
++    def __init__(self, runner, steps, warmup):
++        self.runner, self.steps, self.warmup = runner, steps, warmup
++        self.seen = self.started = self.finished = 0
++        self.rows = {}
++        self.pending = None
++        self.execute = runner.execute_model
++        self.sample = runner.sample_tokens
++        runner.execute_model = self.execute_step
++        runner.sample_tokens = self.sample_step
++
++    @contextlib.contextmanager
++    def scope(self, row, phase):
++        if row is None:
++            yield
++            return
++        if not _LOCK.acquire(blocking=False):
++            raise RuntimeError("SYNC_CENSUS does not support concurrent runner/output calls")
++        saved = []
++        debug_old = None
++        depth = 0
++        owner = threading.get_ident()
++        def count(op):
++            row[phase, op, _site()] += 1
++        def patch(obj, name, predicate):
++            original = getattr(obj, name)
++            @functools.wraps(original)
++            def wrapped(*args, **kwargs):
++                nonlocal depth
++                if threading.get_ident() != owner:
++                    return original(*args, **kwargs)
++                outer = depth == 0
++                if outer and predicate(args, kwargs):
++                    count(f"api:{name}")
++                    depth += 1
++                    try:
++                        return original(*args, **kwargs)
++                    finally:
++                        depth -= 1
++                return original(*args, **kwargs)
++            setattr(obj, name, wrapped)
++            saved.append((obj, name, original))
++        try:
++            # The supplied evidence identifies torch 2.13+cu130, but no torch
++            # implementation is dumped. Probe API availability at runtime.
++            try:
++                debug_old = torch.cuda.get_sync_debug_mode()
++                torch.cuda.set_sync_debug_mode("warn")
++            except (AttributeError, NotImplementedError, RuntimeError):
++                debug_old = None
++            backend = "debug+explicit" if debug_old is not None else "API-fallback"
++            logger.info_once("SM12X sync census active: backend=%s", backend)
++            for obj, name in ((torch.cuda, "synchronize"),
++                              (torch.cuda.Event, "synchronize"),
++                              (torch.cuda.Stream, "synchronize"),
++                              (torch.cuda.CUDAGraph, "replay"),
++                              (torch.accelerator, "synchronize")):
++                patch(obj, name, lambda a, k: True)
++            # Explicit APIs supplement incomplete sync-debug coverage.
++            for name in ("item", "tolist", "nonzero"):
++                patch(torch.Tensor, name, lambda a, k: a[0].is_cuda)
++            patch(torch, "nonzero", lambda a, k: (a[0] if a else k["input"]).is_cuda)
++            patch(torch, "where", lambda a, k: len(a) == 1 and not k and a[0].is_cuda)
++            for name in ("cpu", "cuda", "to", "copy_"):
++                patch(torch.Tensor, name,
++                      lambda a, k, name=name: _transfer(name, a, k))
++            with warnings.catch_warnings():
++                previous = warnings.showwarning
++                def show(message, category, filename, lineno, file=None, line=None):
++                    if (threading.get_ident() == owner and
++                            "synchroniz" in str(message).lower() and
++                            debug_old is not None):
++                        if depth == 0:
++                            count("debug:" + str(message).split(" (Triggered")[0])
++                    else:
++                        previous(message, category, filename, lineno, file, line)
++                warnings.simplefilter("always", UserWarning)
++                warnings.showwarning = show
++                yield
++        finally:
++            for obj, name, original in reversed(saved):
++                setattr(obj, name, original)
++            try:
++                if debug_old is not None:
++                    torch.cuda.set_sync_debug_mode(debug_old)
++            finally:
++                _LOCK.release()
++
++    def execute_step(self, *args, **kwargs):
++        if self.pending is not None:
++            raise RuntimeError("SYNC_CENSUS requires execute_model/sample_tokens pairs")
++        dummy = kwargs.get("dummy_run", args[2] if len(args) > 2 else False)
++        profile = kwargs.get("is_profile", args[4] if len(args) > 4 else False)
++        eligible = not dummy and not profile
++        row = Counter() if eligible and self.seen >= self.warmup and self.started < self.steps else None
++        with self.scope(row, "target"):
++            result = self.execute(*args, **kwargs)
++        state = self.runner.execute_model_state
++        # Use the actual post-prepare batch, not query length or NCCL heuristics.
++        if eligible and state is not None and not state.input_batch.has_prefill:
++            self.seen += 1
++            if row is not None:
++                self.started += 1
++                self.pending = (self.started, row)
++        return result
++
++    def sample_step(self, *args, **kwargs):
++        pending, self.pending = self.pending, None
++        row = pending[1] if pending else None
++        with self.scope(row, "sample+draft"):
++            result = self.sample(*args, **kwargs)
++        if pending:
++            if result is None or not hasattr(result, "get_output"):
++                raise RuntimeError("SYNC_CENSUS requires AsyncOutput (PP=1 DFlash)")
++            original = result.get_output
++            def get_output():
++                try:
++                    with self.scope(row, "output"):
++                        output = original()
++                finally:
++                    result.get_output = original
++                self.rows[pending[0]] = row
++                self.finished += 1
++                if self.finished == self.steps:
++                    self.report()
++                return output
++            result.get_output = get_output
++        if self.started == self.steps:
++            self.runner.execute_model = self.execute
++            self.runner.sample_tokens = self.sample
++        return result
++
++    def report(self):
++        lines = ["SM12X sync census complete: step phase count op file:line"]
++        for step, row in sorted(self.rows.items()):
++            lines.append(f"{step} total {sum(row.values())} (includes replay API calls)")
++            for (phase, op, site), count in sorted(row.items()):
++                lines.append(f"{step} {phase} {count} {op} {site}")
++        logger.info("\n".join(lines))
++
++
++def install(runner, steps, warmup):
++    config = runner.vllm_config
++    if (config.speculative_config is None or
++            config.speculative_config.method != "dflash" or
++            config.parallel_config.pipeline_parallel_size != 1):
++        raise ValueError("SYNC_CENSUS requires DFlash and PP=1")
++    Census(runner, steps, warmup)

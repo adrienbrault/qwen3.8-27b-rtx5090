@@ -1,0 +1,65 @@
+--- a/vllm/envs.py
++++ b/vllm/envs.py
+@@ -1199,6 +1199,7 @@
+         else os.environ["VLLM_DISABLED_KERNELS"].split(",")
+     ),
+     # Selects hw-agnostic layers for HF transformer backend
++    "VLLM_SM12X_DFLASH_DEVICE_ACCEPT": lambda: _sm12x_dflash_device_accept(),
+     "VLLM_USE_HW_AGNOSTIC": lambda: (
+         os.getenv("VLLM_USE_HW_AGNOSTIC", "False").lower() in ("true", "1")
+     ),
+@@ -2184,6 +2185,16 @@
+ 
+ 
+ # --8<-- [end:env-vars-definition]
++
++
++def _sm12x_dflash_device_accept(name="VLLM_SM12X_DFLASH_DEVICE_ACCEPT", default="0", minimum=0):
++    value = os.environ.get(name, default)
++    if not value.isascii() or not value.isdecimal() or str(int(value)) != value:
++        raise ValueError(f"{name}: expected a canonical nonnegative integer")
++    number = int(value)
++    if number < minimum or (name == "VLLM_SM12X_DFLASH_DEVICE_ACCEPT" and number > 1):
++        raise ValueError(f"{name}: unsupported value {value}")
++    return number
+ 
+ 
+ def __getattr__(name: str):
+--- a/vllm/v1/worker/gpu/model_runner.py
++++ b/vllm/v1/worker/gpu/model_runner.py
+@@ -337,6 +337,14 @@
+             )
+ 
+         # KV Connector if configured.
++
++        self._sm12x_device_accept = envs.VLLM_SM12X_DFLASH_DEVICE_ACCEPT
++        if self._sm12x_device_accept and (
++            self.speculative_config is None
++            or self.speculative_config.method != "dflash"
++            or self.parallel_config.pipeline_parallel_size != 1
++        ):
++            raise ValueError("DFLASH_DEVICE_ACCEPT requires DFlash and PP=1")
+         self.kv_connector: KVConnector = NO_OP_KV_CONNECTOR
+ 
+         # For transferring state from execute_model to subsequent sample_tokens call.
+@@ -1895,6 +1903,20 @@
+             sampled_token_ids=None,  # type: ignore
+             prompt_logprobs_dict=prompt_logprobs_dict,  # type: ignore[arg-type]
+         )
++        if self._sm12x_device_accept:
++            # Audit gate only: the supplied V2 path already retains acceptance
++            # and next-position state on device. Do not invent a second path.
++            tensors = (num_sampled, num_rejected,
++                       sampler_output.sampled_token_ids,
++                       self.req_states.num_computed_tokens.gpu,
++                       self.req_states.last_sampled_tokens)
++            if any(t.device.type != "cuda" or t.device != num_sampled.device
++                   for t in tensors):
++                raise RuntimeError("DFlash acceptance state must share a CUDA device")
++            logger.info_once(
++                "DFlash device-side accept: 0 host syncs removed per step"
++            )
++
+         # Start async output copy here so that it can overlap with speculator proposal.
+         async_output = AsyncOutput(
+             model_runner_output=model_runner_output,
