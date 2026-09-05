@@ -1405,6 +1405,34 @@ Two more boots on the R193b artifact, sharded sampling off and on, compared with
 
 Consequences. The R193b section above, which read the sharded sampler as a numerics change, is withdrawn: on this evidence batch-sharded sampling changes nothing in the numerics and reads +3.0 % steps/s at 8 streams and +4.3 % at 16 here (+2.1 % and +4.6 % in R193b), −1 % at 1 stream, inside noise. Every same-artifact pair reported as bitwise before this (R191, R190e, R194, R193) was two boots that drew the same outcome. Until the draw is pinned, a difference between two boots below about 0.005 at 30K, or rare flips with median 0 at ctx 0, is not evidence of anything. R193d, queued next, boots twice on this artifact with `VLLM_TRITON_FORCE_FIRST_CONFIG=1`, vLLM's own knob that makes every autotuned Triton kernel take its first config; two bitwise boots at both contexts would name the cause and give the rulers a deterministic setting.
 
+### R197: the speculative-length ladder, and seven draft tokens promoted (2026-09-05 12:03 to 14:xx UTC, results `2026-09-05-r197-spec-ladder`, [scripts/r197-spec-ladder.sh](../scripts/r197-spec-ladder.sh))
+
+One boot per draft length on the served route (port 8029, same image, flags and 13.98 GB pin as the serving port, 16 sequences, `pcie_ipc` all-reduce and batch-sharded sampling on, `VLLM_TRITON_FORCE_FIRST_CONFIG=1`): DFlash2 at 6, 7, 8, 9, 9 again, 10 and 11 draft tokens, then the checkpoint's own MTP head at 3 and 4. Per arm: `probes/decode_ss.py` code at 1 stream (3 runs), prose at 1 stream (2), prose at 30K context (2), code and prose at 8 streams (2 each), code at 16 streams (2); the bf16 decode ruler at 0 and 30K. Steps/s = t/s ÷ (1 + ns × acceptance per draft token), with the arm's own ns.
+
+| arm | pool | code 1 stream | prose 1 stream | prose at 30K | code 8 streams | prose 8 streams | code 16 streams |
+|---|---|---|---|---|---|---|---|
+| DFlash 6 | 1,066,119 | 269 (70.1) | 170 | 143 | 1,629 (458) | 1,131 (456) | 2,367 (664) |
+| **DFlash 7 (promoted)** | 1,052,277 | 273 (71.3) | 171 | 142 | 1,633 (442) | 1,134 (442) | 2,455 (630) |
+| DFlash 8 | 1,033,548 | 276 (76.1) | 169 | 153 | 1,513 (394) | 994 (395) | 2,135 (540) |
+| DFlash 9 (the daily until R197) | 1,020,596 | 306 (74.9) | 172 | 148 | 1,480 (381) | 941 (379) | 1,996 (505) |
+| DFlash 9, second boot | 1,020,596 | 305 | 173 | 147 | 1,472 | 941 | 2,041 |
+| DFlash 10 | 1,007,709 | 304 (72.9) | 176 | 155 | 1,346 (365) | 927 (365) | 1,856 (478) |
+| DFlash 11 | 990,211 | 278 (73.4) | 171 | 149 | 1,347 (353) | 893 (354) | 1,935 (462) |
+| MTP 3, CUSTOM all-reduce | 1,264,777 | 226 (69.2) | 153 | 151 | 1,522 (507) | 1,225 (507) | 2,580 (837) |
+| MTP 4, CUSTOM all-reduce | 1,288,987 | 229 (63.7) | 145 | 137 | 1,500 (451) | 1,136 (447) | 2,386 |
+
+Tokens per second aggregate, steps/s in parentheses where the acceptance was captured. Acceptance per draft token on code at 1 stream falls with the draft length: 0.473 at 6, 0.404 at 7, 0.329 at 8, 0.342 at 9, 0.317 at 10, 0.253 at 11; the MTP head accepts 0.754 at 3 and 0.647 at 4.
+
+Readings.
+- At 8 and 16 streams, 6 and 7 draft tokens are equal within the run band and beat 9 by 10% (code, 8 streams), 20% (prose, 8 streams) and 23% (code, 16 streams) in tokens per second, 16 to 25% in steps/s. 8 sits between; 10 and 11 fall below 9.
+- At 1 stream, 9 and 10 keep the code lead (306 and 304 against 273 at 7, 11%); prose at 1 stream and at 30K is within noise across 6 to 11.
+- The draft length moves the attention block: the block follows the number of speculative slots (1,536 tokens at 6, 1,552 at 7, 1,568 at 8, 1,584 at 9), so every length compiles its own artifact (the hash sets differ), the cross-length decode-ruler differences are void under the R193 protocol, and every tier hash changes with the length. Speed and pool stand; the pool grows 3.1% from 9 to 7.
+- The 2026-09-04 retraction of 7 (R173c: twice the distance from the bf16 decode reference at 30K) rested on a same-size per-boot draw that R193d has since shown to be the runtime Triton autotune, not the draft length. The two boots at 9 in this unit are bitwise at both contexts, so the protocol holds within a length.
+- The MTP head (one target layer, no drafter weights, 15 `mtp.*` tensors of the checkpoint) is on the CUSTOM all-reduce here because patch 0138 admits only the DFlash drafter; it gives the largest pool (+24% over DFlash 9) and the best 16-stream and prose 8-stream throughput of the ladder at 3 draft tokens, and the worst single stream (226 code, 26% below 9). A patch admitting it to the `pcie_ipc` all-reduce is in progress (BRIEF30, patch 0148).
+- 8 draft tokens is the outlier at 8 and 16 streams (below both neighbours). The rows-per-step at 8 streams cross 64 and at 16 streams 128 there, a CUDA-graph bucket boundary; not verified.
+
+Promotion (14:xx UTC, user "I validate switching from d9 to d7"): the launcher serves 7 draft tokens, asserts the 1,552-token attention block, and wipes the disk tier's `_model_*` content on the first boot whose block stamp differs (every tier hash carries the block size, as at R182). The previous launcher is frozen as [scripts/serve-r195-ns9-daily.sh](../scripts/serve-r195-ns9-daily.sh). The serving port comes back at 7 when the running experiment chain ends; the gates on the serving port (pool, needles, capacity, tool-eval) are then re-run and appended here.
+
 ### R195: batch-sharded sampling promoted, gated on the serving port (2026-09-05 10:59 to 11:22 UTC, results `2026-09-05-r195-promote-bss`, [scripts/r195-promote-bss.sh](../scripts/r195-promote-bss.sh))
 
 The served launcher now boots the image with patch 0147 and `--enable-batch-sharded-sampling`, and asserts the sampler's log line, the flag on the container and the patch marker at boot. The previous launcher is frozen as [scripts/serve-r189-daily.sh](../scripts/serve-r189-daily.sh). The compile artifact changed with the image, since patch 0147 changes the configuration hash string: the engine loaded the artifact R193b's unsharded arm had compiled (nothing saved), a different draw of the compile lottery described in R193. Its position against the bf16 decode reference: median |Δlogprob| 0.00044 at ctx 0 (2 of 20 chunks agree in full) and 0.00805 at 30K (3 of 20), inside the day's spread.

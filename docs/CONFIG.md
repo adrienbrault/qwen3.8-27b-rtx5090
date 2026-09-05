@@ -11,14 +11,14 @@ The sections below describe the v0.28 fp8 shape, which is unchanged and remains 
 | flag / env | value | why |
 |---|---|---|
 | image | `vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc` | v0.29.0rc2 + patches-v0290 + FlashInfer 0.6.16.post3 swap + the 0138 layer (since 2026-09-05); the boot fails if `flashinfer.__version__` is not 0.6.16.x |
-| `--kv-cache-dtype nvfp4` | block 2,944 tokens with the fp32 SSM state, 1,584 with bf16 (since 2026-09-04 16:24 UTC) | +43% pool vs fp8 at the same VRAM |
-| `--mamba-ssm-cache-dtype bfloat16` | the GDN state page halves, so the attention block drops to 1,584 tokens and the pool reads 1,020,596 at the same pin | a request costs 3.4% of the pool at admission instead of 6.4% and a 100K prompt 15.9% instead of 25.1%; five 100K contexts co-resident instead of four; dense/agentic bf16 rulers neutral, 80-chunk decode ruler at 30K 0.00576 vs 0.00443 median log-prob distance (`results/2026-09-04-r180-pool-cost-clean`, `-r181-ssm-bf16-ruler`, `-r182-promote-ssm-bf16`) |
+| `--kv-cache-dtype nvfp4` | block 2,944 tokens with the fp32 SSM state, 1,584 with bf16 and 9 draft tokens (2026-09-04 16:24 UTC), 1,552 with 7 (since 2026-09-05, R197) | +43% pool vs fp8 at the same VRAM |
+| `--mamba-ssm-cache-dtype bfloat16` | the GDN state page halves, so the attention block drops to 1,584 tokens and the pool reads 1,020,596 at the same pin (1,552 and 1,052,277 at 7 draft tokens since R197) | a request costs 3.4% of the pool at admission instead of 6.4% and a 100K prompt 15.9% instead of 25.1%; five 100K contexts co-resident instead of four; dense/agentic bf16 rulers neutral, 80-chunk decode ruler at 30K 0.00576 vs 0.00443 median log-prob distance (`results/2026-09-04-r180-pool-cost-clean`, `-r181-ssm-bf16-ruler`, `-r182-promote-ssm-bf16`) |
 | `--kv-cache-memory-bytes 13980000000`, `--max-num-seqs 16` | pinned per SEQS (14.5 GB at 8, 13.44 GB at 32); 16 sequences since 2026-09-04 (pool 903,793; 937,795 at 8) because 16 streams gave +34% aggregate decode over 8 on the fp8 shape (R159) | the utilization path sizes the pool before CUDA-graph capture and OOMs on the first request (Bug C); the boot fails under 512 MiB free after pre-warm |
 | `--gpu-memory-utilization 0.88` | | headroom for the drafter graphs; the pin, not util, sets the pool |
 | `--max-num-batched-tokens 8192`, `VLLM_SM12X_NVFP4_XQA=0`, FlashInfer workspace 512 MiB | | the Bug B dodge: nvfp4 prefill above about 4,929 tokens corrupts under XQA decode on this stack |
 | `VLLM_SM12X_NVFP4_PREFILL_SPLIT_KV` unset | split_kv=0 | FlashInfer 0.6.16 keeps the split-KV path on its own; the 0136 knob exists for 0.6.18 images |
 | `VLLM_SM12X_DFLASH_GRAPHS=1` | drafter in CUDA graphs | the boot fails on "running the draft eagerly" |
-| speculative config | `{"method":"dflash","num_speculative_tokens":9,"draft_tensor_parallel_size":2,"attention_backend":"FLASHINFER"}` | ns9; ns7 was retracted on the bf16 decode ruler (R173c); draft_tp1 needs a lower pin |
+| speculative config | `{"method":"dflash","num_speculative_tokens":7,"draft_tensor_parallel_size":2,"attention_backend":"FLASHINFER"}` | 7 draft tokens since 2026-09-05 (R197: +10 to +23% at 8 and 16 streams over 9, −11% single-stream code); 9 from 2026-08-31 to 09-05; the block and every tier hash follow the draft length; draft_tp1 needs a lower pin |
 | `--offload-backend uva --cpu-offload-gb 1 --cpu-offload-params embed_tokens` | embedding table in pinned host RAM | +9% pool at no measured cost (R167); the boot fails unless 1.18 GB was offloaded |
 | tier `cpu_bytes_to_use` | 16 GiB (about 1,010 blocks) | every disk-tier hit is promoted through the CPU tier, so a prompt is served only if all its blocks fit there (R172) |
 | tier `max_capacity_gb` / `min_free_gb` / `evict_scope` | 300 / 40 / root | LRU eviction inside vLLM's fs tier (patch 0137); upstream has none and the tier stranded the engine at 100% on 2026-09-01. The serving host's tier is a 393 GB image; `setup-native-l2.sh` in the quick start creates a 200 GB one, on which the 300 GB cap never engages and only `min_free_gb` does the evicting — set `TIER_CAP_GB` below the image size or resize the image |
@@ -76,11 +76,11 @@ The sections below describe the v0.28 fp8 shape, which is unchanged and remains 
 ## Speculative decoding
 
 ```bash
---speculative-config '{"method":"dflash","model":"/draft","num_speculative_tokens":9}'   # two cards
+--speculative-config '{"method":"dflash","model":"/draft","num_speculative_tokens":7}'   # two cards
 --speculative-config '{"method":"qwen3_5_mtp","num_speculative_tokens":4}'              # one card
 ```
 
-- Two cards: the [syvai W4A16 DFlash2 drafter](https://huggingface.co/syvai/Qwen3.8-27B-DFlash2-W4A16), 9 draft tokens. Tensor parallelism halves the verify cost, which is why 9 beats the 7 that was optimal on one card. The bf16 original drafter costs 6.5% code decode at 8 streams and 46K tokens of pool for no acceptance gain.
+- Two cards: the [syvai W4A16 DFlash2 drafter](https://huggingface.co/syvai/Qwen3.8-27B-DFlash2-W4A16), 7 draft tokens since 2026-09-05 (9 before; the 2026-09-05 ladder over 6 to 11, R197, put 6 and 7 ahead at 8 and 16 streams and 9 to 10 ahead on single-stream code). The bf16 original drafter costs 6.5% code decode at 8 streams and 46K tokens of pool for no acceptance gain.
 - One card: the checkpoint's own MTP head, 4 draft tokens. DFlash2 on one card costs two thirds of the context window because the drafter's KV is sized for the full context.
 - Async scheduling stays on (the vLLM 0.28 default). `--no-async-scheduling` costs 21% prose and 29% code single-stream decode.
 

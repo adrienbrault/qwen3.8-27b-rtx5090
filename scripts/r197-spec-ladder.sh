@@ -105,16 +105,17 @@ arm(){ local tag=$1 method=$2 ns=$3
 #   unit: sudo systemd-run --unit=r197-spec-ladder5 --collect -p User=adrienbrault -p RuntimeMaxSec=43200 -p TimeoutStopSec=900 -E GPU_QUEUE_NAME=r197-spec-ladder5 \
 #         -E IMG=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash-mtppcie -E EXTRA_ARM_ENV="-e VLLM_SM12X_PCIE_IPC_MTP=1" -E ARMS="M3p mtp 3;M4p mtp 4" \
 #         bash -c '. /srv/qwen5090/lib/gpu-queue.sh; while systemctl is-active -q r197-spec-ladder4; do sleep 30; done; exec bash /srv/qwen5090/r197-spec-ladder.sh'
+# 13:5x UTC (user: "also try d6", D6 already measured in ladder2 → read as MTP ns6): unit r197-spec-ladder4b, ARMS="M6 mtp 6", PCIE_IPC_ARM=0, behind ladder4.
 # 13:0x UTC (user: "also try dflash 10/11"): unit r197-spec-ladder3 with ARMS="D10 dflash 10;D11 dflash 11" queued behind ladder2, same results dir.
 ARMS="${ARMS:-D9 dflash 9;D6 dflash 6;D7 dflash 7;D8 dflash 8;D9b dflash 9;M3 mtp 3;M4 mtp 4}"
 log "arms: $ARMS"
 echo "$ARMS" | tr ';' '\n' | while read -r t m n; do [ -n "$t" ] && arm "$t" "$m" "$n"; done
 # numerics: every arm vs D9 (same artifact for the D arms = the draft length's own numerics; M arms = fresh artifact, caveat)
-for T in D6 D7 D8 D9b D10 D11 D9c M3 M4 M4b M3p M4p; do for ctx in 0 30000; do
+for T in D6 D7 D8 D9b D10 D11 D9c M3 M4 M4b M6 M3p M4p M6p; do for ctx in 0 30000; do
   [ -f "$R/dec-D9-ctx$ctx.jsonl" ] && [ -f "$R/dec-$T-ctx$ctx.jsonl" ] && log "[$T vs D9 decode ctx$ctx] $(python3 $PR/decode_fidelity.py compare "$R/dec-D9-ctx$ctx.jsonl" "$R/dec-$T-ctx$ctx.jsonl" 2>&1 | tail -1 | cut -c1-300)"
 done; done
 # pcie_ipc MTP arms (ladder5, image mtppcie) vs their CUSTOM twins: bitwise expected when the hash sets match and loaded
-for P in M3 M4; do for ctx in 0 30000; do [ -f "$R/dec-$P-ctx$ctx.jsonl" ] && [ -f "$R/dec-${P}p-ctx$ctx.jsonl" ] && log "[${P}p vs $P decode ctx$ctx] $(python3 $PR/decode_fidelity.py compare "$R/dec-$P-ctx$ctx.jsonl" "$R/dec-${P}p-ctx$ctx.jsonl" 2>&1 | tail -1 | cut -c1-300)"; done; done
+for P in M3 M4 M6; do for ctx in 0 30000; do [ -f "$R/dec-$P-ctx$ctx.jsonl" ] && [ -f "$R/dec-${P}p-ctx$ctx.jsonl" ] && log "[${P}p vs $P decode ctx$ctx] $(python3 $PR/decode_fidelity.py compare "$R/dec-$P-ctx$ctx.jsonl" "$R/dec-${P}p-ctx$ctx.jsonl" 2>&1 | tail -1 | cut -c1-300)"; done; done
 for ctx in 0 30000; do [ -f "$R/dec-M4-ctx$ctx.jsonl" ] && [ -f "$R/dec-M4b-ctx$ctx.jsonl" ] && log "[M4b vs M4 decode ctx$ctx] $(python3 $PR/decode_fidelity.py compare "$R/dec-M4-ctx$ctx.jsonl" "$R/dec-M4b-ctx$ctx.jsonl" 2>&1 | tail -1 | cut -c1-300)"; [ -f "$R/dec-M3-ctx$ctx.jsonl" ] && [ -f "$R/dec-M4-ctx$ctx.jsonl" ] && log "[M4 vs M3 decode ctx$ctx] $(python3 $PR/decode_fidelity.py compare "$R/dec-M3-ctx$ctx.jsonl" "$R/dec-M4-ctx$ctx.jsonl" 2>&1 | tail -1 | cut -c1-300)"; done
 # artifact check: all D arms one hash set, D6/D7/D8/D9b loaded (saved=0); M3 saved or loaded, M4 loaded
 awk '{print $1, $2, $3, "hashes="$4, "saved="$5, "loaded="$6}' "$R/arms.txt" | sed 's/^/[artifact] /' | tee -a "$R/audit.log"

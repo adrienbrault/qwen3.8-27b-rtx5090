@@ -23,13 +23,6 @@
 #   block 2,944 → 1,584, pool 1,020,596 at the same 13.98 GB pin (R179), fixed cost 3.5%, 100K prompt 16.5%, five 100K co-resident
 #   (R180); rulers vs bf16 neutral (dense 92.771%/+0.744% vs 92.716%/+0.770%), 80-chunk decode ruler at 30K 0.00576 vs 0.00443
 #   median |Δlogprob|, 31/31 per chunk, tails equal (R181). Block change = every tier hash changes; native-l2 wiped at promotion.
-# R197 (2026-09-05 14:0x UTC, user "I validate switching from d9 to d7"): DFlash draft length 9 → 7. The speculative-length ladder
-#   (results/2026-09-05-r197-spec-ladder, :8029, same image/flags/pin, SEQS 16, PCIE_IPC=1, BSS=1) read ns7 vs ns9: code c8 1,633 vs 1,480 t/s
-#   (+16 % steps/s), prose c8 1,134 vs 941, code c16 2,455 vs 1,996 (+25 % steps/s), code c1 273 vs 306 (−11 %), prose c1/30K within noise;
-#   ns6 ≡ ns7 on tok/s, ns8 between, ns10/11 below ns9 batched. Acceptance per draft token falls with ns (0.47 at 6 → 0.25 at 11).
-#   ns IS a compile factor in practice (the attention block follows the speculative slot count: ns7 → 1,552-token block, pool 1,052,277 at
-#   the 13.98 GB pin vs 1,584 / 1,020,596 at ns9), so the cross-ns numerics are void under R193 and the tier hashes change: native-l2 is
-#   wiped on the first daily boot whose block stamp differs (below). Rollback: launch-daily-r195-ns9-0905.sh.
 # R185 (2026-09-05, user "seems like no brainer? Lets use?!"): FlashInfer main's pcie_ipc all-reduce (patch 0138 + package pcie_ipc_ar21;
 #   image `...-fi0616-pcieipc` = the S image + one 359 KB layer, Dockerfile.pcieipc) behind VLLM_SM12X_PCIE_IPC_AR=1, ASSERTED at boot
 #   ("PCIe IPC all-reduce enabled" + backend order PCIE_IPC, CUSTOM, PYNCCL). R185/R185b (results/2026-09-05-r185-pcieipc, knob on vs
@@ -53,10 +46,10 @@ set -uo pipefail
 EXP=${EXP:-0}; EXP_SEQS=${SEQS:-8}; KV_BYTES=${KV_BYTES:-}; OFFLOAD=${OFFLOAD:-1}; SPLIT_KV=${SPLIT_KV:-0}; SSM_DTYPE=${SSM_DTYPE:-bfloat16}  # R182; experiments may pass SSM_DTYPE=float32 (NOT in the unset list below: R183 found every EXP boot dying on "SSM_DTYPE: unbound"; the daily branch forces bfloat16)
 # Daily: pool band 990K–1.05M around the deterministic 1,020,596 (SEQS 16 pin, bf16 SSM; fp32 SSM gave 903,793) and a 512 MiB free floor. Experiments
 # keep an 850K–1.1M band (fp32-SSM pins land at ~904K / ~869K, bf16-SSM at ~986K–1.02M) and the 384 MiB Bug C floor (the r17x boot_cand retry ladders expect it).
-if [ "$EXP" = 0 ]; then MIN_FREE_MIB=${MIN_FREE_MIB:-512}; P_MIN=1000000; P_MAX=1085000; else MIN_FREE_MIB=${MIN_FREE_MIB:-384}; P_MIN=850000; P_MAX=1100000; fi
+if [ "$EXP" = 0 ]; then MIN_FREE_MIB=${MIN_FREE_MIB:-512}; P_MIN=990000; P_MAX=1050000; else MIN_FREE_MIB=${MIN_FREE_MIB:-384}; P_MIN=850000; P_MAX=1100000; fi
 # R197: the pool follows the speculative configuration (each slot holds a GDN state snapshot; the MTP head needs no drafter weights): MTP ns3
 # booted at 1,309,368 and the 1.1M ceiling rejected a healthy engine. EXP arms with another spec method/length get a wide band and log the pool.
-if [ "$EXP" != 0 ] && { [ "${SPEC_METHOD:-dflash}" != dflash ] || [ "${SPEC_NS:-7}" != 7 ]; }; then P_MIN=${POOL_MIN:-600000}; P_MAX=${POOL_MAX:-1500000}; fi
+if [ "$EXP" != 0 ] && { [ "${SPEC_METHOD:-dflash}" != dflash ] || [ "${SPEC_NS:-9}" != 9 ]; }; then P_MIN=${POOL_MIN:-600000}; P_MAX=${POOL_MAX:-1500000}; fi
 DAILY_IMG=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash   # R195: S image + patch 0138 (Dockerfile.pcieipc) + patch 0147 (Dockerfile.bss-not-a-compile-factor)
 # Tier knobs (0137): the daily boots with a 300 GB LRU cap on the 393 GB native-l2 fs, evict_scope root (stale namespaces from
 # other configs are evicted too), 40 GB min-free (the launcher's own GC threshold). Experiments (EXP≠0) honour the env, unset = no cap.
@@ -75,10 +68,6 @@ if [ "$EXP" != 0 ] && [ -n "${CAND_MODEL:-}" ]; then MODEL=$CAND_MODEL; fi
 if [ "$EXP" = 1 ]; then PORT=8029; NAME=vllm-exp; BIND=127.0.0.1; L2=/srv/qwen5090/eval-l2; SEQS=$EXP_SEQS
 elif [ "$EXP" = eval ]; then PORT=8030; NAME=vllm-eval; BIND=${EVAL_BIND:-127.0.0.1}; L2=/srv/qwen5090/eval-l2; SEQS=$EXP_SEQS
 else PORT=8020; NAME=vllm-27b; BIND=0.0.0.0; L2=/srv/qwen5090/native-l2; SEQS=16; SSM_DTYPE=bfloat16; fi   # SEQS 16 since 2026-09-04 (R176, user): R159 c16 = +34% aggregate on the fp8 shape; pin 13.98 GB → pool 903,793 (−3.6% vs SEQS 8)   # BIND 0.0.0.0 deliberate: owui-proxy/harbor reach the engine via 172.17.0.1
-DAILY_NS=7; DAILY_BLOCK=1552   # R197: dflash ns7 → 1,552-token attention block (ns9 gave 1,584). Every tier hash carries the block size.
-if [ "$EXP" = 0 ]; then ST_=$(cat "$L2/.block" 2>/dev/null || true); if [ "$ST_" != "$DAILY_BLOCK" ]; then
-  echo "native-l2 block stamp '${ST_:-none}' != $DAILY_BLOCK: wiping the tier's _model_* content (was $(du -sh "$L2" 2>/dev/null | cut -f1); R182/R197 — the tier cannot serve blocks of another size)"
-  sudo find "$L2" -mindepth 1 -maxdepth 1 -name '_model_*' -exec rm -rf {} + ; sync; fi; fi
 if [ -z "$KV_BYTES" ]; then case "$SEQS" in
   8) KV_BYTES=14500000000;; 16) KV_BYTES=13980000000;; 32) KV_BYTES=13440000000;;   # bytes unchanged by R182; the 8/32 pools were read with fp32 SSM (937,795 / ~869K) and are ~+13% with bf16
   *) echo "FAILED: no pinned KV budget for SEQS=$SEQS (set KV_BYTES)"; exit 1;; esac; fi
@@ -104,9 +93,9 @@ case "$MNBT_" in *[!0-9]*|"") echo "FAILED: EXP_MNBT must be an integer (got $MN
 if [ "$EXP" = 0 ]; then BSS=1; else BSS=${BSS:-0}; case "${XARGS:-}" in *enable-batch-sharded-sampling*) BSS=1;; esac; fi
 case "$BSS" in 0|1) ;; *) echo "FAILED: BSS must be 0 or 1 (got $BSS)"; exit 1;; esac
 BSS_ARGS=""; if [ "$BSS" = 1 ]; then case "${XARGS:-}" in *enable-batch-sharded-sampling*) ;; *) BSS_ARGS="--enable-batch-sharded-sampling";; esac; fi
-NS_=7; DTP_=2; SPEC_METHOD_=dflash; if [ "$EXP" != 0 ]; then NS_=${SPEC_NS:-7}; DTP_=${SPEC_DTP:-2}; SPEC_METHOD_=${SPEC_METHOD:-dflash}; fi
+NS_=9; DTP_=2; SPEC_METHOD_=dflash; if [ "$EXP" != 0 ]; then NS_=${SPEC_NS:-9}; DTP_=${SPEC_DTP:-2}; SPEC_METHOD_=${SPEC_METHOD:-dflash}; fi
 # R197 EXP-only passthrough: SPEC_METHOD=mtp swaps the DFlash2 drafter for the checkpoint's own MTP head (vLLM method qwen3_5_mtp, SPEC_NS
-# tokens, no /draft mount; the drafter-graph asserts below apply to dflash only). The daily port always runs dflash ns7 draft_tp2 (ns9 until R197).
+# tokens, no /draft mount; the drafter-graph asserts below apply to dflash only). The daily port always runs dflash ns9 draft_tp2.
 case "$SPEC_METHOD_" in dflash|mtp) ;; *) echo "FAILED: SPEC_METHOD must be dflash or mtp (got $SPEC_METHOD_)"; exit 1;; esac
 case "$NS_$DTP_" in *[!0-9]*) echo "FAILED: SPEC_NS/SPEC_DTP must be integers (got $NS_/$DTP_)"; exit 1;; esac
 if [ "$SPEC_METHOD_" = mtp ]; then
@@ -144,15 +133,14 @@ fi
 [ "$(echo "$BOOTLOG" | grep -ac "$(basename "$MODEL")\|compressed-tensors")" -ge 1 ] || fail "checkpoint identity"
 [ "$(echo "$ARGS" | grep -ac -- "--max-num-batched-tokens $MNBT_")" -ge 1 ] || fail "MNBT is not $MNBT_ (Bug B dodge = 8192 on the daily)"
 [ "$(echo "$ARGS" | grep -ac -- "--mamba-ssm-cache-dtype $SSM_DTYPE")" -ge 1 ] || fail "SSM cache dtype is not $SSM_DTYPE on the container"
-# R197: the attention block is sized to the mamba page, which grows with the number of speculative slots (ns9 → 1,584; ns7 → 1,552; ns6 → 1,536),
-# so the exact-value assert holds for the daily's dflash ns7 only; EXP arms with another ns/method must still show the sizing line, and log its value.
+# R197: the attention block is sized to the mamba page, which grows with the number of speculative slots (ns9 → 1,584; ns6 → 1,536), so the
+# exact-value assert holds for the daily's dflash ns9 only; EXP arms with another ns/method must still show the sizing line, and log its value.
 if [ "$SSM_DTYPE" = bfloat16 ]; then
-  if [ "$EXP" = 0 ] || { [ "$SPEC_METHOD_" = dflash ] && [ "$NS_" = "$DAILY_NS" ]; }; then
-    [ "$(echo "$BOOTLOG" | grep -ac "Setting attention block size to $DAILY_BLOCK tokens")" -ge 1 ] || fail "bf16 SSM state at dflash ns$DAILY_NS should give a $DAILY_BLOCK-token attention block (R180/R197); block line missing or different"
-    [ "$EXP" != 0 ] || echo "$DAILY_BLOCK" | sudo tee "$L2/.block" >/dev/null
+  if [ "$EXP" = 0 ] || { [ "$SPEC_METHOD_" = dflash ] && [ "$NS_" = 9 ]; }; then
+    [ "$(echo "$BOOTLOG" | grep -ac 'Setting attention block size to 1584 tokens')" -ge 1 ] || fail "bf16 SSM state should give a 1,584-token attention block (R180); block line missing or different"
   else
     BLK_=$(echo "$BOOTLOG" | grep -aoE 'Setting attention block size to [0-9]+ tokens' | head -1 | tr -dc 0-9)
-    [ -n "$BLK_" ] || fail "attention block sizing line missing"; echo "EXP $SPEC_DESC: attention block $BLK_ tokens (daily ns$DAILY_NS = $DAILY_BLOCK)"
+    [ -n "$BLK_" ] || fail "attention block sizing line missing"; echo "EXP $SPEC_DESC: attention block $BLK_ tokens (daily ns9 = 1,584)"
   fi
 fi
 if [ "$SPEC_METHOD_" = dflash ]; then
@@ -162,10 +150,10 @@ else
 fi
 [ "$(echo "$ARGS" | grep -ac "VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE=536870912")" -ge 1 ] || fail "FlashInfer workspace is not 512 MiB (Bug B dodge)"
 [ "$(echo "$ARGS" | grep -ac "VLLM_SM12X_NVFP4_XQA=0")" -ge 1 ] || fail "VLLM_SM12X_NVFP4_XQA=0 missing"
-# CPU tier (r172): every disk-tier hit is promoted through the CPU tier, so 16 GiB (~1,010 blocks of 2,944; ~1,880 of 1,584; ~1,920 of 1,552) is what lets 131K–262K prompts be served.
+# CPU tier (r172): every disk-tier hit is promoted through the CPU tier, so 16 GiB (~1,010 blocks of 2,944; ~1,880 of 1,584) is what lets 131K–262K prompts be served.
 [ "$(echo "$ARGS" | grep -acE "cpu_bytes_to_use.{1,5}$CPU_B[,}]")" -ge 1 ] || fail "CPU tier is not $CPU_B bytes on the container"
 CPUBLK=$(echo "$BOOTLOG" | grep -aoE 'primary tier \(lru, [0-9]+ blocks\)' | tail -1 | grep -oE '[0-9]+')
-[ "$EXP" != 0 ] || [ "${CPUBLK:-0}" -ge 900 ] || fail "CPU tier has ${CPUBLK:-?} blocks (expected ~1,010 at 16 GiB with 2,944-token blocks, ~1,880 with 1,584, ~1,920 with 1,552)"
+[ "$EXP" != 0 ] || [ "${CPUBLK:-0}" -ge 900 ] || fail "CPU tier has ${CPUBLK:-?} blocks (expected ~1,010 at 16 GiB with 2,944-token blocks, ~1,880 with 1,584)"
 if [ -n "$T_CAP" ]; then [ "$(echo "$ARGS" | grep -acE "max_capacity_gb.{1,5}$T_CAP[,}]")" -ge 1 ] || fail "0137 tier cap $T_CAP GB not on the container"; fi
 if [ "$OFFLOAD" = 1 ]; then  # R167 / NOTES18 §5, fail closed
   [ "$(echo "$BOOTLOG" | grep -ac 'Offloader set to UVAOffloader')" -ge 1 ] || fail "UVAOffloader not selected (0135 inactive?)"
