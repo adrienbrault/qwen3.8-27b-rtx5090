@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Public copy of the private repo's flan/launch-daily-r189-nobss-0905.sh: the R189 daily frozen before R195 (sharded sampling off).
+# ROLLBACK (frozen 2026-09-05 10:40 UTC before the R195 batch-sharded-sampling promotion): the R189 daily exactly — pcieipc image
+# (no 0147), sharded sampling off, same pin/pool/block, so the native-l2 tier content is shared. Tear the running daily down first.
 # DAILY (since 2026-09-04, R168 promotion, user "Promote, go"; sheet flan/r168-DECISION.md): the vLLM 0.29 nvfp4-KV route.
 #   RedHatAI/Qwen3.8-27B-NVFP4 weights (unchanged since R156) + NVFP4 KV + DFlash2 ns9 draft_tp2 in CUDA graphs on the dual
 #   5090s (TP2), syvai W4A16 drafter, native disk tier with 0137 LRU eviction, 16 GiB CPU tier, embed-table UVA offload (0135).
@@ -16,7 +19,7 @@
 # Bug B dodge ASSERTED (XQA off, MNBT 8192, FIWS 512 MiB): nvfp4 prefill above MNBT≈4,929 corrupts under XQA (R155).
 # EXP=1 → :8029 / vllm-exp / eval-l2 (batteries); EXP=eval → :8030 / vllm-eval; default → :8020 daily. Experiments may pass
 #   CAND_IMG / SPLIT_KV / OFFLOAD / KV_BYTES / SEQS / SPEC_NS / SPEC_DTP / TIER_* / CPUB; the daily port ignores the env. Since the
-#   promotion, experiments default to the DAILY image (pcieipc-bsshash since R195; knobs off unless PCIE_IPC=1 / BSS=1) — pass CAND_IMG=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs for the 0.6.18 rc2 image.
+#   promotion, experiments default to the DAILY image (pcieipc since R185, knob off unless PCIE_IPC=1) — pass CAND_IMG=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs for the 0.6.18 rc2 image.
 # R182 (2026-09-04, user "Ok promote"): SSM state cached in bf16 (`--mamba-ssm-cache-dtype bfloat16`). The hybrid allocator stores a GDN
 #   state snapshot per block (mamba_cache_mode=align) and sizes the attention block to that page, so the fp32 state made a request cost
 #   6.4% of the pool at admission + ~0.2%/1K tokens (R178: 15 short or four 100K requests fill 903K "tokens"). bf16 halves the page:
@@ -31,23 +34,12 @@
 #   comparable with the R183 band); the daily port forces it on. Gates on the live daily: r189-promote-pcieipc.sh.
 # Rollback: bash /srv/qwen5090/launch-daily-r182-nopcie-0905.sh (fi0616 image, no 0138, frozen pre-R185 launcher; tear this one down
 #   first); older: launch-daily-r174-ssm-fp32-0904.sh (fp32 SSM), launch-daily-redhat-fp8-0902.sh (v0.28 fp8 daily)
-# R195 (2026-09-05, user "yes" on the R193e sheet): batch-sharded sampling (`--enable-batch-sharded-sampling`: each TP rank samples its
-#   half of the batch from local logits, an all-to-all replaces the 19.9 MB per-step logits all-gather). Image `...-pcieipc-bsshash` =
-#   the pcieipc image + patch 0147 (the flag removed from ParallelConfig.compute_hash, so ON/OFF share one AOT compile artifact; marker
-#   /opt/prs-markers/0147 asserted). R193e (results/2026-09-05-r193e-pin-bss; one artifact + VLLM_TRITON_FORCE_FIRST_CONFIG=1 on both arms):
-#   ON vs OFF bitwise 20/20 median 0 at ctx0 and 30K; steps/s +2.6% c8, +4.5% c16, +1.5% c1 (R193b/R193c same size). Seeded T>0 requests
-#   draw a different sample stream than the unsharded sampler (R187). Experiments: BSS=1 (or the flag in EXTRA_ARGS_APPEND) opts in;
-#   the daily port forces it on and asserts the "Batch-sharded sampling enabled" line. Gates on the live daily: r195-promote-bss.sh.
-#   NOTE the daily's compile artifact changed with the image (0147 changes the hash string): cd95c505/d5e217de/fd65aadf (r193b OFF-h),
-#   another compile-lottery draw (R193) — its bf16 ruler position is read by r195.
-# Rollback: bash /srv/qwen5090/launch-daily-r189-nobss-0905.sh (pcieipc image, no 0147, sharded sampling off; frozen pre-R195 launcher;
-#   same block size so the native-l2 tier is shared; tear this one down first).
 set -uo pipefail
 EXP=${EXP:-0}; EXP_SEQS=${SEQS:-8}; KV_BYTES=${KV_BYTES:-}; OFFLOAD=${OFFLOAD:-1}; SPLIT_KV=${SPLIT_KV:-0}; SSM_DTYPE=${SSM_DTYPE:-bfloat16}  # R182; experiments may pass SSM_DTYPE=float32 (NOT in the unset list below: R183 found every EXP boot dying on "SSM_DTYPE: unbound"; the daily branch forces bfloat16)
 # Daily: pool band 990K–1.05M around the deterministic 1,020,596 (SEQS 16 pin, bf16 SSM; fp32 SSM gave 903,793) and a 512 MiB free floor. Experiments
 # keep an 850K–1.1M band (fp32-SSM pins land at ~904K / ~869K, bf16-SSM at ~986K–1.02M) and the 384 MiB Bug C floor (the r17x boot_cand retry ladders expect it).
 if [ "$EXP" = 0 ]; then MIN_FREE_MIB=${MIN_FREE_MIB:-512}; P_MIN=990000; P_MAX=1050000; else MIN_FREE_MIB=${MIN_FREE_MIB:-384}; P_MIN=850000; P_MAX=1100000; fi
-DAILY_IMG=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash   # R195: S image + patch 0138 (Dockerfile.pcieipc) + patch 0147 (Dockerfile.bss-not-a-compile-factor)
+DAILY_IMG=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc   # R185: S image + patch 0138 (Dockerfile.pcieipc)
 # Tier knobs (0137): the daily boots with a 300 GB LRU cap on the 393 GB native-l2 fs, evict_scope root (stale namespaces from
 # other configs are evicted too), 40 GB min-free (the launcher's own GC threshold). Experiments (EXP≠0) honour the env, unset = no cap.
 if [ "$EXP" != 0 ] || [ "${DAILY_ALLOW_ENV:-0}" = 1 ]; then T_CAP=${TIER_CAP_GB:-}; T_SCOPE=${TIER_EVICT_SCOPE:-}; T_MINFREE=${TIER_MIN_FREE_GB:-}; CPU_B=${CPUB:-17179869184}; IMG=${CAND_IMG:-$DAILY_IMG}
@@ -84,22 +76,18 @@ XARGS=""; XMOUNT=""; MNBT_=8192; FUS_=""; SPX_=""; XENV=""; CCX_=""
 # compilation-config pairs -> v0280 CCEXTRA).
 if [ "$EXP" != 0 ]; then XARGS="${EXTRA_ARGS_APPEND:-}"; XMOUNT="${EXTRA_MOUNT_APPEND:-}"; MNBT_=${EXP_MNBT:-8192}; FUS_="${FUSIONS_APPEND:-}"; SPX_="${SPEC_EXTRA:-}"; XENV="${EXTRA_ENV_APPEND:-}"; CCX_="${CC_EXTRA:-}"; fi
 case "$MNBT_" in *[!0-9]*|"") echo "FAILED: EXP_MNBT must be an integer (got $MNBT_)"; exit 1;; esac
-# R195: the daily forces batch-sharded sampling on; experiments opt in with BSS=1 or by passing the flag in EXTRA_ARGS_APPEND (r191/r193* do).
-if [ "$EXP" = 0 ]; then BSS=1; else BSS=${BSS:-0}; case "${XARGS:-}" in *enable-batch-sharded-sampling*) BSS=1;; esac; fi
-case "$BSS" in 0|1) ;; *) echo "FAILED: BSS must be 0 or 1 (got $BSS)"; exit 1;; esac
-BSS_ARGS=""; if [ "$BSS" = 1 ]; then case "${XARGS:-}" in *enable-batch-sharded-sampling*) ;; *) BSS_ARGS="--enable-batch-sharded-sampling";; esac; fi
 NS_=9; DTP_=2; if [ "$EXP" != 0 ]; then NS_=${SPEC_NS:-9}; DTP_=${SPEC_DTP:-2}; fi
 case "$NS_$DTP_" in *[!0-9]*) echo "FAILED: SPEC_NS/SPEC_DTP must be integers (got $NS_/$DTP_)"; exit 1;; esac
 [ -f "$MODEL/model.safetensors.index.json" ] || { echo "FAILED: checkpoint missing at $MODEL"; exit 1; }
-sudo docker image inspect "$IMG" >/dev/null 2>&1 || { echo "FAILED: image $IMG missing (build: build-v0290rc2.sh + the fi0616 swap layer + patches-v0290/Dockerfile.pcieipc + Dockerfile.bss-not-a-compile-factor)"; exit 1; }
+sudo docker image inspect "$IMG" >/dev/null 2>&1 || { echo "FAILED: image $IMG missing (build: build-v0290rc2.sh + the fi0616 swap layer + patches-v0290/Dockerfile.pcieipc)"; exit 1; }
 env PORT=$PORT NAME=$NAME BIND_ADDR=$BIND MODEL_DIR="$MODEL" TP=2 L2MNT="$L2" CPUB=$CPU_B ${T_CAP:+TIER_CAP_GB=$T_CAP} ${T_SCOPE:+TIER_EVICT_SCOPE=$T_SCOPE} ${T_MINFREE:+TIER_MIN_FREE_GB=$T_MINFREE} \
     IMAGE="$IMG" KVD_OVERRIDE=nvfp4 ALLOW_NO_XQA=1 \
     NO_TIER=0 FIWS=536870912 MNBT=$MNBT_ SEQS=$SEQS ${FUS_:+FUSIONS="$FUS_"} ${CCX_:+CCEXTRA="$CCX_"} UTIL=0.88 MAXLEN=262144 POOL_MIN=$P_MIN POOL_MAX=$P_MAX \
     EXTRA_MOUNT="-v $DRAFT:/draft:ro $XMOUNT" \
-    EXTRA_ARGS="--kv-cache-memory-bytes $KV_BYTES $OFFLOAD_ARGS $SSM_ARGS $BSS_ARGS $XARGS" \
+    EXTRA_ARGS="--kv-cache-memory-bytes $KV_BYTES $OFFLOAD_ARGS $SSM_ARGS $XARGS" \
     SPEC_JSON='{"method":"dflash","model":"/draft","num_speculative_tokens":'$NS_',"draft_tensor_parallel_size":'$DTP_',"attention_backend":"FLASHINFER"'"${SPX_:+,$SPX_}"'}' \
     EXTRA_ENV="-e NCCL_P2P_LEVEL=SYS -e VLLM_SM12X_NVFP4_XQA=0 -e VLLM_SM12X_DFLASH_GRAPHS=1 $SPLIT_ENV $PCIE_ENV $XENV" \
-    bash /srv/qwen5090/launch-daily-v0280.sh || { echo "0.29 nvfp4 DAILY FAILED — engine NOT up$([ "$EXP" != 0 ] || echo '; rollback: launch-daily-r189-nobss-0905.sh')"; exit 1; }
+    bash /srv/qwen5090/launch-daily-v0280.sh || { echo "0.29 nvfp4 DAILY FAILED — engine NOT up$([ "$EXP" != 0 ] || echo '; rollback: launch-daily-r182-nopcie-0905.sh')"; exit 1; }
 BOOTLOG=$(sudo docker logs "$NAME" 2>&1)
 ARGS=$(sudo docker inspect "$NAME" --format '{{json .Args}} {{json .Config.Env}}')
 fail(){ echo "FAILED: $1"; exit 1; }
@@ -140,13 +128,8 @@ if [ "$PCIE_IPC" = 1 ]; then  # R185, fail closed: a silent fallback to CustomAl
   [ "$(echo "$BOOTLOG" | grep -acF "Using ['PCIE_IPC', 'CUSTOM', 'PYNCCL'] all-reduce backends")" -ge 1 ] || fail "all-reduce backend order is not PCIE_IPC, CUSTOM, PYNCCL"
   [ "$(echo "$ARGS" | grep -ac "VLLM_SM12X_PCIE_IPC_AR=1")" -ge 1 ] || fail "VLLM_SM12X_PCIE_IPC_AR=1 missing on the container"
 else [ "$(echo "$BOOTLOG" | grep -ac "PCIe IPC all-reduce enabled")" -eq 0 ] || fail "pcie_ipc all-reduce engaged although PCIE_IPC=0"; fi
-if [ "$BSS" = 1 ]; then  # R195, fail closed (-ge 1: rank 1 does not always log INFO, R190e)
-  [ "$(echo "$BOOTLOG" | grep -ac "Batch-sharded sampling enabled")" -ge 1 ] || fail "BSS=1 but no 'Batch-sharded sampling enabled' line"
-  [ "$(echo "$ARGS" | grep -ac -- "--enable-batch-sharded-sampling")" -ge 1 ] || fail "--enable-batch-sharded-sampling missing on the container"
-else [ "$(echo "$BOOTLOG" | grep -ac "Batch-sharded sampling enabled")" -eq 0 ] || fail "sharded sampling engaged although BSS=0"; fi
-if [ "$IMG" = "$DAILY_IMG" ]; then sudo docker exec "$NAME" test -f /opt/prs-markers/0147 || fail "daily image lacks the 0147 marker (image drift: sharded sampling would fork the compile artifact)"; fi
 FREE=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | sort -n | head -1)
 [ "$FREE" -ge "$MIN_FREE_MIB" ] || fail "only $FREE MiB free after pre-warm (< $MIN_FREE_MIB) — Bug C headroom missing; lower KV_BYTES"
 POOL=$(echo "$BOOTLOG" | grep -a 'GPU KV cache size' | tail -1 | grep -oE 'cache size: [0-9,]+' | tr -dc 0-9)
 LABEL="0.29 nvfp4 DAILY UP"; [ "$EXP" = 0 ] || LABEL="0.29 nvfp4 EXP UP"
-echo "$LABEL on ${BIND}:${PORT} (vllm $VER, FlashInfer $FIVER, RedHat NVFP4 weights + NVFP4 KV pinned $KV_BYTES B/GPU + DFlash2 ns$NS_ draft_tp$DTP_ in CUDA graphs + SSM $SSM_DTYPE + 0131/0134 + embed offload=$OFFLOAD + split_kv=$SPLIT_KV + pcie_ipc=$PCIE_IPC + bss=$BSS + native disk tier${T_CAP:+ cap ${T_CAP} GB} + CPU tier $CPU_B B, dual 5090, image $IMG, SEQS $SEQS). Pool $POOL, min free VRAM $FREE MiB.$([ "$EXP" != 0 ] || echo ' Rollback: launch-daily-r182-nopcie-0905.sh')"
+echo "$LABEL on ${BIND}:${PORT} (vllm $VER, FlashInfer $FIVER, RedHat NVFP4 weights + NVFP4 KV pinned $KV_BYTES B/GPU + DFlash2 ns$NS_ draft_tp$DTP_ in CUDA graphs + SSM $SSM_DTYPE + 0131/0134 + embed offload=$OFFLOAD + split_kv=$SPLIT_KV + pcie_ipc=$PCIE_IPC + native disk tier${T_CAP:+ cap ${T_CAP} GB} + CPU tier $CPU_B B, dual 5090, image $IMG, SEQS $SEQS). Pool $POOL, min free VRAM $FREE MiB.$([ "$EXP" != 0 ] || echo ' Rollback: launch-daily-r182-nopcie-0905.sh')"
