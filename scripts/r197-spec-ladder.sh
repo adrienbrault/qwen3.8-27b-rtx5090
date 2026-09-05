@@ -22,11 +22,11 @@ set -uo pipefail
 export PATH="$HOME/.local/bin:$PATH"
 R=/srv/qwen5090/results/2026-09-05-r197-spec-ladder; mkdir -p "$R"
 log(){ echo "$(date -Is) $*" | tee -a "$R/audit.log"; }
-IMG=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash
+IMG=${IMG:-vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash}
 U=http://127.0.0.1:8029; CAND=/srv/qwen5090/launch-daily.sh; L2=/srv/qwen5090/eval-l2; PR=/srv/qwen5090/probes
 FD=/srv/qwen5090/results/2026-08-23-fidelity; DREF=/srv/qwen5090/results/2026-09-04-r173c-bf16-decode
 PINS="13980000000 13500000000"
-PIN_ENV="EXTRA_ENV_APPEND=-e VLLM_TRITON_FORCE_FIRST_CONFIG=1"
+PIN_ENV="EXTRA_ENV_APPEND=-e VLLM_TRITON_FORCE_FIRST_CONFIG=1${EXTRA_ARM_ENV:+ $EXTRA_ARM_ENV}"
 # r193d P1/P2 + r193e P3/B3 artifact (forced first config, BSS invisible to the hash since 0147)
 EXPECT_HASHES=7ff095820d8f,859caf58c368,e70c5bc3970c,
 sudo docker image inspect "$IMG" >/dev/null 2>&1 || { log "ABORT: image $IMG missing"; exit 3; }
@@ -99,14 +99,22 @@ arm(){ local tag=$1 method=$2 ns=$3
 # pcie_ipc = the same-day all-reduce pairing (M-vs-D9c isolates the spec method; M-vs-D9 is what a daily swap would actually deliver).
 #   unit: sudo systemd-run --unit=r197-spec-ladder4 --collect -p User=adrienbrault -p RuntimeMaxSec=43200 -p TimeoutStopSec=900 -E GPU_QUEUE_NAME=r197-spec-ladder4 \
 #         -E PCIE_IPC_ARM=0 -E ARMS="M3 mtp 3;M4 mtp 4;M4b mtp 4;D9c dflash 9" bash -c '. /srv/qwen5090/lib/gpu-queue.sh; while systemctl is-active -q r197-spec-ladder2 || systemctl is-active -q r197-spec-ladder3; do sleep 30; done; exec bash /srv/qwen5090/r197-spec-ladder.sh'
+# 13:5x UTC (user: "make an image where MTP works"): patch 0148 (codex, BRIEF30) admits the MTP drafter to the 0138 PCIe IPC all-reduce behind
+#   VLLM_SM12X_PCIE_IPC_MTP=1; image ...-pcieipc-bsshash-mtppcie. IMG and EXTRA_ARM_ENV are now overridable so ladder5 runs the MTP arms on it with
+#   PCIE_IPC_ARM=1; M3p/M4p vs M3/M4 (CUSTOM) must be bitwise when the hash sets match and loaded (R185: pcie_ipc ≡ CUSTOM on every paired ruler).
+#   unit: sudo systemd-run --unit=r197-spec-ladder5 --collect -p User=adrienbrault -p RuntimeMaxSec=43200 -p TimeoutStopSec=900 -E GPU_QUEUE_NAME=r197-spec-ladder5 \
+#         -E IMG=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash-mtppcie -E EXTRA_ARM_ENV="-e VLLM_SM12X_PCIE_IPC_MTP=1" -E ARMS="M3p mtp 3;M4p mtp 4" \
+#         bash -c '. /srv/qwen5090/lib/gpu-queue.sh; while systemctl is-active -q r197-spec-ladder4; do sleep 30; done; exec bash /srv/qwen5090/r197-spec-ladder.sh'
 # 13:0x UTC (user: "also try dflash 10/11"): unit r197-spec-ladder3 with ARMS="D10 dflash 10;D11 dflash 11" queued behind ladder2, same results dir.
 ARMS="${ARMS:-D9 dflash 9;D6 dflash 6;D7 dflash 7;D8 dflash 8;D9b dflash 9;M3 mtp 3;M4 mtp 4}"
 log "arms: $ARMS"
 echo "$ARMS" | tr ';' '\n' | while read -r t m n; do [ -n "$t" ] && arm "$t" "$m" "$n"; done
 # numerics: every arm vs D9 (same artifact for the D arms = the draft length's own numerics; M arms = fresh artifact, caveat)
-for T in D6 D7 D8 D9b D10 D11 D9c M3 M4 M4b; do for ctx in 0 30000; do
+for T in D6 D7 D8 D9b D10 D11 D9c M3 M4 M4b M3p M4p; do for ctx in 0 30000; do
   [ -f "$R/dec-D9-ctx$ctx.jsonl" ] && [ -f "$R/dec-$T-ctx$ctx.jsonl" ] && log "[$T vs D9 decode ctx$ctx] $(python3 $PR/decode_fidelity.py compare "$R/dec-D9-ctx$ctx.jsonl" "$R/dec-$T-ctx$ctx.jsonl" 2>&1 | tail -1 | cut -c1-300)"
 done; done
+# pcie_ipc MTP arms (ladder5, image mtppcie) vs their CUSTOM twins: bitwise expected when the hash sets match and loaded
+for P in M3 M4; do for ctx in 0 30000; do [ -f "$R/dec-$P-ctx$ctx.jsonl" ] && [ -f "$R/dec-${P}p-ctx$ctx.jsonl" ] && log "[${P}p vs $P decode ctx$ctx] $(python3 $PR/decode_fidelity.py compare "$R/dec-$P-ctx$ctx.jsonl" "$R/dec-${P}p-ctx$ctx.jsonl" 2>&1 | tail -1 | cut -c1-300)"; done; done
 for ctx in 0 30000; do [ -f "$R/dec-M4-ctx$ctx.jsonl" ] && [ -f "$R/dec-M4b-ctx$ctx.jsonl" ] && log "[M4b vs M4 decode ctx$ctx] $(python3 $PR/decode_fidelity.py compare "$R/dec-M4-ctx$ctx.jsonl" "$R/dec-M4b-ctx$ctx.jsonl" 2>&1 | tail -1 | cut -c1-300)"; [ -f "$R/dec-M3-ctx$ctx.jsonl" ] && [ -f "$R/dec-M4-ctx$ctx.jsonl" ] && log "[M4 vs M3 decode ctx$ctx] $(python3 $PR/decode_fidelity.py compare "$R/dec-M3-ctx$ctx.jsonl" "$R/dec-M4-ctx$ctx.jsonl" 2>&1 | tail -1 | cut -c1-300)"; done
 # artifact check: all D arms one hash set, D6/D7/D8/D9b loaded (saved=0); M3 saved or loaded, M4 loaded
 awk '{print $1, $2, $3, "hashes="$4, "saved="$5, "loaded="$6}' "$R/arms.txt" | sed 's/^/[artifact] /' | tee -a "$R/audit.log"
