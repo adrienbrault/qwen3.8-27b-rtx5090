@@ -47,6 +47,9 @@ EXP=${EXP:-0}; EXP_SEQS=${SEQS:-8}; KV_BYTES=${KV_BYTES:-}; OFFLOAD=${OFFLOAD:-1
 # Daily: pool band 990K–1.05M around the deterministic 1,020,596 (SEQS 16 pin, bf16 SSM; fp32 SSM gave 903,793) and a 512 MiB free floor. Experiments
 # keep an 850K–1.1M band (fp32-SSM pins land at ~904K / ~869K, bf16-SSM at ~986K–1.02M) and the 384 MiB Bug C floor (the r17x boot_cand retry ladders expect it).
 if [ "$EXP" = 0 ]; then MIN_FREE_MIB=${MIN_FREE_MIB:-512}; P_MIN=990000; P_MAX=1050000; else MIN_FREE_MIB=${MIN_FREE_MIB:-384}; P_MIN=850000; P_MAX=1100000; fi
+# R197: the pool follows the speculative configuration (each slot holds a GDN state snapshot; the MTP head needs no drafter weights): MTP ns3
+# booted at 1,309,368 and the 1.1M ceiling rejected a healthy engine. EXP arms with another spec method/length get a wide band and log the pool.
+if [ "$EXP" != 0 ] && { [ "${SPEC_METHOD:-dflash}" != dflash ] || [ "${SPEC_NS:-9}" != 9 ]; }; then P_MIN=${POOL_MIN:-600000}; P_MAX=${POOL_MAX:-1500000}; fi
 DAILY_IMG=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash   # R195: S image + patch 0138 (Dockerfile.pcieipc) + patch 0147 (Dockerfile.bss-not-a-compile-factor)
 # Tier knobs (0137): the daily boots with a 300 GB LRU cap on the 393 GB native-l2 fs, evict_scope root (stale namespaces from
 # other configs are evicted too), 40 GB min-free (the launcher's own GC threshold). Experiments (EXP≠0) honour the env, unset = no cap.
