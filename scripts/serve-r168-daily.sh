@@ -90,16 +90,24 @@ case "$MNBT_" in *[!0-9]*|"") echo "FAILED: EXP_MNBT must be an integer (got $MN
 if [ "$EXP" = 0 ]; then BSS=1; else BSS=${BSS:-0}; case "${XARGS:-}" in *enable-batch-sharded-sampling*) BSS=1;; esac; fi
 case "$BSS" in 0|1) ;; *) echo "FAILED: BSS must be 0 or 1 (got $BSS)"; exit 1;; esac
 BSS_ARGS=""; if [ "$BSS" = 1 ]; then case "${XARGS:-}" in *enable-batch-sharded-sampling*) ;; *) BSS_ARGS="--enable-batch-sharded-sampling";; esac; fi
-NS_=9; DTP_=2; if [ "$EXP" != 0 ]; then NS_=${SPEC_NS:-9}; DTP_=${SPEC_DTP:-2}; fi
+NS_=9; DTP_=2; SPEC_METHOD_=dflash; if [ "$EXP" != 0 ]; then NS_=${SPEC_NS:-9}; DTP_=${SPEC_DTP:-2}; SPEC_METHOD_=${SPEC_METHOD:-dflash}; fi
+# R197 EXP-only passthrough: SPEC_METHOD=mtp swaps the DFlash2 drafter for the checkpoint's own MTP head (vLLM method qwen3_5_mtp, SPEC_NS
+# tokens, no /draft mount; the drafter-graph asserts below apply to dflash only). The daily port always runs dflash ns9 draft_tp2.
+case "$SPEC_METHOD_" in dflash|mtp) ;; *) echo "FAILED: SPEC_METHOD must be dflash or mtp (got $SPEC_METHOD_)"; exit 1;; esac
 case "$NS_$DTP_" in *[!0-9]*) echo "FAILED: SPEC_NS/SPEC_DTP must be integers (got $NS_/$DTP_)"; exit 1;; esac
+if [ "$SPEC_METHOD_" = mtp ]; then
+  SPEC_JSON_='{"method":"qwen3_5_mtp","num_speculative_tokens":'$NS_"${SPX_:+,$SPX_}"'}'; DRAFT_MOUNT=""; SPEC_DESC="MTP head ns$NS_"
+else
+  SPEC_JSON_='{"method":"dflash","model":"/draft","num_speculative_tokens":'$NS_',"draft_tensor_parallel_size":'$DTP_',"attention_backend":"FLASHINFER"'"${SPX_:+,$SPX_}"'}'; DRAFT_MOUNT="-v $DRAFT:/draft:ro"; SPEC_DESC="DFlash2 ns$NS_ draft_tp$DTP_ in CUDA graphs"
+fi
 [ -f "$MODEL/model.safetensors.index.json" ] || [ -f "$MODEL/model.safetensors" ] || { echo "FAILED: checkpoint missing at $MODEL"; exit 1; }
 sudo docker image inspect "$IMG" >/dev/null 2>&1 || { echo "FAILED: image $IMG missing (build: build-v0290rc2.sh + the fi0616 swap layer + patches-v0290/Dockerfile.pcieipc + Dockerfile.bss-not-a-compile-factor)"; exit 1; }
 env PORT=$PORT NAME=$NAME BIND_ADDR=$BIND MODEL_DIR="$MODEL" TP=2 L2MNT="$L2" CPUB=$CPU_B ${T_CAP:+TIER_CAP_GB=$T_CAP} ${T_SCOPE:+TIER_EVICT_SCOPE=$T_SCOPE} ${T_MINFREE:+TIER_MIN_FREE_GB=$T_MINFREE} \
     IMAGE="$IMG" KVD_OVERRIDE=nvfp4 ALLOW_NO_XQA=1 \
     NO_TIER=0 FIWS=536870912 MNBT=$MNBT_ SEQS=$SEQS ${FUS_:+FUSIONS="$FUS_"} ${CCX_:+CCEXTRA="$CCX_"} UTIL=0.88 MAXLEN=262144 POOL_MIN=$P_MIN POOL_MAX=$P_MAX \
-    EXTRA_MOUNT="-v $DRAFT:/draft:ro $XMOUNT" \
+    EXTRA_MOUNT="$DRAFT_MOUNT $XMOUNT" \
     EXTRA_ARGS="--kv-cache-memory-bytes $KV_BYTES $OFFLOAD_ARGS $SSM_ARGS $BSS_ARGS $XARGS" \
-    SPEC_JSON='{"method":"dflash","model":"/draft","num_speculative_tokens":'$NS_',"draft_tensor_parallel_size":'$DTP_',"attention_backend":"FLASHINFER"'"${SPX_:+,$SPX_}"'}' \
+    SPEC_JSON="$SPEC_JSON_" \
     EXTRA_ENV="-e NCCL_P2P_LEVEL=SYS -e VLLM_SM12X_NVFP4_XQA=0 -e VLLM_SM12X_DFLASH_GRAPHS=1 $SPLIT_ENV $PCIE_ENV $XENV" \
     bash /srv/qwen5090/launch-daily-v0280.sh || { echo "0.29 nvfp4 DAILY FAILED — engine NOT up$([ "$EXP" != 0 ] || echo '; rollback: launch-daily-r189-nobss-0905.sh')"; exit 1; }
 BOOTLOG=$(sudo docker logs "$NAME" 2>&1)
@@ -112,14 +120,22 @@ if [ "$IMG" = "$DAILY_IMG" ]; then case "$FIVER" in 0.6.16*) ;; *) fail "S image
 # fail-closed asserts (grep -c, not -q: pipefail + -q SIGPIPE gotcha)
 [ "$(echo "$BOOTLOG" | grep -ac "as specified by kv_cache_memory_bytes")" -ge 1 ] || fail "pinned KV budget not honoured (no kv_cache_memory_bytes line)"
 [ "$(echo "$BOOTLOG" | grep -ac "int workspace shrunk 8 MiB -> 1 MiB")" -ge 1 ] || fail "0131 pooled int workspace not active (image/env drift)"
-[ "$(echo "$BOOTLOG" | grep -ac "Capturing dflash2 CUDA graphs")" -ge 1 ] || fail "drafter graphs not captured (0129 inactive?)"
-[ "$(echo "$BOOTLOG" | grep -ac "running the draft eagerly")" -eq 0 ] || fail "drafter fell back to eager"
+if [ "$SPEC_METHOD_" = dflash ]; then
+  [ "$(echo "$BOOTLOG" | grep -ac "Capturing dflash2 CUDA graphs")" -ge 1 ] || fail "drafter graphs not captured (0129 inactive?)"
+  [ "$(echo "$BOOTLOG" | grep -ac "running the draft eagerly")" -eq 0 ] || fail "drafter fell back to eager"
+else
+  [ "$(echo "$BOOTLOG" | grep -ac "Capturing dflash2 CUDA graphs")" -eq 0 ] || fail "SPEC_METHOD=mtp but the DFlash2 drafter captured graphs"
+fi
 [ "$(echo "$BOOTLOG" | grep -ac "decode_backend=xqa")" -eq 0 ] || fail "XQA decode engaged — Bug B dodge not in force"
 [ "$(echo "$BOOTLOG" | grep -ac "$(basename "$MODEL")\|compressed-tensors")" -ge 1 ] || fail "checkpoint identity"
 [ "$(echo "$ARGS" | grep -ac -- "--max-num-batched-tokens $MNBT_")" -ge 1 ] || fail "MNBT is not $MNBT_ (Bug B dodge = 8192 on the daily)"
 [ "$(echo "$ARGS" | grep -ac -- "--mamba-ssm-cache-dtype $SSM_DTYPE")" -ge 1 ] || fail "SSM cache dtype is not $SSM_DTYPE on the container"
 if [ "$SSM_DTYPE" = bfloat16 ]; then [ "$(echo "$BOOTLOG" | grep -ac 'Setting attention block size to 1584 tokens')" -ge 1 ] || fail "bf16 SSM state should give a 1,584-token attention block (R180); block line missing or different"; fi
-[ "$(echo "$ARGS" | grep -acE "num_speculative_tokens.{1,5}$NS_[,}]")" -ge 1 ] && [ "$(echo "$ARGS" | grep -acE "draft_tensor_parallel_size.{1,5}$DTP_[,}]")" -ge 1 ] || fail "speculative config is not ns$NS_ draft_tp$DTP_ on the container"
+if [ "$SPEC_METHOD_" = dflash ]; then
+  [ "$(echo "$ARGS" | grep -acE "num_speculative_tokens.{1,5}$NS_[,}]")" -ge 1 ] && [ "$(echo "$ARGS" | grep -acE "draft_tensor_parallel_size.{1,5}$DTP_[,}]")" -ge 1 ] || fail "speculative config is not ns$NS_ draft_tp$DTP_ on the container"
+else
+  [ "$(echo "$ARGS" | grep -acE "num_speculative_tokens.{1,5}$NS_[,}]")" -ge 1 ] && [ "$(echo "$ARGS" | grep -ac "qwen3_5_mtp")" -ge 1 ] || fail "speculative config is not MTP ns$NS_ on the container"
+fi
 [ "$(echo "$ARGS" | grep -ac "VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE=536870912")" -ge 1 ] || fail "FlashInfer workspace is not 512 MiB (Bug B dodge)"
 [ "$(echo "$ARGS" | grep -ac "VLLM_SM12X_NVFP4_XQA=0")" -ge 1 ] || fail "VLLM_SM12X_NVFP4_XQA=0 missing"
 # CPU tier (r172): every disk-tier hit is promoted through the CPU tier, so 16 GiB (~1,010 blocks of 2,944; ~1,880 of 1,584) is what lets 131K–262K prompts be served.
@@ -151,4 +167,4 @@ FREE=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | sort -
 [ "$FREE" -ge "$MIN_FREE_MIB" ] || fail "only $FREE MiB free after pre-warm (< $MIN_FREE_MIB) — Bug C headroom missing; lower KV_BYTES"
 POOL=$(echo "$BOOTLOG" | grep -a 'GPU KV cache size' | tail -1 | grep -oE 'cache size: [0-9,]+' | tr -dc 0-9)
 LABEL="0.29 nvfp4 DAILY UP"; [ "$EXP" = 0 ] || LABEL="0.29 nvfp4 EXP UP"
-echo "$LABEL on ${BIND}:${PORT} (vllm $VER, FlashInfer $FIVER, RedHat NVFP4 weights + NVFP4 KV pinned $KV_BYTES B/GPU + DFlash2 ns$NS_ draft_tp$DTP_ in CUDA graphs + SSM $SSM_DTYPE + 0131/0134 + embed offload=$OFFLOAD + split_kv=$SPLIT_KV + pcie_ipc=$PCIE_IPC + bss=$BSS + native disk tier${T_CAP:+ cap ${T_CAP} GB} + CPU tier $CPU_B B, dual 5090, image $IMG, SEQS $SEQS). Pool $POOL, min free VRAM $FREE MiB.$([ "$EXP" != 0 ] || echo ' Rollback: launch-daily-r182-nopcie-0905.sh')"
+echo "$LABEL on ${BIND}:${PORT} (vllm $VER, FlashInfer $FIVER, RedHat NVFP4 weights + NVFP4 KV pinned $KV_BYTES B/GPU + $SPEC_DESC + SSM $SSM_DTYPE + 0131/0134 + embed offload=$OFFLOAD + split_kv=$SPLIT_KV + pcie_ipc=$PCIE_IPC + bss=$BSS + native disk tier${T_CAP:+ cap ${T_CAP} GB} + CPU tier $CPU_B B, dual 5090, image $IMG, SEQS $SEQS). Pool $POOL, min free VRAM $FREE MiB.$([ "$EXP" != 0 ] || echo ' Rollback: launch-daily-r182-nopcie-0905.sh')"

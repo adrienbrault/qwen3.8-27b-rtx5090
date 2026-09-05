@@ -22,7 +22,9 @@
 # outputs are WHERE (dense vs agentic vs decode 30K), the drafter's acceptance on it, and the R156 arm G (QUASAR, all-GDN-NVFP4 +
 # bf16 lm_head) row for comparison. Arm M's min_free at the same pin is the headroom a larger pin would have on this checkpoint.
 #   unit: sudo systemd-run --unit=r196-minima-audition --collect -p User=adrienbrault -p RuntimeMaxSec=43200 -p TimeoutStopSec=900 \
-#         -E GPU_QUEUE_NAME=r196-minima-audition bash -c '. /srv/qwen5090/lib/gpu-queue.sh; exec bash /srv/qwen5090/r196-minima-audition.sh'
+#         -E GPU_QUEUE_NAME=r196-minima-audition bash -c '. /srv/qwen5090/lib/gpu-queue.sh; while systemctl is-active -q r197-spec-ladder; do sleep 30; done; exec bash /srv/qwen5090/r196-minima-audition.sh'
+# Re-queued 2026-09-05 12:2x UTC behind r197 (user: "move the new model audition after these dflash/mtp exp"); the first run (11:52 UTC, arm H
+# booted and was scoring) was stopped and its partial log kept as audit-aborted-1152.log.
 set -uo pipefail
 export PATH="$HOME/.local/bin:$PATH"
 R=/srv/qwen5090/results/2026-09-05-r196-minima-audition; mkdir -p "$R"
