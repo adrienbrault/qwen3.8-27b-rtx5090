@@ -60,6 +60,8 @@ if [ "${DAILY_ALLOW_ENV:-0}" != 1 ]; then
 fi
 DRAFT=/srv/qwen5090/models/dflash2-qwen38-syvai-w4a16
 MODEL=/srv/qwen5090/models/qwen3.8-27b-redhat-nvfp4
+# R196 EXP-only passthrough: CAND_MODEL=<dir> audits another checkpoint on the daily route (same KV dtype, drafter, knobs); the daily port ignores it.
+if [ "$EXP" != 0 ] && [ -n "${CAND_MODEL:-}" ]; then MODEL=$CAND_MODEL; fi
 if [ "$EXP" = 1 ]; then PORT=8029; NAME=vllm-exp; BIND=127.0.0.1; L2=/srv/qwen5090/eval-l2; SEQS=$EXP_SEQS
 elif [ "$EXP" = eval ]; then PORT=8030; NAME=vllm-eval; BIND=${EVAL_BIND:-127.0.0.1}; L2=/srv/qwen5090/eval-l2; SEQS=$EXP_SEQS
 else PORT=8020; NAME=vllm-27b; BIND=0.0.0.0; L2=/srv/qwen5090/native-l2; SEQS=16; SSM_DTYPE=bfloat16; fi   # SEQS 16 since 2026-09-04 (R176, user): R159 c16 = +34% aggregate on the fp8 shape; pin 13.98 GB → pool 903,793 (−3.6% vs SEQS 8)   # BIND 0.0.0.0 deliberate: owui-proxy/harbor reach the engine via 172.17.0.1
@@ -90,7 +92,7 @@ case "$BSS" in 0|1) ;; *) echo "FAILED: BSS must be 0 or 1 (got $BSS)"; exit 1;;
 BSS_ARGS=""; if [ "$BSS" = 1 ]; then case "${XARGS:-}" in *enable-batch-sharded-sampling*) ;; *) BSS_ARGS="--enable-batch-sharded-sampling";; esac; fi
 NS_=9; DTP_=2; if [ "$EXP" != 0 ]; then NS_=${SPEC_NS:-9}; DTP_=${SPEC_DTP:-2}; fi
 case "$NS_$DTP_" in *[!0-9]*) echo "FAILED: SPEC_NS/SPEC_DTP must be integers (got $NS_/$DTP_)"; exit 1;; esac
-[ -f "$MODEL/model.safetensors.index.json" ] || { echo "FAILED: checkpoint missing at $MODEL"; exit 1; }
+[ -f "$MODEL/model.safetensors.index.json" ] || [ -f "$MODEL/model.safetensors" ] || { echo "FAILED: checkpoint missing at $MODEL"; exit 1; }
 sudo docker image inspect "$IMG" >/dev/null 2>&1 || { echo "FAILED: image $IMG missing (build: build-v0290rc2.sh + the fi0616 swap layer + patches-v0290/Dockerfile.pcieipc + Dockerfile.bss-not-a-compile-factor)"; exit 1; }
 env PORT=$PORT NAME=$NAME BIND_ADDR=$BIND MODEL_DIR="$MODEL" TP=2 L2MNT="$L2" CPUB=$CPU_B ${T_CAP:+TIER_CAP_GB=$T_CAP} ${T_SCOPE:+TIER_EVICT_SCOPE=$T_SCOPE} ${T_MINFREE:+TIER_MIN_FREE_GB=$T_MINFREE} \
     IMAGE="$IMG" KVD_OVERRIDE=nvfp4 ALLOW_NO_XQA=1 \
@@ -113,7 +115,7 @@ if [ "$IMG" = "$DAILY_IMG" ]; then case "$FIVER" in 0.6.16*) ;; *) fail "S image
 [ "$(echo "$BOOTLOG" | grep -ac "Capturing dflash2 CUDA graphs")" -ge 1 ] || fail "drafter graphs not captured (0129 inactive?)"
 [ "$(echo "$BOOTLOG" | grep -ac "running the draft eagerly")" -eq 0 ] || fail "drafter fell back to eager"
 [ "$(echo "$BOOTLOG" | grep -ac "decode_backend=xqa")" -eq 0 ] || fail "XQA decode engaged — Bug B dodge not in force"
-[ "$(echo "$BOOTLOG" | grep -ac "redhat-nvfp4\|compressed-tensors")" -ge 1 ] || fail "checkpoint identity"
+[ "$(echo "$BOOTLOG" | grep -ac "$(basename "$MODEL")\|compressed-tensors")" -ge 1 ] || fail "checkpoint identity"
 [ "$(echo "$ARGS" | grep -ac -- "--max-num-batched-tokens $MNBT_")" -ge 1 ] || fail "MNBT is not $MNBT_ (Bug B dodge = 8192 on the daily)"
 [ "$(echo "$ARGS" | grep -ac -- "--mamba-ssm-cache-dtype $SSM_DTYPE")" -ge 1 ] || fail "SSM cache dtype is not $SSM_DTYPE on the container"
 if [ "$SSM_DTYPE" = bfloat16 ]; then [ "$(echo "$BOOTLOG" | grep -ac 'Setting attention block size to 1584 tokens')" -ge 1 ] || fail "bf16 SSM state should give a 1,584-token attention block (R180); block line missing or different"; fi
