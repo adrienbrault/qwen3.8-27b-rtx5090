@@ -8,8 +8,10 @@
 # FN-b (repeat). Per arm: proof line count (2 ranks × "PCIe IPC fused norm ACTIVE"), decode_ss code c1/c8/c16 + prose c1, decode ruler
 # vs bf16 at ctx 0/30K (and FN vs CTRL directly — bitwise at c1 is the claim), agentic ruler vs bf16, error lines.
 # Image ...-pcieipc-fusednorm (0144 on the pcieipc base), PCIE_IPC=1, SEQS 16, :8029. Queued behind r190d; r189 re-issued to wait on it.
-#   unit: sudo systemd-run --unit=r190e-fusednorm --collect -p User=adrienbrault -p RuntimeMaxSec=14400 -p TimeoutStopSec=900 \
-#         -E GPU_QUEUE_NAME=r190e-fusednorm bash -c '. /srv/qwen5090/lib/gpu-queue.sh; while systemctl is-active -q r190d-diag; do sleep 30; done; exec bash /srv/qwen5090/r190e-fusednorm.sh'
+#   unit (re-issued 2026-09-05 after the 0144 stream fix; chain r190c → r192 → r190e → r190d → r189): sudo systemd-run --unit=r190e-fusednorm --collect -p User=adrienbrault -p RuntimeMaxSec=43200 -p TimeoutStopSec=900 \
+#         -E GPU_QUEUE_NAME=r190e-fusednorm bash -c '. /srv/qwen5090/lib/gpu-queue.sh; while systemctl is-active -q r192-humming; do sleep 30; done; exec bash /srv/qwen5090/r190e-fusednorm.sh'
+#   First run (05:44 UTC): CTRL arm measured, FN arm failed to boot on both pins — 0144's strict stream-ownership check raised in capture_model's
+#   eager warmup (NOTES27 addendum); unit stopped 05:58, image rebuilt with ws._check_stream(), re-queued. The audit log carries both runs.
 set -uo pipefail
 export PATH="$HOME/.local/bin:$PATH"
 R=/srv/qwen5090/results/2026-09-05-r190e-fusednorm; mkdir -p "$R"

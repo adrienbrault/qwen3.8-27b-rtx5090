@@ -290,14 +290,14 @@ diff --color -ruN -x __pycache__ a/vllm/distributed/device_communicators/pcie_ip
 +        logger.info_once("PCIe IPC fused norm: capacity fallback to unfused")
 +        return vllm.ir.ops.fused_add_rms_norm(
 +            tensor_model_parallel_all_reduce(x), residual, weight.float() + 1.0, eps)
-+    # No CPU collective, allocation of IPC storage, or stream transfer here.
-+    # Ownership is established by the existing communicator capture context.
-+    if not torch.cuda.is_current_stream_capturing():
-+        current = torch.cuda.current_stream(ws.device)
-+        if ws._stream is None:
-+            ws._stream = current
-+        elif current != ws._stream:
-+            raise RuntimeError("PCIe fused norm requires the workspace ownership stream")
++    # No CPU collective or allocation of IPC storage here. Stream ownership
++    # follows the workspace's own all_reduce policy (_check_stream: no-op while
++    # capturing; on an eager stream change, synchronize + rebind). R190e
++    # (2026-09-05 05:55 UTC): the original strict check raised "PCIe fused norm
++    # requires the workspace ownership stream" in capture_model's eager warmup
++    # forward, because vLLM's profile run and its capture warmup run on different
++    # current streams — the engine could not boot with the knob on.
++    ws._check_stream()
 +    result = ws.native.fused_norm(ws._handle, x, residual, weight, eps)
 +    logger.info_once("PCIe IPC fused norm ACTIVE: TP2 bf16 H5120 max_rows=320 R144")
 +    return result
