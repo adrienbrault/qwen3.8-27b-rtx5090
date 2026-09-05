@@ -50,7 +50,7 @@ boot_arm(){ local tag=$1 img=$2 expect=$3 kv rc n saved loaded; shift 3
       ELOG > "$R/engine-boot-$tag.log"
       n=$(grep -ac 'SM12X seq_lens one-copy active' "$R/engine-boot-$tag.log")
       saved=$(grep -ac 'saved AOT compiled function' "$R/engine-boot-$tag.log"); loaded=$(grep -ac 'Directly load AOT' "$R/engine-boot-$tag.log")
-      log "[$tag] BOOT OK pin=$kv env='$*' pool=$(grep -aoE 'Pool [0-9]+' "$R/boot-$tag-$kv.log" | tail -1 | tr -dc 0-9) min_free=$(grep -aoE 'min free VRAM [0-9]+' "$R/boot-$tag-$kv.log" | tail -1 | tr -dc 0-9)MiB pcie=$(grep -ac 'PCIe IPC all-reduce enabled' "$R/engine-boot-$tag.log") proof_lines=$n expected=$expect $([ "$n" = "$expect" ] && echo OK || echo MISMATCH) aot_saved=$saved aot_loaded=$loaded"
+      log "[$tag] BOOT OK pin=$kv env='$*' pool=$(grep -aoE 'Pool [0-9]+' "$R/boot-$tag-$kv.log" | tail -1 | tr -dc 0-9) min_free=$(grep -aoE 'min free VRAM [0-9]+' "$R/boot-$tag-$kv.log" | tail -1 | tr -dc 0-9)MiB pcie=$(grep -ac 'PCIe IPC all-reduce enabled' "$R/engine-boot-$tag.log") proof_lines=$n expected=$expect $([ "$n" = "$expect" ] && echo OK || echo MISMATCH) aot_saved=$saved aot_loaded=$loaded compile_hashes=$(grep -aoE 'torch_aot_compile/[0-9a-f]{12}' "$R/engine-boot-$tag.log" | cut -d/ -f2 | sort -u | tr '\n' ',')"
       grep -a 'SM12X seq_lens one-copy active' "$R/engine-boot-$tag.log" | head -1 | sed -E 's/^.*(SM12X seq_lens)/\1/' | cut -c1-200 | sed "s/^/[$tag proof] /" | tee -a "$R/audit.log"
       return 0; fi
     log "[$tag] boot attempt pin=$kv FAILED rc=$rc: $(grep -aE 'FAILED' "$R/boot-$tag-$kv.log" | tail -1 | cut -c1-220)"
@@ -93,7 +93,10 @@ teardown; wipe_l2
 if boot_arm OFF $IMG 0; then speed_arm OFF; else log "[OFF] BOOT FAILED on every pin"; fi
 teardown; wipe_l2
 if boot_arm ON $IMG 2 EXTRA_ENV_APPEND="-e VLLM_SM12X_SEQLENS_ONE_COPY=1"; then
-  grep -aq 'aot_saved=0 aot_loaded=[1-9]' <(grep -a '\[ON\] BOOT OK' "$R/audit.log") && log "[ON] SAME-ARTIFACT as OFF (loaded, nothing saved)" || log "[ON] WARNING: not the same artifact as OFF — the ruler below is confounded by the compile lottery (R193)"
+  # same artifact = ON loaded (saved nothing) AND its compile-hash set equals OFF's; R191's ON arm had loaded=6/saved=0 of a DIFFERENT hash set
+  h_off=$(grep -a '\[OFF\] BOOT OK' "$R/audit.log" | grep -aoE 'compile_hashes=[0-9a-f,]*'); h_on=$(grep -a '\[ON\] BOOT OK' "$R/audit.log" | grep -aoE 'compile_hashes=[0-9a-f,]*')
+  if grep -aq 'aot_saved=0 aot_loaded=[1-9]' <(grep -a '\[ON\] BOOT OK' "$R/audit.log") && [ -n "$h_off" ] && [ "$h_off" = "$h_on" ]; then log "[ON] SAME-ARTIFACT as OFF ($h_off; loaded, nothing saved)"
+  else log "[ON] WARNING: not the same artifact as OFF (OFF $h_off / ON $h_on) — the ruler below is confounded by the compile lottery (R193)"; fi
   speed_arm ON
 else log "[ON] BOOT FAILED on every pin"; fi
 for ctx in 0 30000; do

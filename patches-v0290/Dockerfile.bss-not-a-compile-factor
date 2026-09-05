@@ -1,0 +1,8 @@
+# 0147: enable_batch_sharded_sampling removed from ParallelConfig.compute_hash (sampler-side, not a graph factor) so BSS ON/OFF share one AOT artifact.
+ARG BASE=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc
+FROM ${BASE}
+COPY 0147-bss-not-a-compile-factor-v0290.diff touched-0147.txt /opt/prs-patches/
+RUN --network=none set -eu; SITE=/usr/local/lib/python3.12/dist-packages; \
+    patch -d "$SITE" -p1 --fuzz=0 --batch --forward < /opt/prs-patches/0147-bss-not-a-compile-factor-v0290.diff; \
+    while IFS= read -r p; do python3 -m py_compile "$SITE/$p"; done < /opt/prs-patches/touched-0147.txt; \
+    mkdir -p /opt/prs-markers; echo PRS-0147-BSS-NOT-A-COMPILE-FACTOR-APPLIED > /opt/prs-markers/0147

@@ -1,0 +1,13 @@
+--- a/vllm/config/parallel.py
++++ b/vllm/config/parallel.py
+@@ -835,6 +835,10 @@
+             "nnodes",
+             "max_parallel_loading_workers",
+             "disable_custom_all_reduce",
++            # 0147 (R193b, 2026-09-05): batch-sharded sampling acts after the final hidden
++            # states (the sampler), so by this hash's own contract it is not a compile factor;
++            # ON and OFF then share one AOT artifact and can be compared on it.
++            "enable_batch_sharded_sampling",
+             "ray_workers_use_nsight",
+             "ray_runtime_env",
+             "placement_group",
