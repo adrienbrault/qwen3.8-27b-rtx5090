@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# NOTE (post-run, 2026-09-05 08:50 UTC): the automated best_config diff below reported "differing=0 only-in-one=0 common=0" — it tars
+# /tmp/torchinductor_root, but this image writes the runtime-autotune *.best_config files elsewhere; the evidence is the per-arm
+# bestconfig-<arm>-manual/ dumps taken from the inductor cache while each engine was up (34 files per arm, 9 differing D1 vs D2). Fix the
+# path before any rerun.
 # R193 (2026-09-05): are the T=0 decode rulers a compile-artifact lottery? R190c found CTRL vs B12X (same image, same flags, two fresh
 # torch.compile artifacts) disagreeing on 19/20 chunks at ctx 0 (median |Δlogprob| 0.00042; vs bf16 medians 0.0004 vs 0.00062), while
 # every pair that reused the SAME saved AOT artifact was bitwise identical (R191 OFF-a/OFF-b; R190c B12X/B12X-b). Two explanations fit:
