@@ -14,6 +14,7 @@
 # bf16 dumps; decode_ss code-c1 x3 / prose-c1 / code-c8 / prose-c8 / code-c16; tool-eval 69x4; needle gate (131K + 220K + evicted re-asks
 # through the eval-l2 tier). Chat template: Kearuga copies the base's; if it differs from RedHat's it is swapped to RedHat's for the run
 # (R196 rule: the agentic ruler and tool-eval measure the quantization, not the template), original kept as chat_template.jinja.kearuga-orig.
+#   unit run 5 (2026-09-05 23:45 UTC, differential): add -E XARGS_K='--linear-backend torch' to the line below (run 4 'cutlass' cannot boot, see above).
 #   unit (re-issued 2026-09-06 after the cfgfix): sudo systemd-run --unit=r201-kearuga --collect -p User=adrienbrault -p RuntimeMaxSec=14400 -p TimeoutStopSec=900 \
 #         -E GPU_QUEUE_NAME=r201-kearuga bash -c '. /srv/qwen5090/lib/gpu-queue.sh; exec bash /srv/qwen5090/r201-kearuga-audition.sh'
 set -uo pipefail
@@ -25,6 +26,15 @@ IMG=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash
 # checkpoint's config.json quantized_layers (375, what vLLM reads first) lacks the 10 FP8 boundary MLPs that hf_quant_config.json (385)
 # and the tensors declare, so vLLM built them unquantized. probes/merge_quantized_layers.py writes the -cfgfix sibling (hard links,
 # config.json = union of both maps); that sibling is what boots here.
+# R201 runs 2 and 3 (2026-09-05 23:02 and 23:34 UTC) both lost the engine in the dense ruler's prefill (Xid 13 "illegal instruction" in the
+# GDN core at doc 523; CUDA "unknown error" in a piecewise-graph replay at doc 619): two faults, two docs, two GPUs. The one kernel this
+# checkpoint exercises that the daily route never runs is FlashInferFP8ScaledMMLinearKernel (the ModelOpt static-FP8 attention/GDN/boundary
+# projections; vLLM gates it on compute capability >= 100, so sm120 gets the sm100 kernel). Run 4 (--linear-backend cutlass) could not
+# boot: the "cutlass" set contains CutlassW4A8LinearKernel, so the WNA16 filter does not fall back and the W4A16 MLPs find no kernel.
+# Run 5 sets XARGS_K="--linear-backend torch": that set holds only PerTensorTorchFP8ScaledMMLinearKernel (torch._scaled_mm, cuBLASLt,
+# per-tensor FP8 — the same numerics class as shipped), every other layer type falls back to auto (Marlin for W4A16). A clean full
+# battery there pins the faults on the FlashInfer FP8 GEMM on sm120 (which matters for every FP8-attention candidate).
+XARGS_K=${XARGS_K:-}
 KEARUGA=/srv/qwen5090/models/qwen3.8-27b-kearuga-cfgfix; REDHAT=/srv/qwen5090/models/qwen3.8-27b-redhat-nvfp4
 U=http://127.0.0.1:8029; CAND=/srv/qwen5090/launch-daily.sh; L2=/srv/qwen5090/eval-l2; PR=/srv/qwen5090/probes
 BF16_DIR=/srv/qwen5090/results/2026-09-01-r156-bf16-ladder
@@ -53,7 +63,7 @@ errs(){ ELOG | grep -ac 'illegal memory\|CUDA error\|Traceback\|OutOfMemoryError
 # boot_arm TAG MODEL_DIR [ENV=VAL ...]
 boot_arm(){ local tag=$1 mdir=$2 kv rc n; shift 2
   for kv in $PINS; do
-    env -i PATH="$PATH" HOME="$HOME" USER="$USER" EXP=1 SEQS=16 KV_BYTES=$kv PCIE_IPC=1 BSS=1 CAND_IMG=$IMG CAND_MODEL=$mdir "$@" bash $CAND > "$R/boot-$tag-$kv.log" 2>&1; rc=$?
+    env -i PATH="$PATH" HOME="$HOME" USER="$USER" EXP=1 SEQS=16 KV_BYTES=$kv PCIE_IPC=1 BSS=1 CAND_IMG=$IMG CAND_MODEL=$mdir EXTRA_ARGS_APPEND="${XARGS_K:-}" "$@" bash $CAND > "$R/boot-$tag-$kv.log" 2>&1; rc=$?
     if [ $rc -eq 0 ] && curl -sf -m 5 $U/health >/dev/null; then
       ELOG > "$R/engine-boot-$tag.log"
       n=$(grep -ac 'Batch-sharded sampling enabled' "$R/engine-boot-$tag.log")

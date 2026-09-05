@@ -145,6 +145,11 @@ sync
 # staging mmap in /dev/shm survives `docker rm -f` — 4 leaked boots ate 16G and starved the
 # memory gate (and contributed to the 02:07 OOM). Delete only orphans (fuser: no holder).
 for f in /dev/shm/vllm_offload_*.mmap; do [ -e "$f" ] || continue; sudo fuser -s "$f" 2>/dev/null || sudo rm -f "$f"; done
+# R201 (2026-09-05): vLLM's multiprocessing shm_broadcast segments (/dev/shm/psm_*) leak the same way — every crashed or
+# rm -f'd engine leaves its 25-250 MB segments behind; 1,273 of them (18 GB) had piled up in four days and an engine restart died on
+# "Insufficient space in /dev/shm: 16381 MiB required, 13240 MiB free". Same rule: delete only orphans (no holder).
+n=0; for f in /dev/shm/psm_*; do [ -e "$f" ] || continue; sudo fuser -s "$f" 2>/dev/null || { sudo rm -f "$f"; n=$((n+1)); }; done
+[ "$n" -gt 0 ] && echo "shm sweep: removed $n orphan psm_* segments ($(df -h /dev/shm | awk 'NR==2{print $4}') free now)"
 
 # engine-swap memory gate (2026-08-28 OOM incident): wait for the old engine's RAM to be reaped
 # threshold 28G: this stack has NO 24G pinned L1 (that was the legacy tiers daily) — engine
