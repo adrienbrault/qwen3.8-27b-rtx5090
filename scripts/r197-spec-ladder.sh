@@ -80,6 +80,7 @@ arm(){ local tag=$1 method=$2 ns=$3
     p1 $tag prose-c1 --conc 1 --tokens 1024 --runs 2 --kind prose
     p1 $tag prose-c1-30k --conc 1 --tokens 1024 --runs 2 --kind prose --ctx 30000
     p1 $tag code-c8 --conc 8 --tokens 1024 --runs 2 --kind code
+    p1 $tag prose-c8 --conc 8 --tokens 1024 --runs 2 --kind prose
     p1 $tag code-c16 --conc 16 --tokens 1024 --runs 2 --kind code
     log "[$tag engine error-lines] $(errs)  preemptions: $(curl -s -m 5 $U/metrics | grep -a '^vllm:num_preemptions_total' | awk '{print $NF}')"
   else log "[$tag] BOOT FAILED on every pin"; fi; }
@@ -88,6 +89,9 @@ arm(){ local tag=$1 method=$2 ns=$3
 # then the analysis below re-runs over every arm present; audit.log keeps both passes.
 #   rerun unit: sudo systemd-run --unit=r197-d6-rerun --collect -p User=adrienbrault -p RuntimeMaxSec=43200 -p TimeoutStopSec=900 \
 #         -E GPU_QUEUE_NAME=r197-d6-rerun -E ARMS="D6 dflash 6" bash -c '. /srv/qwen5090/lib/gpu-queue.sh; while systemctl is-active -q r197-spec-ladder; do sleep 30; done; exec bash /srv/qwen5090/r197-spec-ladder.sh'
+# 12:3x UTC restart (user: "please measure prose c8"): prose-c8 added to every arm; the first pass (D9 complete, D7 mid-boot) was stopped and
+# the remaining arms re-queued as unit r197-spec-ladder2 with ARMS="D6 dflash 6;D7 dflash 7;D8 dflash 8;D9b dflash 9;M3 mtp 3;M4 mtp 4".
+# D9's prose-c8 reading is D9b's (same configuration, same artifact); D9 itself keeps its first-pass rows.
 ARMS="${ARMS:-D9 dflash 9;D6 dflash 6;D7 dflash 7;D8 dflash 8;D9b dflash 9;M3 mtp 3;M4 mtp 4}"
 log "arms: $ARMS"
 echo "$ARMS" | tr ';' '\n' | while read -r t m n; do [ -n "$t" ] && arm "$t" "$m" "$n"; done
@@ -113,7 +117,7 @@ for l in open(sys.argv[1]):
     a=d.get('accept_per_draft_median'); t=d.get('ss_agg_tps_median')
     if a is None or t is None: continue
     rows[(tag,name)]=(t,a,t/(1+ns[tag]*a))
-names=['code-c1','prose-c1','prose-c1-30k','code-c8','code-c16']
+names=['code-c1','prose-c1','prose-c1-30k','code-c8','prose-c8','code-c16']
 print('arm   ns  '+'  '.join(f'{n:>26}' for n in names)+'   (t/s @accept -> steps/s)')
 for tag in ns:
     cells=[]
