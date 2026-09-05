@@ -36,10 +36,11 @@ PIN=13980000000
 if env -i HOME="$HOME" USER="$USER" PATH="$PATH" bash /srv/qwen5090/launch-daily.sh > "$R/boot-daily-$PIN.log" 2>&1 && curl -sf -m 5 $U/health >/dev/null; then :
 else
   log "boot at the table pin FAILED: $(grep -aE 'FAILED' "$R/boot-daily-$PIN.log" | tail -1 | cut -c1-220)"
-  if grep -aq "Bug C headroom missing" "$R/boot-daily-$PIN.log"; then
-    teardown; PIN=13500000000; log "retrying with KV_BYTES=$PIN (launcher table must be updated to this value if it boots)"
-    env -i HOME="$HOME" USER="$USER" PATH="$PATH" KV_BYTES=$PIN bash /srv/qwen5090/launch-daily.sh > "$R/boot-daily-$PIN.log" 2>&1 && curl -sf -m 5 $U/health >/dev/null || { log "boot at $PIN FAILED: $(grep -aE 'FAILED' "$R/boot-daily-$PIN.log" | tail -1 | cut -c1-220)"; rollback; exit 1; }
-  else rollback; exit 1; fi
+  # R191 (2026-09-05 04:13 UTC): on this image + PCIE_IPC=1 the 13.98 GB pin left 725 MiB free on the first boot and the next two boots
+  # died in the Triton warmup with "CUDA error: invalid argument" (no Bug C line); both booted at 13.5 GB (pool 985,621, 1.5-1.9 GB
+  # free). So retry at 13.5 GB on ANY boot failure, not only on the Bug C signature.
+  teardown; PIN=13500000000; log "retrying with KV_BYTES=$PIN (launcher table must be updated to this value if it boots)"
+  env -i HOME="$HOME" USER="$USER" PATH="$PATH" KV_BYTES=$PIN bash /srv/qwen5090/launch-daily.sh > "$R/boot-daily-$PIN.log" 2>&1 && curl -sf -m 5 $U/health >/dev/null || { log "boot at $PIN FAILED: $(grep -aE 'FAILED' "$R/boot-daily-$PIN.log" | tail -1 | cut -c1-220)"; rollback; exit 1; }
 fi
 log "DAILY UP pin=$PIN $(tail -1 "$R/boot-daily-$PIN.log" | cut -c1-260)"
 BOOT=$(sudo docker logs vllm-27b 2>&1); echo "$BOOT" > "$R/engine-boot-daily.log"
