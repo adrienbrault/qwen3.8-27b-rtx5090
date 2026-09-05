@@ -50,7 +50,7 @@ errs(){ ELOG | grep -ac 'illegal memory\|CUDA error\|Traceback\|OutOfMemoryError
 # boot_arm TAG METHOD NS
 boot_arm(){ local tag=$1 method=$2 ns=$3 kv rc saved loaded hashes
   for kv in $PINS; do
-    env -i PATH="$PATH" HOME="$HOME" USER="$USER" EXP=1 SEQS=16 KV_BYTES=$kv PCIE_IPC=1 BSS=1 CAND_IMG=$IMG SPEC_METHOD=$method SPEC_NS=$ns "$PIN_ENV" bash $CAND > "$R/boot-$tag-$kv.log" 2>&1; rc=$?
+    env -i PATH="$PATH" HOME="$HOME" USER="$USER" EXP=1 SEQS=16 KV_BYTES=$kv PCIE_IPC=${PCIE_IPC_ARM:-1} BSS=1 CAND_IMG=$IMG SPEC_METHOD=$method SPEC_NS=$ns "$PIN_ENV" bash $CAND > "$R/boot-$tag-$kv.log" 2>&1; rc=$?
     if [ $rc -eq 0 ] && curl -sf -m 5 $U/health >/dev/null; then
       ELOG > "$R/engine-boot-$tag.log"
       saved=$(grep -ac "saved AOT compiled function" "$R/engine-boot-$tag.log"); loaded=$(grep -ac "Directly load AOT" "$R/engine-boot-$tag.log")
@@ -92,17 +92,22 @@ arm(){ local tag=$1 method=$2 ns=$3
 # 12:3x UTC restart (user: "please measure prose c8"): prose-c8 added to every arm; the first pass (D9 complete, D7 mid-boot) was stopped and
 # the remaining arms re-queued as unit r197-spec-ladder2 with ARMS="D6 dflash 6;D7 dflash 7;D8 dflash 8;D9b dflash 9;M3 mtp 3;M4 mtp 4".
 # D9's prose-c8 reading is D9b's (same configuration, same artifact); D9 itself keeps its first-pass rows.
-# 13:03 UTC: M3 booted (pool 1,309,368) but the launcher's 1.1M EXP pool ceiling rejected it; launcher band is now spec-aware. Unit
-# r197-spec-ladder4 with ARMS="M3 mtp 3;M4b mtp 4" runs behind ladder3 (M4 itself boots in ladder2 with the fixed launcher; M4b = MTP boot-to-boot floor).
+# 13:03 UTC: M3 booted (pool 1,309,368) but the launcher's 1.1M EXP pool ceiling rejected it; launcher band is now spec-aware.
+# 13:15 UTC: M4 then failed the pcie_ipc assert: patch 0138's all-reduce supports only the sequential DFlash drafter ("PCIe IPC all-reduce
+# disabled: rank prerequisites [('only the sequential DFlash drafter is supported', ...)]"), so every MTP arm runs the CUSTOM all-reduce. Unit
+# r197-spec-ladder4 = PCIE_IPC_ARM=0 ARMS="M3 mtp 3;M4 mtp 4;M4b mtp 4;D9c dflash 9": M4b = MTP boot-to-boot floor, D9c = ns9 DFlash without
+# pcie_ipc = the same-day all-reduce pairing (M-vs-D9c isolates the spec method; M-vs-D9 is what a daily swap would actually deliver).
+#   unit: sudo systemd-run --unit=r197-spec-ladder4 --collect -p User=adrienbrault -p RuntimeMaxSec=43200 -p TimeoutStopSec=900 -E GPU_QUEUE_NAME=r197-spec-ladder4 \
+#         -E PCIE_IPC_ARM=0 -E ARMS="M3 mtp 3;M4 mtp 4;M4b mtp 4;D9c dflash 9" bash -c '. /srv/qwen5090/lib/gpu-queue.sh; while systemctl is-active -q r197-spec-ladder2 || systemctl is-active -q r197-spec-ladder3; do sleep 30; done; exec bash /srv/qwen5090/r197-spec-ladder.sh'
 # 13:0x UTC (user: "also try dflash 10/11"): unit r197-spec-ladder3 with ARMS="D10 dflash 10;D11 dflash 11" queued behind ladder2, same results dir.
 ARMS="${ARMS:-D9 dflash 9;D6 dflash 6;D7 dflash 7;D8 dflash 8;D9b dflash 9;M3 mtp 3;M4 mtp 4}"
 log "arms: $ARMS"
 echo "$ARMS" | tr ';' '\n' | while read -r t m n; do [ -n "$t" ] && arm "$t" "$m" "$n"; done
 # numerics: every arm vs D9 (same artifact for the D arms = the draft length's own numerics; M arms = fresh artifact, caveat)
-for T in D6 D7 D8 D9b D10 D11 M3 M4 M4b; do for ctx in 0 30000; do
+for T in D6 D7 D8 D9b D10 D11 D9c M3 M4 M4b; do for ctx in 0 30000; do
   [ -f "$R/dec-D9-ctx$ctx.jsonl" ] && [ -f "$R/dec-$T-ctx$ctx.jsonl" ] && log "[$T vs D9 decode ctx$ctx] $(python3 $PR/decode_fidelity.py compare "$R/dec-D9-ctx$ctx.jsonl" "$R/dec-$T-ctx$ctx.jsonl" 2>&1 | tail -1 | cut -c1-300)"
 done; done
-for ctx in 0 30000; do [ -f "$R/dec-M3-ctx$ctx.jsonl" ] && [ -f "$R/dec-M4-ctx$ctx.jsonl" ] && log "[M4 vs M3 decode ctx$ctx] $(python3 $PR/decode_fidelity.py compare "$R/dec-M3-ctx$ctx.jsonl" "$R/dec-M4-ctx$ctx.jsonl" 2>&1 | tail -1 | cut -c1-300)"; done
+for ctx in 0 30000; do [ -f "$R/dec-M4-ctx$ctx.jsonl" ] && [ -f "$R/dec-M4b-ctx$ctx.jsonl" ] && log "[M4b vs M4 decode ctx$ctx] $(python3 $PR/decode_fidelity.py compare "$R/dec-M4-ctx$ctx.jsonl" "$R/dec-M4b-ctx$ctx.jsonl" 2>&1 | tail -1 | cut -c1-300)"; [ -f "$R/dec-M3-ctx$ctx.jsonl" ] && [ -f "$R/dec-M4-ctx$ctx.jsonl" ] && log "[M4 vs M3 decode ctx$ctx] $(python3 $PR/decode_fidelity.py compare "$R/dec-M3-ctx$ctx.jsonl" "$R/dec-M4-ctx$ctx.jsonl" 2>&1 | tail -1 | cut -c1-300)"; done
 # artifact check: all D arms one hash set, D6/D7/D8/D9b loaded (saved=0); M3 saved or loaded, M4 loaded
 awk '{print $1, $2, $3, "hashes="$4, "saved="$5, "loaded="$6}' "$R/arms.txt" | sed 's/^/[artifact] /' | tee -a "$R/audit.log"
 DH=$(awk '$2=="dflash"{print $4}' "$R/arms.txt" | sort -u | wc -l); DS=$(awk '$2=="dflash" && $1!="D9" && $5>0' "$R/arms.txt" | wc -l)
