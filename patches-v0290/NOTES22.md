@@ -95,3 +95,7 @@ Arm matcher counts: PASS (56, 56, 38; all-NVFP4 control 112)
 PASS: offline verification complete; no vllm/torch imports
 
 ```
+
+## Addendum 2026-09-05 (R188 first run): env value must be a primitive
+
+The first R188 run (03:34 UTC) booted CTRL but every Marlin arm died in `profile_run` with `TypeError: normalize_value: unsupported type 'Pattern'` from `vllm/envs.py compile_factors()` — the AOT compile hash walks every registered env and the 0139 lambda returned a compiled `re.Pattern`. Fix (same date): the env entry is `str | None` (the raw regex text, itself a correct compile factor since it changes the GEMM kernel per layer), and `init_nvfp4_linear_kernel` calls `parse_allowlist()` (lru_cached) on it. The `import re` / module import added to `envs.py` are gone, so 0140's two `envs.py` hunks moved up three lines and their context lines were updated. Image `…-fi0616-marlinlist` rebuilt from the fixed diff; `docker run` check: `type(envs.VLLM_SM12X_NVFP4_MARLIN_LAYERS)` is `str`, `normalize_value` accepts it, matcher unchanged. R188 re-queued behind r190b.

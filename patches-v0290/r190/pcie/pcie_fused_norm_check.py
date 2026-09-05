@@ -7,6 +7,7 @@ import torch
 import torch.distributed as dist
 from pcie_ipc_ar21.workspace import PcieIpcAllReduceWorkspace
 from vllm.model_executor.layers.layernorm import GemmaRMSNorm
+from vllm.config import VllmConfig, set_current_vllm_config
 
 
 def main():
@@ -23,7 +24,10 @@ def main():
     ws = PcieIpcAllReduceWorkspace(group, device)
     shapes = [(m, 5120) for m in (1, 10, 80, 160, 2048)]
     ws.prepare(shapes)
-    norm = GemmaRMSNorm(5120, eps=1e-6).to(device=device, dtype=torch.bfloat16)
+    # CustomOp construction needs a current vLLM config (R190 fix 2026-09-05: bare
+    # instantiation raised "Current vLLM config is not set" under 0.29.0rc2).
+    with set_current_vllm_config(VllmConfig()):
+        norm = GemmaRMSNorm(5120, eps=1e-6).to(device=device, dtype=torch.bfloat16)
     torch.manual_seed(144)
     with torch.no_grad():
         norm.weight.copy_(torch.randn_like(norm.weight) * .1)

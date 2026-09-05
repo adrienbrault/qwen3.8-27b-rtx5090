@@ -1,16 +1,16 @@
 --- a/vllm/envs.py
 +++ b/vllm/envs.py
-@@ -130,6 +130,7 @@
+@@ -127,6 +127,7 @@
      VLLM_DISABLED_KERNELS: list[str] = []
      VLLM_USE_HW_AGNOSTIC: bool = False
      VLLM_ENABLE_FLA_PACKED_RECURRENT_DECODE: bool = True
 +    VLLM_SM12X_NVFP4_DISPATCH_TABLE: str | None = None
      VLLM_SM12X_GDN_PACKED_BV: int | None = None
-     VLLM_SM12X_NVFP4_MARLIN_LAYERS: re.Pattern[str] | None = None
+     VLLM_SM12X_NVFP4_MARLIN_LAYERS: str | None = None
      VLLM_GDN_DECODE_KERNEL: Literal["cuda", "triton"] = "cuda"
-@@ -1212,6 +1213,9 @@
-     "VLLM_SM12X_NVFP4_MARLIN_LAYERS": lambda: parse_allowlist(
-         os.getenv("VLLM_SM12X_NVFP4_MARLIN_LAYERS")
+@@ -1209,6 +1210,9 @@
+     "VLLM_SM12X_NVFP4_MARLIN_LAYERS": lambda: (
+         os.getenv("VLLM_SM12X_NVFP4_MARLIN_LAYERS") or None
      ),
 +    "VLLM_SM12X_NVFP4_DISPATCH_TABLE": lambda: os.getenv(
 +        "VLLM_SM12X_NVFP4_DISPATCH_TABLE"
