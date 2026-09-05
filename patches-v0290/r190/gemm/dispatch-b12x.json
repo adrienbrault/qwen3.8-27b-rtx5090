@@ -1,0 +1,6 @@
+{"rules": [
+  {"layer": "(?:^|\\.)layers\\.(?:[0-9]|[1-4][0-9]|5[0-5])\\.mlp\\.down_proj$", "m_max": 256, "kernel": "FlashInferB12xNvFp4LinearKernel"},
+  {"layer": "(?:^|\\.)layers\\.(?:[0-9]|[1-4][0-9]|5[0-5])\\.mlp\\.down_proj$", "m_max": null, "kernel": "FlashInferCutlassNvFp4LinearKernel"},
+  {"layer": "(?:^|\\.)layers\\.(?:[0-9]|[1-4][0-9]|5[0-5])\\.mlp\\.gate_up_proj$", "m_max": 256, "kernel": "FlashInferB12xNvFp4LinearKernel"},
+  {"layer": "(?:^|\\.)layers\\.(?:[0-9]|[1-4][0-9]|5[0-5])\\.mlp\\.gate_up_proj$", "m_max": null, "kernel": "FlashInferCutlassNvFp4LinearKernel"}
+]}
