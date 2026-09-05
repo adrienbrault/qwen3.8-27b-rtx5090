@@ -1405,6 +1405,21 @@ Two more boots on the R193b artifact, sharded sampling off and on, compared with
 
 Consequences. The R193b section above, which read the sharded sampler as a numerics change, is withdrawn: on this evidence batch-sharded sampling changes nothing in the numerics and reads +3.0 % steps/s at 8 streams and +4.3 % at 16 here (+2.1 % and +4.6 % in R193b), −1 % at 1 stream, inside noise. Every same-artifact pair reported as bitwise before this (R191, R190e, R194, R193) was two boots that drew the same outcome. Until the draw is pinned, a difference between two boots below about 0.005 at 30K, or rare flips with median 0 at ctx 0, is not evidence of anything. R193d, queued next, boots twice on this artifact with `VLLM_TRITON_FORCE_FIRST_CONFIG=1`, vLLM's own knob that makes every autotuned Triton kernel take its first config; two bitwise boots at both contexts would name the cause and give the rulers a deterministic setting.
 
+### R198: the MTP head on this hybrid pays full prefill for every revisit and eviction, so the tiers never serve it (2026-09-05 15:09 to 15:33 UTC, results `2026-09-05-r198-mtp-tier`, `scripts/r198-mtp-tier.sh`)
+
+Why: the R197 ladder left MTP with three draft tokens on the `pcie_ipc` all-reduce (patch 0148) as the fastest 8- and 16-stream arm and the best 30K single stream, with a 24% larger pool, and one open question. Every MTP boot on this model prints that no KV-cache group can be identified as the drafter's, so every group, the three Mamba groups included, is treated as a draft group, prefix-cache reuse across requests is disabled, and an external KV tier stores without ever serving a hit. This run measures that sentence on port 8029 with the same boot as the ladder (13.98 GB pin, pool 1,309,368, attention block 1,472 at three draft tokens, drafter admitted to the `pcie_ipc` all-reduce), reading the engine's prefix-cache and tier counters from `/metrics` between steps, and running the same needle gate the seven-draft-token daily passed on port 8020 at 15:04 UTC (R197).
+
+| step | MTP, 3 draft tokens | DFlash2, 7 draft tokens (served, same gate) |
+|---|---|---|
+| one 120K prompt, cold | 19.2 s prefill, 0 prefix hits | 18.5 s |
+| the same 120K prompt again | 19.2 s, 0 prefix hits | evicted 131K served in 1.2 s |
+| needles at 131K and 220K, cold | 4/4 hits, 26.9 s and 60.5 s | 4/4, 25.6 s and 56.7 s |
+| the same needles after a 12 × 90K eviction flood | 4/4 hits, 27.1 s and 60.6 s, 0 tokens external, tier served 0 of 4 | 4/4, 1.2 s and 2.2 s, 130,368 and 218,832 tokens external, tier served 4 of 4 |
+| bytes to the host tier / back from it | 102.5 GB / 0 | round-trips |
+| prefix-cache hits over the run | 0 until the flood, then 693,312 of 6.74M queries inside it (shared chunks within a batch, not reuse across requests) | reuse across requests |
+
+Readings. The answers are right; the cost is that every repeated or evicted prefix is recomputed in full, and revisits of evicted context are the workload the host and disk tiers exist for. The three-token MTP configuration keeps its pool and batched-decode advantage from the ladder but is not a candidate for the served configuration until the engine can name the drafter's KV-cache group on a Mamba hybrid. One observation without an explanation: one of the two 131K needle samples answered with a spurious "BNBN " prefix on both its cold and its evicted ask under MTP; the same sample answered cleanly on the served configuration an hour earlier.
+
 ### R197: the speculative-length ladder, seven draft tokens promoted, and the MTP head admitted to the `pcie_ipc` all-reduce (2026-09-05 12:03 to 14:17 UTC, results `2026-09-05-r197-spec-ladder`, [scripts/r197-spec-ladder.sh](../scripts/r197-spec-ladder.sh))
 
 One boot per draft length on the served route (port 8029, same image, flags and 13.98 GB pin as the serving port, 16 sequences, `pcie_ipc` all-reduce and batch-sharded sampling on, `VLLM_TRITON_FORCE_FIRST_CONFIG=1`): DFlash2 at 6, 7, 8, 9, 9 again, 10 and 11 draft tokens, then the checkpoint's own MTP head at 3 and 4. Per arm: `probes/decode_ss.py` code at 1 stream (3 runs), prose at 1 stream (2), prose at 30K context (2), code and prose at 8 streams (2 each), code at 16 streams (2); the bf16 decode ruler at 0 and 30K. Steps/s = t/s ÷ (1 + ns × acceptance per draft token), with the arm's own ns.
