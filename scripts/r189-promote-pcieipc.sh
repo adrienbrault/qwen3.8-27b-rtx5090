@@ -8,8 +8,8 @@
 #   the pre-existing tier content is the restart-survival test) → decode_ss code c8, prose c1, code c16 → tool-eval 69×4 → error lines.
 # If the pcieipc daily cannot boot, the frozen pre-R185 launcher brings the fi0616 daily back. The daily stays UP at the end (no teardown).
 # Queued behind r188-marlin (GPU_QUEUE_NAME registers it so R188's finish() skips its own restore; this unit IS the restore).
-#   unit: sudo systemd-run --unit=r189-promote-pcieipc --collect -p User=adrienbrault -p RuntimeMaxSec=86400 -p TimeoutStopSec=900 \
-#         -E GPU_QUEUE_NAME=r189-promote-pcieipc bash -c '. /srv/qwen5090/lib/gpu-queue.sh; while systemctl is-active -q r188-marlin; do sleep 30; done; exec bash /srv/qwen5090/r189-promote-pcieipc.sh'
+#   unit (re-issued 2026-09-05 05:51 UTC; chain r190e → r190c → r192 → r190d → r189): sudo systemd-run --unit=r189-promote-pcieipc --collect -p User=adrienbrault -p RuntimeMaxSec=86400 -p TimeoutStopSec=900 \
+#         -E GPU_QUEUE_NAME=r189-promote-pcieipc bash -c '. /srv/qwen5090/lib/gpu-queue.sh; while systemctl is-active -q r190d-diag; do sleep 30; done; exec bash /srv/qwen5090/r189-promote-pcieipc.sh'
 set -uo pipefail
 export PATH="$HOME/.local/bin:$PATH"
 R=/srv/qwen5090/results/2026-09-05-r189-promote-pcieipc; mkdir -p "$R"

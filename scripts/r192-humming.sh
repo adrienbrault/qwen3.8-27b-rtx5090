@@ -6,8 +6,8 @@
 # (fi0616 + 0139b), same rulers (dense 693 docs, agentic, greedy decode ctx 0/30K), same decode probes. Arms: CTRL, H-ALL (112 MLP
 # projections per rank), H-GATEUP, H-L38-55 (the best fidelity-per-cost third in R188). Expected proof line counts = 2 ranks × per-rank.
 # Queued behind r190e; r189 (daily restore) re-issued to wait on this unit.
-#   unit: sudo systemd-run --unit=r192-humming --collect -p User=adrienbrault -p RuntimeMaxSec=14400 -p TimeoutStopSec=900 \
-#         -E GPU_QUEUE_NAME=r192-humming bash -c '. /srv/qwen5090/lib/gpu-queue.sh; while systemctl is-active -q r190e-fusednorm; do sleep 30; done; exec bash /srv/qwen5090/r192-humming.sh'
+#   unit (re-issued 2026-09-05 05:51 UTC; chain r190e → r190c → r192 → r190d → r189): sudo systemd-run --unit=r192-humming --collect -p User=adrienbrault -p RuntimeMaxSec=43200 -p TimeoutStopSec=900 \
+#         -E GPU_QUEUE_NAME=r192-humming bash -c '. /srv/qwen5090/lib/gpu-queue.sh; while systemctl is-active -q r190c-dispatch; do sleep 30; done; exec bash /srv/qwen5090/r192-humming.sh'
 set -uo pipefail
 export PATH="$HOME/.local/bin:$PATH"
 R=/srv/qwen5090/results/2026-09-05-r192-humming; mkdir -p "$R"

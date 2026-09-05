@@ -10,8 +10,8 @@
 # Arms: CTRL (no table), B12X, CENSUS, B12X-b (repeat). Per arm: proof line count (2 ranks × "NVFP4 dispatch table: … 112 modules
 # affected"), decode_ss code c1/c8/c16 + prose c1, decode ruler vs bf16 at ctx 0/30K, agentic ruler vs bf16, error lines.
 # Image ...-pcieipc-dispatch (0139 fixed + 0140), PCIE_IPC=1, SEQS 16, :8029. Queued behind r188; r189 re-issued to wait on this unit.
-#   unit: sudo systemd-run --unit=r190c-dispatch --collect -p User=adrienbrault -p RuntimeMaxSec=14400 -p TimeoutStopSec=900 \
-#         -E GPU_QUEUE_NAME=r190c-dispatch bash -c '. /srv/qwen5090/lib/gpu-queue.sh; while systemctl is-active -q r188-marlin; do sleep 30; done; exec bash /srv/qwen5090/r190c-dispatch.sh'
+#   unit (re-issued 2026-09-05 05:51 UTC; chain r190e → r190c → r192 → r190d → r189): sudo systemd-run --unit=r190c-dispatch --collect -p User=adrienbrault -p RuntimeMaxSec=43200 -p TimeoutStopSec=900 \
+#         -E GPU_QUEUE_NAME=r190c-dispatch bash -c '. /srv/qwen5090/lib/gpu-queue.sh; while systemctl is-active -q r190e-fusednorm; do sleep 30; done; exec bash /srv/qwen5090/r190c-dispatch.sh'
 set -uo pipefail
 export PATH="$HOME/.local/bin:$PATH"
 R=/srv/qwen5090/results/2026-09-05-r190c-dispatch; mkdir -p "$R"
