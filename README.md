@@ -117,16 +117,16 @@ Three shapes remain runnable and documented:
 
 The three measured on 2026-08-31 on the [gittensor](https://huggingface.co/gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090-LMHead4) checkpoint, same day, same harness, `results/2026-08-31-r142-matrix`. The RedHatAI checkpoint costs about 6% decode, 14% prefill and 12% pool on the fp8 shape relative to these numbers. The last column is the served route on 2026-09-04 on the RedHatAI checkpoint; cells marked † were read with the fp32 state (`results/2026-09-04-r177-matrix`), the rest with the bf16 state (`results/2026-09-04-r183-next-levers`, `results/2026-09-04-r182-promote-ssm-bf16`). Checkpoint and day differ from the other three columns.
 
-| | one card | two cards, DFlash2, fp8 KV | two cards, MTP, nvfp4 KV | served: two cards, DFlash2, nvfp4 KV, vLLM 0.29 (2026-09-04) |
+| | one card | two cards, DFlash2, fp8 KV | two cards, MTP, nvfp4 KV | served: two cards, DFlash2, nvfp4 KV, vLLM 0.29, pcie_ipc all-reduce (decode and tool-eval 2026-09-05, R189b/R189; † 2026-09-04) |
 |---|---|---|---|---|
 | KV pool at 262K | 381,300 | 746,849 | 1,508,519 | 1,020,596 |
-| decode, code, 1 stream | 175.0 t/s | 298.9 | 225.3 | 285 |
-| decode, code, 8 streams | 1,187 | 1,289 | 1,349 | 1,327 and 1,415 (two boots) |
-| decode, code, 16 streams | not admitted | 1,522 | 2,007 | 1,738 |
+| decode, code, 1 stream | 175.0 t/s | 298.9 | 225.3 | 333 |
+| decode, code, 8 streams | 1,187 | 1,289 | 1,349 | 1,308 and 1,385 (two boots) |
+| decode, code, 16 streams | not admitted | 1,522 | 2,007 | 1,870 |
 | decode at 100K context | 106.7 | 174.4 | 137.5 | 152.8 † |
 | prefill at 8K | 11.9K t/s | 9.3K | 9.0K | 8.1K † |
 | prefill at 100K | 4.7K | 7.0K | 6.3K | 6.4K † |
-| tool-eval ×4 | 89.2 ± 1.7 | 89.8 ± 1.3 | 90.2 ± 1.0 | 90.5 ± 2.1 |
+| tool-eval ×4 | 89.2 ± 1.7 | 89.8 ± 1.3 | 90.2 ± 1.0 | 91.2 ± 1.3 |
 
 DFlash2 accepts few draft tokens per step, so its decode is bound by weight bandwidth, which the second card doubles. MTP accepts more, amortizes the weight reads, and turns the second card into KV space instead. Tool-eval does not separate the three; the bf16 rulers do, by the KV dtype ([docs/FIDELITY.md](docs/FIDELITY.md)).
 
