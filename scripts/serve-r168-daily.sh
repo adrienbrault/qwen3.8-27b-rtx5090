@@ -63,7 +63,8 @@ SSM_ARGS="--mamba-ssm-cache-dtype $SSM_DTYPE"
 # closest to bf16 of the three paths; r173c: its decode dumps are identical to rc2 ON's at ctx0 and 30K).
 SPLIT_ENV=""; [ "$SPLIT_KV" = 1 ] && SPLIT_ENV="-e VLLM_SM12X_NVFP4_PREFILL_SPLIT_KV=1"
 # R185: the daily forces the pcie_ipc all-reduce on; experiments opt in with PCIE_IPC=1 (an image without 0138 then fails the assert below).
-PCIE_IPC=1; [ "$EXP" = 0 ] || PCIE_IPC=${PCIE_IPC:-0}
+# (R187 fix 2026-09-05: the first version assigned 1 and then read its own value, so every experiment saw PCIE_IPC=1 and images without 0138 failed the assert)
+if [ "$EXP" = 0 ]; then PCIE_IPC=1; else PCIE_IPC=${PCIE_IPC:-0}; fi
 case "$PCIE_IPC" in 0|1) ;; *) echo "FAILED: PCIE_IPC must be 0 or 1 (got $PCIE_IPC)"; exit 1;; esac
 PCIE_ENV=""; [ "$PCIE_IPC" = 1 ] && PCIE_ENV="-e VLLM_SM12X_PCIE_IPC_AR=1"
 XARGS=""; XMOUNT=""; MNBT_=8192; FUS_=""; SPX_=""; XENV=""; CCX_=""
