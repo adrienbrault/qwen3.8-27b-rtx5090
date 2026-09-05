@@ -92,11 +92,12 @@ arm(){ local tag=$1 method=$2 ns=$3
 # 12:3x UTC restart (user: "please measure prose c8"): prose-c8 added to every arm; the first pass (D9 complete, D7 mid-boot) was stopped and
 # the remaining arms re-queued as unit r197-spec-ladder2 with ARMS="D6 dflash 6;D7 dflash 7;D8 dflash 8;D9b dflash 9;M3 mtp 3;M4 mtp 4".
 # D9's prose-c8 reading is D9b's (same configuration, same artifact); D9 itself keeps its first-pass rows.
+# 13:0x UTC (user: "also try dflash 10/11"): unit r197-spec-ladder3 with ARMS="D10 dflash 10;D11 dflash 11" queued behind ladder2, same results dir.
 ARMS="${ARMS:-D9 dflash 9;D6 dflash 6;D7 dflash 7;D8 dflash 8;D9b dflash 9;M3 mtp 3;M4 mtp 4}"
 log "arms: $ARMS"
 echo "$ARMS" | tr ';' '\n' | while read -r t m n; do [ -n "$t" ] && arm "$t" "$m" "$n"; done
 # numerics: every arm vs D9 (same artifact for the D arms = the draft length's own numerics; M arms = fresh artifact, caveat)
-for T in D6 D7 D8 D9b M3 M4; do for ctx in 0 30000; do
+for T in D6 D7 D8 D9b D10 D11 M3 M4; do for ctx in 0 30000; do
   [ -f "$R/dec-D9-ctx$ctx.jsonl" ] && [ -f "$R/dec-$T-ctx$ctx.jsonl" ] && log "[$T vs D9 decode ctx$ctx] $(python3 $PR/decode_fidelity.py compare "$R/dec-D9-ctx$ctx.jsonl" "$R/dec-$T-ctx$ctx.jsonl" 2>&1 | tail -1 | cut -c1-300)"
 done; done
 for ctx in 0 30000; do [ -f "$R/dec-M3-ctx$ctx.jsonl" ] && [ -f "$R/dec-M4-ctx$ctx.jsonl" ] && log "[M4 vs M3 decode ctx$ctx] $(python3 $PR/decode_fidelity.py compare "$R/dec-M3-ctx$ctx.jsonl" "$R/dec-M4-ctx$ctx.jsonl" 2>&1 | tail -1 | cut -c1-300)"; done
