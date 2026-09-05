@@ -1437,7 +1437,22 @@ Readings.
 - MTP 3 on `pcie_ipc` is the fastest arm of the ladder at 8 and 16 streams (code 1,568 and 2,699 t/s against 1,633 and 2,455 for DFlash 7; prose at 8 streams 1,247 against 1,134), holds its single-stream rate at 30K context (157 against 142 for DFlash 7), has the largest pool (1,309,368, +24% over DFlash 7), and the worst single-stream code rate (232 against 273, −15%; against DFlash 9 −24%). Longer MTP drafts lose: 4 is below 3 everywhere, 6 is below 4 everywhere. The MTP head also disables prefix-cache reuse and disk-tier hits on this hybrid ("no KV cache group could be identified as the draft model's", every group is treated as a draft group), which the ladder does not measure and which would decide a promotion.
 - 8 draft tokens is the outlier at 8 and 16 streams (below both neighbours). The rows-per-step at 8 streams cross 64 and at 16 streams 128 there, a CUDA-graph bucket boundary; not verified.
 
-Promotion (14:xx UTC, user "I validate switching from d9 to d7"): the launcher serves 7 draft tokens, asserts the 1,552-token attention block, and wipes the disk tier's `_model_*` content on the first boot whose block stamp differs (every tier hash carries the block size, as at R182). The previous launcher is frozen as [scripts/serve-r195-ns9-daily.sh](../scripts/serve-r195-ns9-daily.sh). The serving port comes back at 7 when the running experiment chain ends; the gates on the serving port (pool, needles, capacity, tool-eval) are then re-run and appended here. MTP 3 on `pcie_ipc` is the open alternative (batched throughput and pool for single-stream code and the tier), not promoted.
+Promotion (14:xx UTC, user "I validate switching from d9 to d7"): the launcher serves 7 draft tokens, asserts the 1,552-token attention block, and wipes the disk tier's `_model_*` content on the first boot whose block stamp differs (every tier hash carries the block size, as at R182). The previous launcher is frozen as [scripts/serve-r195-ns9-daily.sh](../scripts/serve-r195-ns9-daily.sh). The serving port (2026-09-05 14:42 to 15:09 UTC, `results/2026-09-05-r197-promote-ns7`, `scripts/r197-promote-ns7.sh`, queued behind the R196 unit so it replaced the plain restore): the first boot of the seven-draft-token launcher on port 8020 came up at the 13.98 GB pin on the first attempt. The launcher found no block stamp on the disk tier, wiped its 270 GB of 1,584-token content and stamped 1552; the engine set the 1,552-token attention block with `num_spec_tokens=7`, the all-reduce order is `PCIE_IPC, CUSTOM, PYNCCL`, the pool is 1,052,277 tokens with 2,041 MiB free.
+
+| gate on port 8020 | result |
+|---|---|
+| kv_capacity, 1 short request | 2.7% of the pool, no preemption |
+| kv_capacity, one 100K request | 15.1% of the pool, 18.5 s prefill |
+| kv_capacity, five concurrent 100K requests | 76.5% of the pool, 106 to 115 s each, no preemption |
+| needles at 131K and 220K, cold on the wiped tier | 4/4 hits (25.6 s and 56.7 s prefill) |
+| the same needles re-asked after a 12 × 90K eviction flood | 4/4 hits served from the tier: 130,368 of 131,245 and 218,832 of 220,336 tokens external, 1.2 s and 2.2 s |
+| decode, 1 stream: code (3 runs) / prose / prose at 30K | 279 (accept 0.415) / 176 (0.210) / 151 t/s (0.169) |
+| decode, 8 streams: code / prose | 1,629 (204 per stream, 0.381) / 1,093 t/s (137, 0.212) |
+| decode, 16 streams: code / prose | 2,361 (148, 0.393) / 1,700 t/s (106, 0.243) |
+| tool-eval 69 × 4 | 90.8 ± 1.0, CI [90.0, 91.5], trials 124/124/125/127 (R189 daily 91.2 ± 1.3, R195 90 ± 0.8) |
+| engine error lines / preemptions | 0 / 0 |
+
+Against the nine-draft-token daily on the same port (R189b/R195/R195b): code 8 streams 1,480 → 1,629 (+10%), prose 8 streams 941 → 1,093 (+16%), code 16 streams 1,996 → 2,361 (+18%), prose 16 streams 1,319 → 1,700 (+29%), single-stream code 306 → 279 (−9%), prose 172 → 176, prose at 30K 148 → 151, pool +3.1%. The 1,552-token blocks round-trip through the host and disk tiers with the right answers, so the block change costs one tier wipe and nothing else. The seven-draft-token configuration has been the served one since 2026-09-05 14:45 UTC.
 
 ### R196: the minima-ai all-NVFP4 checkpoint auditioned against the served RedHat checkpoint and rejected on fidelity (2026-09-05 14:22 to 14:42 UTC, results `2026-09-05-r196-minima-audition`, `scripts/r196-minima-audition.sh`)
 
