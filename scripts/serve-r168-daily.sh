@@ -139,7 +139,9 @@ case "$VER" in 0.29*) ;; *) fail "engine is vllm '$VER', not 0.29.x (image drift
 if [ "$IMG" = "$DAILY_IMG" ]; then case "$FIVER" in 0.6.16*) ;; *) fail "S image should carry FlashInfer 0.6.16.x, got '$FIVER' (image drift)";; esac; fi
 # fail-closed asserts (grep -c, not -q: pipefail + -q SIGPIPE gotcha)
 [ "$(echo "$BOOTLOG" | grep -ac "as specified by kv_cache_memory_bytes")" -ge 1 ] || fail "pinned KV budget not honoured (no kv_cache_memory_bytes line)"
-[ "$(echo "$BOOTLOG" | grep -ac "int workspace shrunk 8 MiB -> 1 MiB")" -ge 1 ] || fail "0131 pooled int workspace not active (image/env drift)"
+# 0131 shrinks the graph-bound POOLED PREFILL wrappers, which only the spec-verification decode path creates (q = ns+1 per request); a spec-free
+# boot (SPEC_METHOD=none, R203) decodes through the FlashInfer decode wrapper and never logs the line — the assert is spec-ON only.
+if [ "$SPEC_METHOD_" != none ]; then [ "$(echo "$BOOTLOG" | grep -ac "int workspace shrunk 8 MiB -> 1 MiB")" -ge 1 ] || fail "0131 pooled int workspace not active (image/env drift)"; fi
 if [ "$SPEC_METHOD_" = dflash ]; then
   [ "$(echo "$BOOTLOG" | grep -ac "Capturing dflash2 CUDA graphs")" -ge 1 ] || fail "drafter graphs not captured (0129 inactive?)"
   [ "$(echo "$BOOTLOG" | grep -ac "running the draft eagerly")" -eq 0 ] || fail "drafter fell back to eager"
