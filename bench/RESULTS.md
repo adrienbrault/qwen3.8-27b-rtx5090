@@ -1405,6 +1405,25 @@ Two more boots on the R193b artifact, sharded sampling off and on, compared with
 
 Consequences. The R193b section above, which read the sharded sampler as a numerics change, is withdrawn: on this evidence batch-sharded sampling changes nothing in the numerics and reads +3.0 % steps/s at 8 streams and +4.3 % at 16 here (+2.1 % and +4.6 % in R193b), −1 % at 1 stream, inside noise. Every same-artifact pair reported as bitwise before this (R191, R190e, R194, R193) was two boots that drew the same outcome. Until the draw is pinned, a difference between two boots below about 0.005 at 30K, or rare flips with median 0 at ctx 0, is not evidence of anything. R193d, queued next, boots twice on this artifact with `VLLM_TRITON_FORCE_FIRST_CONFIG=1`, vLLM's own knob that makes every autotuned Triton kernel take its first config; two bitwise boots at both contexts would name the cause and give the rulers a deterministic setting.
 
+### R203: speculative decoding on or off does not move the prompt-logprob ladder beyond the boot-to-boot draw (2026-09-06 09:18 to 09:35 UTC, results `2026-09-06-r203-spec-ladder`, [scripts/r203-spec-ladder.sh](../scripts/r203-spec-ladder.sh), [scripts/ladder_doc_compare.py](../scripts/ladder_doc_compare.py))
+
+vllm#53488 reports `prompt_logprobs` silently corrupted for a subset of requests under speculative decoding on Qwen3.8-27B (reported with the MTP drafter). Every dense and agentic ruler number in this file since R156 was taken with the served DFlash drafter on, against a bf16 reference dumped with it off. This unit measured the served image twice in the same hour on the served route (16 sequences, `pcie_ipc` all-reduce, batch-sharded sampling, `VLLM_TRITON_FORCE_FIRST_CONFIG=1`): once with no speculative decoding at all (a new `SPEC_METHOD=none` passthrough in the launcher: no drafter, no `--speculative-config`; pool 1,461,692 tokens, attention block 1,424) and once as served (DFlash draft length 7; pool 1,052,277, block 1,552). The control is the R196 daily-image boot of 2026-09-05 (spec on, other compile artifacts): two boots of one configuration.
+
+| arm | dense PPL vs bf16 | dense top-1 | agentic PPL vs bf16 | agentic top-1 | code c1 tok/s |
+|---|---|---|---|---|---|
+| spec off | +0.791 % | 92.789 % | +2.551 % | 95.582 % | 110.3 |
+| spec on (served) | +0.878 % | 92.806 % | +2.560 % | 95.551 % | 243.5 |
+
+Per document (693 dense documents, 724,781 scored positions; 72 agentic documents, 57,972 positions):
+
+| pair | dense docs beyond ±2 % | dense positions moved > 1 nat | dense median doc delta | agentic docs beyond ±2 % |
+|---|---|---|---|---|
+| on vs off | 92 | 1.31 % | −0.06 % | 3 of 72 |
+| on vs R196 boot (control) | 92 | 1.44 % | −0.09 % | 3 of 72 |
+| off vs R196 boot (control) | 104 | 1.42 % | −0.03 % | 2 of 72 |
+
+The on-versus-off spread equals the spread between two boots of the same configuration, so the report does not reproduce on the DFlash route and the rulers taken with the drafter on stand. The same numbers calibrate every ladder comparison in this file: two boots of one configuration differ by 0.10 to 0.15 % corpus PPL, about ±2.4 % per document at the 5th and 95th percentiles, and about 1.4 % of positions by more than one nat. A candidate delta inside that band is the per-boot draw (the R193c/R193d finding, now on the prefill ladder). The spec-free boot also shows what the draft slots cost: +39 % pool and 2.8 GB more free VRAM (R200b), against a halved single-stream decode rate.
+
 ### R201: Qwen3.8-27B-Kearuga audition, rejected (2026-09-05 22:41 to 2026-09-06 00:23 UTC, `results/2026-09-06-r201-kearuga`, [scripts/r201-kearuga-audition.sh](../scripts/r201-kearuga-audition.sh), [scripts/merge_quantized_layers.py](../scripts/merge_quantized_layers.py))
 
 0xWhiteMage/Qwen3.8-27B-Kearuga (revision 1a7f4231, 24.85 GB) is a ModelOpt mixed-precision export: 15 of 16 attention layers and 45 of 48 GDN layers in static FP8, MLP layers 2 to 61 in W4A16 NVFP4 (GPTQ requant), the four boundary MLPs in FP8, embeddings, lm_head, norms, vision and MTP head in bf16. It was measured on the daily route (same image, DFlash draft length 7, nvfp4 KV, 16 sequences, pool 1,052,277 tokens) against the R156 bf16 dumps, with the RedHat checkpoint from R196 as the control and the R197 draft-length-7 rows for decode.
