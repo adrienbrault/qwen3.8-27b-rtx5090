@@ -1405,6 +1405,39 @@ Two more boots on the R193b artifact, sharded sampling off and on, compared with
 
 Consequences. The R193b section above, which read the sharded sampler as a numerics change, is withdrawn: on this evidence batch-sharded sampling changes nothing in the numerics and reads +3.0 % steps/s at 8 streams and +4.3 % at 16 here (+2.1 % and +4.6 % in R193b), −1 % at 1 stream, inside noise. Every same-artifact pair reported as bitwise before this (R191, R190e, R194, R193) was two boots that drew the same outcome. Until the draw is pinned, a difference between two boots below about 0.005 at 30K, or rare flips with median 0 at ctx 0, is not evidence of anything. R193d, queued next, boots twice on this artifact with `VLLM_TRITON_FORCE_FIRST_CONFIG=1`, vLLM's own knob that makes every autotuned Triton kernel take its first config; two bitwise boots at both contexts would name the cause and give the rulers a deterministic setting.
 
+### R201: Qwen3.8-27B-Kearuga audition, rejected (2026-09-05 22:41 to 2026-09-06 00:23 UTC, `results/2026-09-06-r201-kearuga`, [scripts/r201-kearuga-audition.sh](../scripts/r201-kearuga-audition.sh), [scripts/merge_quantized_layers.py](../scripts/merge_quantized_layers.py))
+
+0xWhiteMage/Qwen3.8-27B-Kearuga (revision 1a7f4231, 24.85 GB) is a ModelOpt mixed-precision export: 15 of 16 attention layers and 45 of 48 GDN layers in static FP8, MLP layers 2 to 61 in W4A16 NVFP4 (GPTQ requant), the four boundary MLPs in FP8, embeddings, lm_head, norms, vision and MTP head in bf16. It was measured on the daily route (same image, DFlash draft length 7, nvfp4 KV, 16 sequences, pool 1,052,277 tokens) against the R156 bf16 dumps, with the RedHat checkpoint from R196 as the control and the R197 draft-length-7 rows for decode.
+
+Boot problems, in order:
+
+- The checkpoint's `config.json` lists 375 quantized layers; `hf_quant_config.json` and the tensors list 385. The 10 missing entries are the FP8 boundary MLPs, so vLLM built them unquantized and the weight loader stopped on their `input_scale` tensors. `merge_quantized_layers.py` writes a hard-linked sibling directory whose `config.json` carries the union.
+- Two runs lost the engine 4 minutes into the dense ruler's prefill, on different documents and different GPUs: an Xid 13 with a Triton "illegal instruction" inside the GDN core, then a CUDA "unknown error" in a piecewise-graph replay. Both runs served the static-FP8 layers with vLLM's FlashInfer FP8 scaled-MM kernel, which vLLM admits at compute capability 100 and above, so an RTX 5090 (sm120) gets the sm100 kernel. `--linear-backend cutlass` cannot boot this checkpoint (the cutlass set contains a W4A8 kernel, so the W4A16 filter does not fall back). `--linear-backend torch` selects the per-tensor torch FP8 scaled-MM kernel for the FP8 layers, leaves Marlin for the W4A16 MLPs, and ran the full battery with 0 engine errors and no Xid. The FlashInfer FP8 GEMM on sm120 is the fault; any FP8-attention candidate on this box hits it.
+- 1,273 orphan `/dev/shm/psm_*` segments (18 GB, left by every crashed or removed engine over four days) blocked the crashed engine's restart. The base launcher now removes orphan segments before every boot.
+
+Results, run 5 (torch FP8 kernel), with the RedHat control in parentheses:
+
+| ruler | Kearuga | RedHat (R196) |
+|---|---|---|
+| dense PPL delta vs bf16 | +1.348 % | +0.745 % |
+| dense top-1 agreement | 94.19 % | 92.77 % |
+| dense truncated KL mean | 0.0082 | 0.0141 |
+| agentic PPL delta vs bf16 | +1.424 % | +2.699 % |
+| agentic top-1 agreement | 96.49 % | 95.53 % |
+| decode ruler, fully agreeing chunks (ctx 0 / 30K) | 2/20 / 4/20 | 2/20 / 2/20 |
+
+| decode row (tokens/s @ acceptance, steps/s) | Kearuga | daily, draft length 7 (R197) |
+|---|---|---|
+| code, 1 stream | 268.8 @ 0.413, 69 | 273, 71 |
+| prose, 1 stream | 171.8 @ 0.215, 69 | 171 |
+| code, 8 streams | 1,360 @ 0.380, 372 | 1,633, 442 |
+| prose, 8 streams | 943 @ 0.223, 368 | 1,134, 442 |
+| code, 16 streams | 1,789 @ 0.387, 482 | 2,455, 630 |
+
+Cold prefill inside the needle gate: 131K tokens in 32.9 s (3,990 tokens/s) and 220K in 69.0 s (3,190 tokens/s); the daily prefills at about 9,000 tokens/s (R200). tool-eval 69×4: 90 ± 1.4 (daily 91.2). Needle: 4/4 cold, 4/4 tier re-asks. The partial run on the FlashInfer kernel agreed with these where it got (dense +1.378 % on 618 documents, agentic +1.439 %).
+
+Reading: the mixed recipe is closer to bf16 than RedHat on the agentic turns and on top-1 agreement, and farther on dense perplexity, at the W4A16 batch cost (8 streams −17 %, 16 streams −27 %, prefill −56 %) and only on a kernel the checkpoint was not shipped for. Not promoted.
+
 ### R200 and R200b: decode and prefill at 32 and 64 streams, and the per-request cost of the speculative state ring (2026-09-05 19:54 to 20:50 UTC, `results/2026-09-05-r200-c32c64`, `results/2026-09-05-r200b-pool-cost`, [scripts/r200-c32c64.sh](../scripts/r200-c32c64.sh), [scripts/r200b-pool-cost.sh](../scripts/r200b-pool-cost.sh), [scripts/pool_cost_probe.py](../scripts/pool_cost_probe.py))
 
 The served configuration was booted on the experiment port at 32 and at 64 sequences, same image, flags and 13.98 GB pin. Decode with the steady-state probe, 1,024 tokens, two runs each:
