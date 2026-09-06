@@ -107,9 +107,15 @@ BSS_ARGS=""; if [ "$BSS" = 1 ]; then case "${XARGS:-}" in *enable-batch-sharded-
 NS_=7; DTP_=2; SPEC_METHOD_=dflash; if [ "$EXP" != 0 ]; then NS_=${SPEC_NS:-7}; DTP_=${SPEC_DTP:-2}; SPEC_METHOD_=${SPEC_METHOD:-dflash}; fi
 # R197 EXP-only passthrough: SPEC_METHOD=mtp swaps the DFlash2 drafter for the checkpoint's own MTP head (vLLM method qwen3_5_mtp, SPEC_NS
 # tokens, no /draft mount; the drafter-graph asserts below apply to dflash only). The daily port always runs dflash ns7 draft_tp2 (ns9 until R197).
-case "$SPEC_METHOD_" in dflash|mtp) ;; *) echo "FAILED: SPEC_METHOD must be dflash or mtp (got $SPEC_METHOD_)"; exit 1;; esac
+# R203 EXP-only passthrough: SPEC_METHOD=none boots with no speculative decoding at all (NOSPEC=1 in launch-daily-v0280.sh, the R115 A-arm switch):
+# no drafter mount, no --speculative-config, no drafter graphs; the attention block follows the spec-free mamba page (value logged, not asserted).
+case "$SPEC_METHOD_" in dflash|mtp|none) ;; *) echo "FAILED: SPEC_METHOD must be dflash, mtp or none (got $SPEC_METHOD_)"; exit 1;; esac
+[ "$SPEC_METHOD_" != none ] || [ "$EXP" != 0 ] || { echo "FAILED: SPEC_METHOD=none is EXP-only"; exit 1; }
+NOSPEC_=0
 case "$NS_$DTP_" in *[!0-9]*) echo "FAILED: SPEC_NS/SPEC_DTP must be integers (got $NS_/$DTP_)"; exit 1;; esac
-if [ "$SPEC_METHOD_" = mtp ]; then
+if [ "$SPEC_METHOD_" = none ]; then
+  SPEC_JSON_=""; DRAFT_MOUNT=""; SPEC_DESC="no speculative decoding"; NOSPEC_=1
+elif [ "$SPEC_METHOD_" = mtp ]; then
   SPEC_JSON_='{"method":"qwen3_5_mtp","num_speculative_tokens":'$NS_"${SPX_:+,$SPX_}"'}'; DRAFT_MOUNT=""; SPEC_DESC="MTP head ns$NS_"
 else
   SPEC_JSON_='{"method":"dflash","model":"/draft","num_speculative_tokens":'$NS_',"draft_tensor_parallel_size":'$DTP_',"attention_backend":"FLASHINFER"'"${SPX_:+,$SPX_}"'}'; DRAFT_MOUNT="-v $DRAFT:/draft:ro"; SPEC_DESC="DFlash2 ns$NS_ draft_tp$DTP_ in CUDA graphs"
@@ -121,7 +127,7 @@ env PORT=$PORT NAME=$NAME BIND_ADDR=$BIND MODEL_DIR="$MODEL" TP=2 L2MNT="$L2" CP
     NO_TIER=0 FIWS=536870912 MNBT=$MNBT_ SEQS=$SEQS ${FUS_:+FUSIONS="$FUS_"} ${CCX_:+CCEXTRA="$CCX_"} UTIL=0.88 MAXLEN=262144 POOL_MIN=$P_MIN POOL_MAX=$P_MAX \
     EXTRA_MOUNT="$DRAFT_MOUNT $XMOUNT" \
     EXTRA_ARGS="--kv-cache-memory-bytes $KV_BYTES $OFFLOAD_ARGS $SSM_ARGS $BSS_ARGS $XARGS" \
-    SPEC_JSON="$SPEC_JSON_" \
+    SPEC_JSON="$SPEC_JSON_" NOSPEC=$NOSPEC_ \
     EXTRA_ENV="-e NCCL_P2P_LEVEL=SYS -e VLLM_SM12X_NVFP4_XQA=0 -e VLLM_SM12X_DFLASH_GRAPHS=1 $SPLIT_ENV $PCIE_ENV $XENV" \
     bash /srv/qwen5090/launch-daily-v0280.sh || { echo "0.29 nvfp4 DAILY FAILED — engine NOT up$([ "$EXP" != 0 ] || echo '; rollback: launch-daily-r189-nobss-0905.sh')"; exit 1; }
 BOOTLOG=$(sudo docker logs "$NAME" 2>&1)
@@ -138,7 +144,7 @@ if [ "$SPEC_METHOD_" = dflash ]; then
   [ "$(echo "$BOOTLOG" | grep -ac "Capturing dflash2 CUDA graphs")" -ge 1 ] || fail "drafter graphs not captured (0129 inactive?)"
   [ "$(echo "$BOOTLOG" | grep -ac "running the draft eagerly")" -eq 0 ] || fail "drafter fell back to eager"
 else
-  [ "$(echo "$BOOTLOG" | grep -ac "Capturing dflash2 CUDA graphs")" -eq 0 ] || fail "SPEC_METHOD=mtp but the DFlash2 drafter captured graphs"
+  [ "$(echo "$BOOTLOG" | grep -ac "Capturing dflash2 CUDA graphs")" -eq 0 ] || fail "SPEC_METHOD=$SPEC_METHOD_ but the DFlash2 drafter captured graphs"
 fi
 [ "$(echo "$BOOTLOG" | grep -ac "decode_backend=xqa")" -eq 0 ] || fail "XQA decode engaged — Bug B dodge not in force"
 [ "$(echo "$BOOTLOG" | grep -ac "$(basename "$MODEL")\|compressed-tensors\|quantization=modelopt")" -ge 1 ] || fail "checkpoint identity"   # R199: ModelOpt candidates (CAND_MODEL) log quantization=modelopt, never their dir name
@@ -157,8 +163,11 @@ if [ "$SSM_DTYPE" = bfloat16 ]; then
 fi
 if [ "$SPEC_METHOD_" = dflash ]; then
   [ "$(echo "$ARGS" | grep -acE "num_speculative_tokens.{1,5}$NS_[,}]")" -ge 1 ] && [ "$(echo "$ARGS" | grep -acE "draft_tensor_parallel_size.{1,5}$DTP_[,}]")" -ge 1 ] || fail "speculative config is not ns$NS_ draft_tp$DTP_ on the container"
-else
+elif [ "$SPEC_METHOD_" = mtp ]; then
   [ "$(echo "$ARGS" | grep -acE "num_speculative_tokens.{1,5}$NS_[,}]")" -ge 1 ] && [ "$(echo "$ARGS" | grep -ac "qwen3_5_mtp")" -ge 1 ] || fail "speculative config is not MTP ns$NS_ on the container"
+else
+  [ "$(echo "$ARGS" | grep -ac "speculative-config")" -eq 0 ] || fail "SPEC_METHOD=none but a --speculative-config is on the container"
+  [ "$(echo "$ARGS" | grep -ac "num_speculative_tokens")" -eq 0 ] || fail "SPEC_METHOD=none but num_speculative_tokens is on the container"
 fi
 [ "$(echo "$ARGS" | grep -ac "VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE=536870912")" -ge 1 ] || fail "FlashInfer workspace is not 512 MiB (Bug B dodge)"
 [ "$(echo "$ARGS" | grep -ac "VLLM_SM12X_NVFP4_XQA=0")" -ge 1 ] || fail "VLLM_SM12X_NVFP4_XQA=0 missing"
