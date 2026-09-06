@@ -1405,6 +1405,24 @@ Two more boots on the R193b artifact, sharded sampling off and on, compared with
 
 Consequences. The R193b section above, which read the sharded sampler as a numerics change, is withdrawn: on this evidence batch-sharded sampling changes nothing in the numerics and reads +3.0 % steps/s at 8 streams and +4.3 % at 16 here (+2.1 % and +4.6 % in R193b), −1 % at 1 stream, inside noise. Every same-artifact pair reported as bitwise before this (R191, R190e, R194, R193) was two boots that drew the same outcome. Until the draw is pinned, a difference between two boots below about 0.005 at 30K, or rare flips with median 0 at ctx 0, is not evidence of anything. R193d, queued next, boots twice on this artifact with `VLLM_TRITON_FORCE_FIRST_CONFIG=1`, vLLM's own knob that makes every autotuned Triton kernel take its first config; two bitwise boots at both contexts would name the cause and give the rulers a deterministic setting.
 
+### R206c: MTP ns3 at c32 and c64 (2026-09-06 22:07 to 22:23 UTC, results `2026-09-06-r206c-mtp-c32c64-v2`)
+
+Both routes booted at SEQS 64 on the 13.98 GB pin in one unit, decode_ss 1,024 tokens per stream, measured the same hour. MTP ns3 admits 64 concurrent requests (engine peak 64 running, 0 preemptions, 0 error lines); DFlash ns7 stops at 36 (R200), so its c64 row has no result.
+
+| row | DFlash ns7 (daily image) | MTP ns3 (0158 image) | delta |
+|---|---|---|---|
+| code c16 | 2,364.6 (147.8 per stream) | 2,651.1 (165.7) | +12.1 % |
+| code c32 | 2,802.7 (87.6) | 3,809.3 (119.0) | +35.9 % |
+| prose c32 | 1,934.2 (60.4) | 3,021.7 (94.4) | +56.2 % |
+| code c64 | no result (36 running, R200) | 4,497.0 (70.3) | +60.5 % over the DFlash c32 ceiling |
+| prose c64 | no result | 3,607.5 (56.4) | +86.5 % over the DFlash c32 ceiling |
+| free VRAM after capture | 827 MiB | 3,115 MiB | |
+| KV pool tokens | 1,052,277 | 1,309,368 | +24.4 % |
+
+Accept per draft: MTP 0.69 code and 0.48 prose at every concurrency; DFlash 0.40 code and 0.23 prose. MTP c32 to c64 adds 18 % aggregate for 41 % less per stream. Code c32 re-measured after the c64 runs: 3,785.5.
+
+Boot prerequisite: vLLM sizes its CUDA-graph list at min(SEQS x decode_query_len x 2, 512), 128 at SEQS 16 and 512 at SEQS 64. The MTP drafter on the PCIe IPC all-reduce (patch 0148) validates its prefill capture rows against the IPC slab, which holds 320 rows, and refuses to capture above it (`PCIe IPC MTP capture rows must be in 1..320`; the first attempt died twice, results `2026-09-06-r206c-mtp-c32c64`). So MTP ns3 on that all-reduce boots for SEQS 40 at most unless `max_cudagraph_capture_size` is capped at 320 in the compilation config. Both arms carried the cap here, and it changed nothing: MTP code c16 2,651 against 2,668 at SEQS 16 in R206; DFlash code c32 2,803 against 2,743 on the uncapped SEQS 64 boot in R200.
+
 ### R206: MTP ns3 (0158 image) against the DFlash ns7 daily, paired (2026-09-06 20:59 to 21:52 UTC, results `2026-09-06-r206-mtp-decision` and `2026-09-06-r206b-prose-conc`)
 
 The decision run R198 could not be: with the prefix cache reopened by 0158, the MTP route is measured against the served daily in one unit, both arms booted the same hour at the 13.98 GB pin (`SEQS 16`, `PCIE_IPC=1`, `BSS=1`, `VLLM_TRITON_FORCE_FIRST_CONFIG=1`). DF = daily image on DFlash ns7. M3 = daily image + 0148 + 0152/0154/0155/0156 + 0158, `SPEC_METHOD=mtp SPEC_NS=3`, `VLLM_SM12X_PCIE_IPC_MTP=1`. Scripts: `scripts/r206-mtp-decision.sh`, `scripts/r206b-prose-conc.sh`.
