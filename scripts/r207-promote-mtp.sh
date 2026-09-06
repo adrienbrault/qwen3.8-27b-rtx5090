@@ -3,7 +3,7 @@
 # THE SERVING PORT, gated the way R182/R197 were. Every MTP number so far is from :8029 (EXP=1, MIN_FREE floor 384 MiB, EXP pool band);
 # launch-daily.sh now serves MTP ns3 (image ...-mtppcie-mtpcache-eagleshift, block 1,472, band 1.28–1.34M, VLLM_SM12X_PCIE_IPC_MTP=1 +
 # the 0148/0158 boot asserts, CPU-tier floor 550 blocks) and this unit exercises those edits with a rollback:
-#   teardown → boot from launch-daily.sh at 13.98 GB (13.5 GB retry on ANY failure, R191) → assert the tier wipe + stamp 1472 → layout/pool
+#   teardown → boot from launch-daily.sh at 13.98 GB (13.5 GB retry on ANY failure, R191) — note the retry could not have passed: 1,309,368 x 13.5/13.98 = 1.265M is under the 1.28M band floor, so a 13.98 failure on this route needs a band decision, not a blind retry → assert the tier wipe + stamp 1472 → layout/pool
 #   → decode fidelity vs the r173c bf16 dumps at ctx 0 and 30K (the one gate the MTP route has never run: launcher header line 13 forbids
 #     flipping the speculative route without an r173c-style ruler; ns7 was RETRACTED on it, band 0.0051–0.0062 at 30K)
 #   → kv_capacity short / 100K / five 100K → needle gate with EVICT=16 (the MTP pool is 1,309,368: the default 12 × 90K = 1.08M cannot evict

@@ -50,7 +50,7 @@
 #   another compile-lottery draw (R193) — its bf16 ruler position is read by r195.
 # Rollback: bash /srv/qwen5090/launch-daily-r189-nobss-0905.sh (pcieipc image, no 0147, sharded sampling off; frozen pre-R195 launcher;
 #   same block size so the native-l2 tier is shared; tear this one down first).
-# R207 (2026-09-06 23:xx UTC, user "Alright let's switch to mtp"; sheet flan/r206-DECISION.md): the speculative route switches from the
+# R207 (2026-09-06 23:09 UTC boot, 23:39 gates green, user "Alright let's switch to mtp"; sheet flan/r206-DECISION.md): the speculative route switches from the
 #   DFlash2 drafter to the checkpoint's own MTP head, ns3. Image `...-bsshash-mtppcie-mtpcache-eagleshift` = the R195 daily image + patch
 #   0148 (the sequential MTP drafter admitted on the pcie_ipc all-reduce, capture rows <= 320) + 0152/0154/0155/0156 (upstream cache fixes)
 #   + 0158 (the eagle block-drop keeps the state one block before the dropped block, so a re-sent prefix hits). MTP needs no drafter weights
@@ -196,6 +196,8 @@ fi
 # CPU tier (r172): every disk-tier hit is promoted through the CPU tier, so 16 GiB is what lets 131K–262K prompts be served. The block count
 # depends on the route: dflash stores ~1,010 blocks of 2,944 / ~1,880 of 1,584 / ~1,921 of 1,552, while an eagle/MTP block also carries the
 # speculative state copies and is ~3.2x larger (R207: 595 blocks of 1,472 = 875K tokens, still 4/4 tier-served needles at 131K/220K in R206).
+# Measured on disk: an MTP tier block file is 28,827,648 B for 1,472 tokens (19.6 KB/token) vs dflash 8.9 MB for 1,552 (5.8 KB/token), so the
+# 300 GB disk cap holds ~15M tokens instead of ~52M. Read volume per served token did NOT rise (2,529 MB / 129,536 tok vs 2,968 MB / 130,368).
 [ "$(echo "$ARGS" | grep -acE "cpu_bytes_to_use.{1,5}$CPU_B[,}]")" -ge 1 ] || fail "CPU tier is not $CPU_B bytes on the container"
 CPUBLK=$(echo "$BOOTLOG" | grep -aoE 'primary tier \(lru, [0-9]+ blocks\)' | tail -1 | grep -oE '[0-9]+')
 MIN_CPUBLK=900; [ "$SPEC_METHOD_" != mtp ] || MIN_CPUBLK=550
