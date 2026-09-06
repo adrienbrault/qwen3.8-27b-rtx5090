@@ -3,12 +3,16 @@
 # 1,309,368) where DFlash ns7 admits 36 (c64 impossible, R200). This unit boots M3 (<daily>-mtppcie-mtpcache-eagleshift, MTP ns3) at SEQS 64
 # and measures decode_ss code/prose at c16 (anchor to R206), c32 and c64, then the DF control (daily image, DFlash ns7) at SEQS 64 for c16/c32
 # (its c64 is the R200 no-result). Read-outs: pool at SEQS 64, max "Running: N reqs" the engine ever reached, min free VRAM, accept per draft.
+# v2: the first run's M3 boot died at drafter graph capture — vLLM sizes the CUDA-graph list at min(SEQS x decode_query_len x 2, 512)
+# (128 at SEQS 16, 512 at SEQS 64), the 0148 MTP drafter reuses that list for its prefill graphs, and the pcie_ipc slab holds 320 rows
+# (pcie_ipc_ar21 fixed_config MAX_ROWS). Both arms therefore cap max_cudagraph_capture_size at 320 (CC_EXTRA): decode batches stay
+# inside it (c64 x 4 = 256 for MTP ns3, c32 x 8 = 256 for DFlash ns7) and prefill chunks (8,192) were never captured either way.
 # Boots at the 13.98 pin, EXP=1 on :8029, gpu-queue chained (no daily bounce), restores the daily at the end.
-#   unit: sudo systemd-run --unit=r206c-mtp-c32c64 --collect -p User=adrienbrault -p RuntimeMaxSec=43200 -p TimeoutStopSec=900 \
-#         -E GPU_QUEUE_NAME=r206c-mtp-c32c64 bash /srv/qwen5090/r206c-mtp-c32c64.sh
+#   unit: sudo systemd-run --unit=r206c-mtp-c32c64-v2 --collect -p User=adrienbrault -p RuntimeMaxSec=43200 -p TimeoutStopSec=900 \
+#         -E GPU_QUEUE_NAME=r206c-mtp-c32c64-v2 bash /srv/qwen5090/r206c-mtp-c32c64.sh
 set -uo pipefail
 export PATH="$HOME/.local/bin:$PATH"
-R=/srv/qwen5090/results/2026-09-06-r206c-mtp-c32c64; mkdir -p "$R"
+R=/srv/qwen5090/results/2026-09-06-r206c-mtp-c32c64-v2; mkdir -p "$R"
 log(){ echo "$(date -Is) $*" | tee -a "$R/audit.log"; }
 U=http://127.0.0.1:8029; CAND=/srv/qwen5090/launch-daily.sh; L2=/srv/qwen5090/eval-l2; PR=/srv/qwen5090/probes
 DAILY=$(sed -nE 's/^DAILY_IMG=([^ ]+).*/\1/p' "$CAND" | head -1); MTP=$DAILY-mtppcie-mtpcache-eagleshift
@@ -28,7 +32,7 @@ finish(){ teardown; log "restoring daily (skipped if another unit is queued: $(g
 trap 'log "### SIGTERM ###"; if [ "$HAVE_LOCK" = 1 ]; then finish ABORTED; else log "no lock held: engines left alone, exiting"; fi; exit 4' TERM
 flock -n 9 || { log "waiting for the GPU-exclusive lock (another unit holds it)"; flock 9; }
 HAVE_LOCK=1
-log "=== R206c start (lock held): c32/c64 at SEQS 64, M3=$MTP (mtp ns3) then DF control=$DAILY (dflash ns7) ==="
+log "=== R206c v2 start (lock held): c32/c64 at SEQS 64 (capture cap 320), M3=$MTP (mtp ns3) then DF control=$DAILY (dflash ns7) ==="
 mountpoint -q "$L2" || sudo bash /srv/qwen5090/eval-l2-dio.sh || { log "FAILED: eval-l2 not mounted"; finish ABORTED; exit 1; }
 wipe_l2(){ sudo find "$L2" -mindepth 1 -maxdepth 1 -name '_model_*' -exec rm -rf {} + ; sync; }
 ELOG(){ sudo docker logs vllm-exp 2>&1; }
@@ -36,7 +40,7 @@ errs(){ ELOG | grep -ac 'illegal memory\|CUDA error\|Traceback\|OutOfMemoryError
 # boot_once TAG IMG PIN [SPEC_METHOD SPEC_NS] → 0 = up
 boot_once(){ local tag=$1 img=$2 kv=$3 method=${4:-dflash} ns=${5:-7} rc extra="-e VLLM_TRITON_FORCE_FIRST_CONFIG=1"
   [ "$method" = mtp ] && extra="$extra -e VLLM_SM12X_PCIE_IPC_MTP=1"
-  env -i PATH="$PATH" HOME="$HOME" USER="$USER" EXP=1 SEQS=64 KV_BYTES=$kv PCIE_IPC=1 BSS=1 CAND_IMG=$img SPEC_METHOD=$method SPEC_NS=$ns EXTRA_ENV_APPEND="$extra" bash $CAND > "$R/boot-$tag-$kv.log" 2>&1; rc=$?
+  env -i PATH="$PATH" HOME="$HOME" USER="$USER" EXP=1 SEQS=64 KV_BYTES=$kv PCIE_IPC=1 BSS=1 CC_EXTRA='"max_cudagraph_capture_size":320' CAND_IMG=$img SPEC_METHOD=$method SPEC_NS=$ns EXTRA_ENV_APPEND="$extra" bash $CAND > "$R/boot-$tag-$kv.log" 2>&1; rc=$?
   if [ $rc -eq 0 ] && curl -sf -m 5 $U/health >/dev/null; then
     ELOG > "$R/engine-boot-$tag.log"
     log "[$tag] BOOT OK pin=$kv spec=$method/ns$ns pool=$(grep -aoE 'Pool [0-9]+' "$R/boot-$tag-$kv.log" | tail -1 | tr -dc 0-9) block=$(grep -aoE 'Setting attention block size to [0-9]+' "$R/engine-boot-$tag.log" | head -1 | tr -dc 0-9) proof_0158=$(grep -ac "$PROOF" "$R/engine-boot-$tag.log") min_free=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | sort -n | head -1)MiB aot_loaded=$(grep -ac 'Directly load AOT' "$R/engine-boot-$tag.log") compile_hashes=$(grep -aoE 'torch_aot_compile/[0-9a-f]{12}' "$R/engine-boot-$tag.log" | cut -d/ -f2 | sort -u | tr '\n' ',')"
