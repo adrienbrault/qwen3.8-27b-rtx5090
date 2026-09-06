@@ -1405,6 +1405,33 @@ Two more boots on the R193b artifact, sharded sampling off and on, compared with
 
 Consequences. The R193b section above, which read the sharded sampler as a numerics change, is withdrawn: on this evidence batch-sharded sampling changes nothing in the numerics and reads +3.0 % steps/s at 8 streams and +4.3 % at 16 here (+2.1 % and +4.6 % in R193b), −1 % at 1 stream, inside noise. Every same-artifact pair reported as bitwise before this (R191, R190e, R194, R193) was two boots that drew the same outcome. Until the draw is pinned, a difference between two boots below about 0.005 at 30K, or rare flips with median 0 at ctx 0, is not evidence of anything. R193d, queued next, boots twice on this artifact with `VLLM_TRITON_FORCE_FIRST_CONFIG=1`, vLLM's own knob that makes every autotuned Triton kernel take its first config; two bitwise boots at both contexts would name the cause and give the rulers a deterministic setting.
 
+### R206: MTP ns3 (0158 image) against the DFlash ns7 daily, paired (2026-09-06 20:59 to 21:52 UTC, results `2026-09-06-r206-mtp-decision` and `2026-09-06-r206b-prose-conc`)
+
+The decision run R198 could not be: with the prefix cache reopened by 0158, the MTP route is measured against the served daily in one unit, both arms booted the same hour at the 13.98 GB pin (`SEQS 16`, `PCIE_IPC=1`, `BSS=1`, `VLLM_TRITON_FORCE_FIRST_CONFIG=1`). DF = daily image on DFlash ns7. M3 = daily image + 0148 + 0152/0154/0155/0156 + 0158, `SPEC_METHOD=mtp SPEC_NS=3`, `VLLM_SM12X_PCIE_IPC_MTP=1`. Scripts: `scripts/r206-mtp-decision.sh`, `scripts/r206b-prose-conc.sh`.
+
+| row | DF (DFlash ns7) | M3 (MTP ns3) | M3 vs DF |
+|---|---:|---:|---:|
+| KV pool (tokens) / block | 1,052,277 / 1,552 | 1,309,368 / 1,472 | +24.4 % |
+| free VRAM after boot | 1,809 MiB | 4,033 MiB | |
+| warm 32K revisit: tokens re-prefilled / ttft | 690 / 0.225 s | 1,934 / 0.485 s | +0.26 s per revisit |
+| code c1, 3 runs (tok/s) | 288.6 | 220.7 | −23.5 % |
+| prose c1 / prose c1 at 30K | 157.2 / 152.6 | 163.2 / 152.0 | +3.8 % / 0 |
+| code c8 (R206 / R206b) | 1,516.8 / 1,549.7 | 1,542.8 / 1,565.0 | +1 to +2 % |
+| prose c8 (R206b) | 1,114.3 | 1,252.3 | +12.4 % |
+| code c16 | 2,396.5 | 2,668.2 | +11.3 % |
+| prose c16 (R206b) | 1,701.6 | 2,099.3 | +23.4 % |
+| tool-eval 69×4 | 91 (126/125/126/126) | 90 ± 1.4, CI [89.0, 91.2] (127/123/123/124) | inside the CI |
+| needles 131K + 220K after a 16×90K flood | not re-run (R197: 4/4 + 4/4 from the tier) | 4/4 cold, 4/4 re-asks served from the tier in 1.5 to 2.6 s (129,536 to 217,856 tokens external) | |
+| error lines / preemptions | 0 / 0 | 0 / 0 | |
+
+The flood was raised from 12 to 16 prompts of 90K because a sequential 12×90K flood (1.08M tokens) cannot evict a needle from a 1.31M LRU pool; at 16×90K (1.44M) all four needles were evicted and came back through the tier, so the tier path is proven at needle depth on the MTP route.
+
+An ns5 arm (the one-layer MTP head applied recursively) booted at pool 1,268,831 (two more GDN state copies per request than ns3) and lost on every row: code c8 1,459.3, code c16 2,409.4, prose c1 145.6, acceptance per draft position 0.49 / 0.53 / 0.27 against 0.65 / 0.70 / 0.43 at ns3. ns3 stays the MTP setting.
+
+Fidelity was not re-run (0158 changes only which block is hashed; R205d's warm answers were token-exact with hits). The MTP route's R205 rulers stand: dense +0.827 % PPL, top-1 92.79 %, agentic +2.672 %, 95.63 %, against the daily's +0.667 % / 92.74 % and +2.748 % / 95.63 % (R188 control), inside the R203 two-boot band. The MTP chain has booted 5 of 5 times at the 13.98 GB pin (R205, R205c, R205d, R206, R206b).
+
+The trade: MTP ns3 buys +24 % pool, +11 % code c16, +12 % prose c8, +23 % prose c16, the same tool-eval and fidelity band, for −24 % single-stream code decode and one more re-prefilled block on every warm revisit. Concurrent or multi-agent use favours MTP; single interactive coding sessions favour DFlash. Not promoted; the decision is the operator's. One oddity carried from R198: the 131K sample-0 needle answers with a spurious "BNBN " prefix on every MTP boot and never on DFlash; the answer is still correct.
+
 ### R205d: the MTP prefix cache reopened live (2026-09-06 20:10 to 20:47 UTC, results `2026-09-06-r205d-eagleshift-gate`, [scripts/build-r205d-eagle-shift.sh](../scripts/build-r205d-eagle-shift.sh), [scripts/r205d-eagleshift-gate.sh](../scripts/r205d-eagleshift-gate.sh), layer `patches-v0290/Dockerfile.mtp-eagle-shift`, patch 0158)
 
 The image of R205 plus patch 0158 (R205c below) on the MTP route (draft length 3, `pcie_ipc` all-reduce with the MTP drafter admitted, 16 sequences, 13.98 GB pin, evaluation tier). Boot: pool 1,309,368 tokens, block 1,472, 3,541 MiB free, the 0158 proof line once ("kv cache groups [0, 1, 2] keep the state one block before the dropped block, retention_interval=0, scheduler_block_size=1472"), 0 engine error lines, 0 preemptions.
