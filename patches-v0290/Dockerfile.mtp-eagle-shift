@@ -1,0 +1,23 @@
+# R205d (2026-09-06): MTP prefix-cache reopen, part 2. R205c (live R205DBG overlay) + the offline scheduler repro with the live
+# prefix_cache_retention_interval=0 showed WHY the mtpcache image (0152/0154/0155/0156) still misses every first revisit under MTP:
+# the scheduler's _mamba_block_aligned_split backs the last cacheable Mamba position off one block under use_eagle_kv_block_drop
+# (FullAttn drops its last matching block), but reachable_block_mask retains only the state block ending at num_prompt_tokens-1,
+# i.e. the block AFTER the one the scheduler checkpointed. Under sparse retention (the live default 0) the Mamba groups therefore
+# hash NO state block for the prompt, every Mamba group finds 0, the coordinator reconciles to 0 and pins the junction; only the
+# third send hits (R205c: 6000-token prompt send1 0 / send2 0 uncached=4416 / send3 4416). DFlash never drops, so it was never hit.
+#   0158 = coordinator marks every non-eagle group (the Mamba groups after 0154) eagle_block_drop when the scheduler applies the drop;
+#          base cache_blocks then also retains the boundary num_prompt_tokens-1-scheduler_block_size (the block the scheduler
+#          checkpoints). Proof line once per process: "SM12X eagle-drop replay boundary retained: kv cache groups [...]".
+# Offline (r205/r205_sched_repro.py --retention 0, live prompt shape 53,468, block=hash=1552, MTP ns3): base hits 0 with 0 Mamba
+# hashes per group; with 0158 each Mamba group hashes block 32 and the second send hits 51,216 = the dense-retention control.
+# Build: sudo docker build -f Dockerfile.mtp-eagle-shift --build-arg BASE=<mtpcache image> -t <mtpcache image>-eagleshift .
+ARG BASE=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash-mtppcie-mtpcache
+FROM ${BASE}
+COPY 0158-eagle-drop-mamba-replay-boundary-v0290.diff /opt/prs-patches/
+RUN set -eu; SITE=/usr/local/lib/python3.12/dist-packages; \
+    patch -d "$SITE" -p1 --fuzz=0 --batch --forward < /opt/prs-patches/0158-eagle-drop-mamba-replay-boundary-v0290.diff; \
+    python3 -m py_compile "$SITE/vllm/v1/core/kv_cache_coordinator.py" "$SITE/vllm/v1/core/single_type_kv_cache_manager.py"; \
+    grep -q "eagle-drop replay boundary retained" "$SITE/vllm/v1/core/kv_cache_coordinator.py"; \
+    [ "$(grep -c 'eagle_block_drop' "$SITE/vllm/v1/core/single_type_kv_cache_manager.py")" -ge 2 ]; \
+    mkdir -p /opt/prs-markers; echo PRS-0158-APPLIED > /opt/prs-markers/0158; \
+    echo PRS-0158-R205D-EAGLESHIFT-APPLIED

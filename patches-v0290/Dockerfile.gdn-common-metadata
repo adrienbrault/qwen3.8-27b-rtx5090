@@ -1,0 +1,6 @@
+ARG BASE=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash
+FROM ${BASE}
+COPY 0157-gdn-common-metadata-once-v0290.diff /opt/0157-gdn-common-metadata-once-v0290.diff
+RUN python3 -c "import vllm; assert vllm.__version__.startswith('0.29')"
+RUN SITE=$(python3 -c 'import importlib.util, pathlib; print(pathlib.Path(importlib.util.find_spec("vllm").origin).parent.parent)') && patch -d "$SITE" -p1 --fuzz=0 --batch --forward < /opt/0157-gdn-common-metadata-once-v0290.diff && python3 -m py_compile "$SITE/vllm/v1/attention/backends/gdn_attn.py" "$SITE/vllm/v1/worker/gpu/attn_utils.py" "$SITE/vllm/v1/worker/gpu/model_states/mamba_hybrid.py"
+RUN mkdir -p /opt/prs-markers && echo PRS-0157-GDN-COMMON-METADATA-APPLIED > /opt/prs-markers/0157

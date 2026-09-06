@@ -1,0 +1,18 @@
+# 0156 — vllm#54288 (merged 2026-09-06, not in rc2): finish-time offload must not store a block ending at the final sampled token's KV slot (never
+# committed; under spec decode it holds a rejected draft's KV). #52771 lists it as a safety dependency. Verbatim PR hunk, tests dropped. Applies --fuzz=0 on the daily tree (R205 apply check).
+diff --git a/vllm/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py b/vllm/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py
+index da0aea06de5a..b43df41f6761 100644
+--- a/vllm/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py
++++ b/vllm/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py
+@@ -1344,7 +1344,10 @@ def _build_store_jobs(
+             if req.status is RequestStatus.FINISHED_ABORTED:
+                 num_tokens_after_batch = req.num_computed_tokens
+             elif req.is_finished():
+-                num_tokens_after_batch = req.num_tokens
++                # Clamp to the GPU prefix cache's commit point. The final sampled
++                # token's slot is never committed (under spec decode it holds a
++                # rejected draft's KV), so a block ending there must not be stored.
++                num_tokens_after_batch = max(req.num_prompt_tokens, req.num_tokens - 1)
+             else:
+                 num_scheduled_tokens = scheduler_output.num_scheduled_tokens[req_id]
+                 num_tokens_after_batch = req.num_computed_tokens + num_scheduled_tokens

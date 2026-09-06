@@ -1,0 +1,66 @@
+--- a/vllm/v1/core/kv_cache_coordinator.py	2026-09-06 20:59:49
++++ b/vllm/v1/core/kv_cache_coordinator.py	2026-09-06 22:05:30
+@@ -168,6 +168,31 @@
+             self.retention_interval, self.scheduler_block_size, kv_cache_config
+         )
+ 
++        # Scheduler-side EAGLE/MTP last-block drop (``use_eagle_kv_block_drop``):
++        # ``_mamba_block_aligned_split`` backs the last cacheable position off by
++        # one block, so the Mamba state a future hit needs lives one block before
++        # the replay boundary ``reachable_block_mask`` retains. Groups that do not
++        # drop their own last block must retain that shifted boundary too, or
++        # sparse retention (``prefix_cache_retention_interval`` 0 / > 0) drops
++        # the only state the hit could use and every first revisit misses.
++        self.use_eagle_kv_block_drop = use_eagle
++        shifted_groups = [
++            i
++            for i, manager in enumerate(self.single_type_managers)
++            if use_eagle and i not in self.eagle_group_ids
++        ]
++        for i in shifted_groups:
++            self.single_type_managers[i].eagle_block_drop = True
++        if shifted_groups and self.retention_interval is not None:
++            logger.info_once(
++                "SM12X eagle-drop replay boundary retained: kv cache groups %s "
++                "keep the state one block before the dropped block "
++                "(retention_interval=%s, scheduler_block_size=%d)",
++                str(shifted_groups),
++                self.retention_interval,
++                self.scheduler_block_size,
++            )
++
+     def get_num_blocks_to_allocate(
+         self,
+         request_id: str,
+--- a/vllm/v1/core/single_type_kv_cache_manager.py	2026-09-03 22:33:35
++++ b/vllm/v1/core/single_type_kv_cache_manager.py	2026-09-06 22:01:11
+@@ -113,6 +113,11 @@
+         # aligned segment (SWA). Initialized lazily by the coordinator after
+         # determining the attention groups.
+         self.use_eagle = False
++        # Set by the coordinator when the scheduler applies the EAGLE/MTP
++        # last-block drop and this group does not drop its own last block: the
++        # scheduler then checkpoints Mamba state one block before the replay
++        # boundary, and ``cache_blocks`` must retain that shifted boundary.
++        self.eagle_block_drop = False
+ 
+         # Partial-hit copy-on-write bookkeeping. Populated only by fine-grained
+         # managers (full attention, mamba "align"); harmlessly empty elsewhere.
+@@ -459,6 +464,17 @@
+         reachable_boundaries = [request.num_prompt_tokens - 1]
+         if request.shared_prefix_boundary:
+             reachable_boundaries.append(request.shared_prefix_boundary)
++        if (
++            self.eagle_block_drop
++            and not self.use_eagle
++            and self.cache_hit_alignment_tokens
++        ):
++            # Mirror ``Scheduler._mamba_block_aligned_split``: with the eagle
++            # last-block drop the last cacheable position backs off one
++            # (scheduler) block, so the state a hit can use ends there.
++            shifted = request.num_prompt_tokens - 1 - self.cache_hit_alignment_tokens
++            if shifted >= 0:
++                reachable_boundaries.append(shifted)
+ 
+         block_mask = self.reachable_block_mask(
+             start_block=num_cached_blocks,

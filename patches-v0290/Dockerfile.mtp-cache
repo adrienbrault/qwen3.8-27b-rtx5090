@@ -1,0 +1,23 @@
+# R205 (2026-09-06): MTP prefix-cache / tier reopen. R198 measured MTP ns3 with 0 prefix-cache hits and 0 tier-served re-asks on this hybrid
+# because no KV group is annotated as the drafter's and the fallback flags every group — Mamba groups included — as an EAGLE/MTP group.
+# This layer, on the pcie-mtp image (0148), carries the upstream fixes for exactly that:
+#   0152 = vllm#52807 (merged 09-03) offload scheduler: recurrent group's unhashed block must not truncate the load boundary (already gated in R204;
+#          #52771 lists it as a safety dependency)
+#   0154 = vllm#54637 excerpt: the coordinator's all-groups fallback exempts Mamba groups (+ the warning text); the rest of #54637 is all-mode, not here
+#   0155 = vllm#52771 port: OffloadingConnector stops zeroing offload hits under MTP/EAGLE (from_spec fallback dropped, finished requests store their
+#          last chunk, lookup widening for every group type)
+#   0156 = vllm#54288 (merged 09-06): finish-time offload never stores the final sampled token's slot
+# Order matters: 0152 and 0155 both touch offloading/scheduler.py (0155 was ported on top of 0152). Applicability verified 2026-09-06 by a real
+# sequential apply at --fuzz=0 on a throwaway container of the pcie-mtp image.
+# Build: sudo docker build -f Dockerfile.mtp-cache --build-arg BASE=<mtppcie image> -t <mtppcie image>-mtpcache .
+ARG BASE=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash-mtppcie
+FROM ${BASE}
+COPY 0152-pr52807-offload-recurrent-load-boundary-v0290.diff 0154-pr54637-mamba-groups-not-eagle-v0290.diff 0155-pr52771-offload-hits-under-mtp-v0290.diff 0156-pr54288-offload-final-token-v0290.diff touched-0152-0156.txt /opt/prs-patches/
+RUN set -eu; SITE=/usr/local/lib/python3.12/dist-packages; \
+    for p in 0152-pr52807-offload-recurrent-load-boundary-v0290 0154-pr54637-mamba-groups-not-eagle-v0290 0155-pr52771-offload-hits-under-mtp-v0290 0156-pr54288-offload-final-token-v0290; do \
+      patch -d "$SITE" -p1 --fuzz=0 --batch --forward < /opt/prs-patches/$p.diff; done; \
+    while IFS= read -r p; do python3 -m py_compile "$SITE/$p"; done < /opt/prs-patches/touched-0152-0156.txt; \
+    grep -q "if not isinstance(g.kv_cache_spec, MambaSpec)" "$SITE/vllm/v1/core/kv_cache_coordinator.py"; \
+    grep -q "treating.*all groups as non-draft for offloading" "$SITE/vllm/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py" || grep -q "all groups as non-draft for offloading" "$SITE/vllm/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py"; \
+    mkdir -p /opt/prs-markers; for m in 0152 0154 0155 0156; do echo PRS-$m-APPLIED > /opt/prs-markers/$m; done; \
+    echo PRS-0152-0154-0155-0156-R205-MTPCACHE-APPLIED

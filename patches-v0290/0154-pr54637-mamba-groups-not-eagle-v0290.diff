@@ -1,0 +1,44 @@
+# 0154 — vllm#54637 excerpt (Ledgero, open): the KV-cache coordinator's 'no group annotated as the drafter's' fallback no longer flags Mamba groups as EAGLE/MTP
+# groups (an attention-only drafter cannot own a Mamba group; flagging one disables SSM prefix reuse under MTP — R198 measured 0 prefix hits and 0 tier
+# hits with MTP ns3 on this hybrid). Two hunks only (coordinator fallback + warning text); the rest of #54637 is mamba_cache_mode=all and stays out.
+# Tree-root relative (-p1 from site-packages). Ported 2026-09-06 (R205) onto the rc2 + 0134 tree.
+--- a/vllm/v1/core/kv_cache_coordinator.py	2026-09-06 20:55:57
++++ b/vllm/v1/core/kv_cache_coordinator.py	2026-09-06 20:55:57
+@@ -108,9 +108,17 @@
+         self.eagle_group_ids: set[int] = {
+             i for i, g in enumerate(kv_cache_config.kv_cache_groups) if g.is_eagle_group
+         }
+-        # Conservatively fall back to flag all groups when no group is flagged.
++        # Conservatively fall back to flag all groups when no group is
++        # flagged — except Mamba groups: an attention-only drafter can never
++        # own a Mamba group, and flagging one widens its lookup window beyond
++        # what block-granular SSM checkpoints can satisfy, silently disabling
++        # all Mamba prefix reuse under MTP/EAGLE.
+         if use_eagle and not self.eagle_group_ids:
+-            self.eagle_group_ids = set(range(len(kv_cache_config.kv_cache_groups)))
++            self.eagle_group_ids = {
++                i
++                for i, g in enumerate(kv_cache_config.kv_cache_groups)
++                if not isinstance(g.kv_cache_spec, MambaSpec)
++            }
+ 
+         # During chunked prefill with EAGLE, the single next prefill lookahead
+         # token past the chunk boundary is combined with the final hidden state
+--- a/vllm/v1/core/kv_cache_utils.py	2026-09-06 20:55:57
++++ b/vllm/v1/core/kv_cache_utils.py	2026-09-06 20:55:57
+@@ -1892,11 +1892,10 @@
+         return
+     logger.warning(
+         "Speculative decoding (method=%s) is enabled but no KV cache group "
+-        "could be identified as the draft model's, so every group -- "
+-        "including Mamba groups %s -- will be treated as a draft group. A "
+-        "Mamba group cannot satisfy the widened lookup window that implies, "
+-        "so prefix-cache reuse across requests will be disabled and any "
+-        "external KV offload tier will store without ever serving a hit.",
++        "could be identified as the draft model's; non-Mamba groups will be "
++        "conservatively treated as draft groups. Mamba groups %s are exempt "
++        "from this fallback (an attention-only drafter cannot own a Mamba "
++        "group; flagging one would silently disable SSM prefix reuse).",
+         spec_config.method,
+         mamba_groups,
+     )
