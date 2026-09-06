@@ -1,0 +1,39 @@
+# vllm-project/vllm#54275 (open, head 75b6a6263e, fetched 2026-09-06): clamp the fully-utilize kv-cache-memory suggestion by memory other processes took since the init snapshot (Bug C family: the 13.98 GB pin occasionally misses headroom -> 13.5 fallback). R202 C2; hunk applies at offset 10 on the daily image tree.
+diff --git a/vllm/v1/worker/gpu_worker.py b/vllm/v1/worker/gpu_worker.py
+index 15f194ffe5f7..15901a02df5a 100644
+--- a/vllm/v1/worker/gpu_worker.py
++++ b/vllm/v1/worker/gpu_worker.py
+@@ -828,6 +828,33 @@ def compile_or_warm_up_model(self) -> CompilationTimes:
+                 - non_kv_cache_memory
+                 - redundancy_buffer_memory
+             )
++            # The init snapshot predates memory that other processes allocate
++            # while this worker loads and profiles (another tenant, or a
++            # helper the engine itself spawns later, such as a CPU-offload
++            # worker holding its own CUDA context). Advising from the stale
++            # snapshot promises that memory to the KV cache, and pinning the
++            # advised value then OOMs during warmup. Clamp by what is
++            # attainable now: current free memory plus the pool this run
++            # already holds, minus the activation headroom a future run needs.
++            current_free_memory, _ = torch.accelerator.get_memory_info(
++                self.init_snapshot.device_
++            )
++            attainable_gpu_limit = (
++                current_free_memory
++                + self.available_kv_cache_memory_bytes
++                - self.peak_activation_memory
++                - redundancy_buffer_memory
++            )
++            if attainable_gpu_limit < kv_cache_memory_bytes_to_gpu_limit:
++                logger.info(
++                    "Other processes allocated %s GiB on this device since "
++                    "startup; lowering the fully-utilize suggestion "
++                    "accordingly.",
++                    format_gib(
++                        kv_cache_memory_bytes_to_gpu_limit - attainable_gpu_limit
++                    ),
++                )
++                kv_cache_memory_bytes_to_gpu_limit = attainable_gpu_limit
+             kv_cache_memory_bytes_to_requested_limit = (
+                 int(self.requested_memory)
+                 - non_kv_cache_memory

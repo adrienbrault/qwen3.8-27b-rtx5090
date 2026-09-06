@@ -1,0 +1,19 @@
+# R204 (2026-09-06, R202 §6 step 3): the four trivial upstream cherry-picks that apply --fuzz=0 on the daily image tree, as one layer:
+#   0149 = vllm#55507 mamba align seed uses the mamba block size (dormant until a block size is pinned)
+#   0150 = vllm#54275 kv-cache-memory suggestion clamped by memory other processes took since startup (Bug C family)
+#   0151 = vllm#54972 UVA offloader releases freed accelerator blocks per module (0135 embed offload)
+#   0152 = vllm#52807 (merged 09-03, not in rc2/rc4) offload scheduler: recurrent group's unhashed block must not truncate the load boundary
+# vllm#54165 (R202 C4) is NOT here: on the daily tree its speculative.py / offloading scheduler / sched/scheduler.py hunks are already 0134
+# (same use_eagle_preserves_target_kv_cache split, 3 of 4 files reversed-or-failed), and its only novel hunk is a SlidingWindowManager
+# alignment fallback this model has no layer for. Applicability verified 2026-09-06 by a real sequential apply on a throwaway container of
+# the daily image (target) and on the pristine rc2 wheel (control): 0149-0152 rc=0 on both.
+# Build: sudo docker build -f Dockerfile.r202-picks --build-arg BASE=<daily image> -t <daily image>-picks .
+ARG BASE=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash
+FROM ${BASE}
+COPY 0149-pr55507-mamba-align-seed-v0290.diff 0150-pr54275-kv-suggestion-clamp-v0290.diff 0151-pr54972-uva-empty-cache-v0290.diff 0152-pr52807-offload-recurrent-load-boundary-v0290.diff touched-0149-0152.txt /opt/prs-patches/
+RUN set -eu; SITE=/usr/local/lib/python3.12/dist-packages; \
+    for p in 0149-pr55507-mamba-align-seed-v0290 0150-pr54275-kv-suggestion-clamp-v0290 0151-pr54972-uva-empty-cache-v0290 0152-pr52807-offload-recurrent-load-boundary-v0290; do \
+      patch -d "$SITE" -p1 --fuzz=0 --batch --forward < /opt/prs-patches/$p.diff; done; \
+    while IFS= read -r p; do python3 -m py_compile "$SITE/$p"; done < /opt/prs-patches/touched-0149-0152.txt; \
+    mkdir -p /opt/prs-markers; for m in 0149 0150 0151 0152; do echo PRS-$m-APPLIED > /opt/prs-markers/$m; done; \
+    echo PRS-0149-0152-R202-PICKS-APPLIED

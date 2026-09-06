@@ -1,0 +1,13 @@
+# R204b (2026-09-06, R202 C6): 0153 = vllm#50862 opens the FlashInfer GDN prefill selector on SM12x. New prefill kernel class (FlashInfer
+# CuTe-DSL SM120 chunk_gated_delta_rule instead of Triton/FLA), so it is built ALONE on the daily image, not stacked on the picks layer:
+# the numerics pair (R193d bitwise decode ruler, same AOT artifact) and the prefill tok/s ladder compare it against the daily itself.
+# No launch knob: the selector fires whenever head_k_dim == 128 and the CUDA runtime is >= 13 (both true here); the boot log's
+# "GDN prefill backend" line is the proof. Build: sudo docker build -f Dockerfile.gdn-fi-prefill --build-arg BASE=<daily image> -t <daily image>-gdnfi .
+ARG BASE=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash
+FROM ${BASE}
+COPY 0153-pr50862-gdn-fi-prefill-sm12x-v0290.diff /opt/prs-patches/
+RUN set -eu; SITE=/usr/local/lib/python3.12/dist-packages; \
+    patch -d "$SITE" -p1 --fuzz=0 --batch --forward < /opt/prs-patches/0153-pr50862-gdn-fi-prefill-sm12x-v0290.diff; \
+    python3 -m py_compile "$SITE/vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py"; \
+    python3 -c "from flashinfer.gdn_prefill import chunk_gated_delta_rule_sm120 as k; assert k is not None, 'SM120 GDN prefill DSL kernel missing'"; \
+    mkdir -p /opt/prs-markers; echo PRS-0153-GDN-FI-PREFILL-SM12X-APPLIED > /opt/prs-markers/0153

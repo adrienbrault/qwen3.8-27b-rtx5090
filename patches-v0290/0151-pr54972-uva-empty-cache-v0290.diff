@@ -1,0 +1,23 @@
+# vllm-project/vllm#54972 (open, head 1d34e8cbf3, fetched 2026-09-06): UVA offloader releases the accelerator blocks it frees per module (torch.accelerator.empty_cache after each offloaded module) instead of letting the caching allocator keep them. Touches our embed-table offload (0135). R202 C5; hunk applies at offset 6.
+diff --git a/vllm/model_executor/offloader/uva.py b/vllm/model_executor/offloader/uva.py
+index 5107870ffa3f..1ff624d0e14f 100644
+--- a/vllm/model_executor/offloader/uva.py
++++ b/vllm/model_executor/offloader/uva.py
+@@ -121,6 +121,17 @@ def _maybe_offload_to_cpu(self, module: nn.Module, prefix: str = "") -> nn.Modul
+             self.cpu_offload_bytes += p.data.numel() * p.data.element_size()
+             offloaded_parameters = True
+ 
++        if offloaded_parameters:
++            # Release per module rather than once after the loop: `make_layers`
++            # feeds `wrap_modules` a lazy generator, so module N+1 is built
++            # after N is offloaded. Moving a parameter to host drops its
++            # accelerator storage, but the caching allocator keeps the block,
++            # and under `expandable_segments` it extends the segment for the
++            # next module instead of reusing what was just freed -- so reserved
++            # memory grows with every offloaded module and loading OOMs
++            # mid-stack.
++            torch.accelerator.empty_cache()
++
+         if offloaded_parameters and not self.uva_offloading:
+             original_forward = module.forward
+ 
