@@ -60,7 +60,10 @@ The fidelity rows are what the whole stack costs against the unquantized model: 
 
 - Host: ASRock X870 Taichi Creator, Ryzen 7 9800X3D, 64 GB DDR5-6000, Ubuntu 24.04 HWE.
 - GPUs: two RTX 5090 32 GB (`sm_120`), PCIe Gen5 x8/x8.
-  - ASUS at 600 W and HP OEM at 575 W.
+  - ASUS at 600 W and HP OEM at 575 W. The floor `nvidia-smi -pl` accepts is 400 W on both; nothing lower can be set.
+    Capping both at 400 W costs nothing measurable on decode, which never draws that much (350 W per card at the served
+    concurrency ceiling), and about 10% on deep prefill, the one workload above it — see
+    [GPU power limits](bench/RESULTS.md#gpu-power-limits-2026-09-07-results-2026-09-07-r208-power-limit-2026-09-07-r208b-power-prefill-2026-09-07-r208c-decode-at-300w).
   - NVIDIA driver 610.57.04 with the [QuixiAI open kernel modules](https://github.com/QuixiAI/open-gpu-kernel-modules) for GPU peer-to-peer ([scripts/gpu-p2p-610.sh](scripts/gpu-p2p-610.sh)).
   - Memory clock offset +4500 MHz on both cards, core clock stock ([scripts/gpu-tune.sh](scripts/gpu-tune.sh)), worth about 4% decode. All throughput numbers include it.
 - Storage: one Gen5 x4 NVMe for the model weights and a 393 GB loopback image for the KV disk tier.
