@@ -1184,6 +1184,38 @@ A 400 W cap on both cards is the free setting: 315 W less than the 600+575 stock
 `decode_ss.py` seeded prompts deterministically (`f"{c}-{i}"`), so a sweep that runs one arm per invocation sends byte-identical prompts and every arm after the first is served from the prefix cache — the first version of this sweep read 100K TTFT as 16.58 s on arm 1 and 0.93 s on arm 2, an artefact. Decode is unaffected, since steady state is sampled after prefill, but the prefill comparison was void. The probe now takes `--seed-prefix` (default empty, so older invocations are byte-identical) and each arm passes its own name.
 
 
+## Mixed prefill+decode at concurrency 8 (2026-09-07, results `2026-09-07-r209-mixed-load/`, `-r209b-mixed-deep/`, `-r209c-mixed-8k/`)
+
+The decode rows above use short prompts, so they are close to pure decode, and a concurrent prefill row is a synchronized burst: every request prefills together, then every request decodes together. Neither is the serving regime, where chunked prefill batches an arriving request's prefill chunks alongside other requests' ongoing decode steps. These rows measure that sustained mixed state on the live server with `vllm bench serve --dataset-name random`, three arms: stock power limits, both cards capped at 400 W, then stock again as a control.
+
+The regime is demonstrated rather than asserted. A 1 Hz sampler of `vllm:prompt_tokens_total`, `vllm:generation_tokens_total` and `vllm:num_requests_running` recorded `prefill_only` = 0.00 in every row of every run: chunked prefill never ran without decode alongside it. Both counters advanced together in 63-66% of samples at 8K prompts and 19-20% at 32K, the remainder being the decode tail, at 6.4-6.7 requests running.
+
+Baselines at stock limits. Input length is fixed within each row, so every arm does identical prefill work (384,000 input tokens per arm at 8K, 1,024,000 at 32K).
+
+| Row | Total tok/s | TTFT p50 | TTFT p99 | TPOT p50 | ITL p50 | ITL p99 | Draw GPU0/GPU1 mean | p95 |
+|---|---|---|---|---|---|---|---|---|
+| 8K prompts, 600-token answers, 48 requests | 6,778 | 996 ms | 7,119 ms | 13.91 ms | 16.29 ms | 665 ms | 392/344 W | 403/355 W |
+| 32K prompts, 800-token answers, 32 requests, Poisson arrivals | 6,914 | 4,345 ms | 23,425 ms | 35.76 ms | 19.40 ms | 1,062 ms | 428/386 W | 464/419 W |
+
+Two things follow from those numbers.
+
+The cost of mixing is a stall, not a uniform slowdown. At 8K the median inter-token gap is 16.29 ms while the mean is 49.63 ms and p99 is 665 ms. The excess of mean over median implies roughly one decode step in twenty stalling for about 0.67 s, which is one chunked-prefill step landing in that stream's batch (`--max-num-batched-tokens 8192`, shared with the running decodes, so a chunk is smaller than the full budget). At 32K it is about one step in ten stalling ~1.06 s. A user sees output pause for around a second when another request's prompt arrives, not slower tokens throughout.
+
+Deep prefill holds at the median and pays at the tail. The 32K mixed TTFT p50 of 4.345 s is within 1% of the isolated single-stream 30K TTFT of 4.305 s measured in the power section, but its p99 is 23.4 s. Under concurrency 8 the engine keeps median first-token latency near isolated levels and pushes the cost into the queueing tail.
+
+Mixed load is also the first regime other than isolated deep prefill to draw more than 400 W, so unlike decode, a 400 W cap does bind here. It remains inexpensive:
+
+| Row | TTFT p50 | TTFT p99 | TPOT p50 | ITL p99 | Total tok/s | Draw mean | SM clock |
+|---|---|---|---|---|---|---|---|
+| 8K, capped at 400 W | +4.5% | +4.7% | +2.4% | +4.6% | -4.4% | 334/309 W | 2,871 -> 2,753 MHz |
+| 8K, control | +0.2% | -0.2% | +5.2% | -0.1% | +2.2% | 390/342 W | 2,879 MHz |
+| 32K, capped at 400 W | +10.0% | +5.5% | +9.2% | +7.7% | -7.5% | 349/332 W | 2,856 -> 2,669 MHz |
+| 32K, control | -0.1% | -8.6% | +3.6% | +0.2% | -4.4% | 434/387 W | 2,856 MHz |
+
+The controls land at +0.2% and -0.1% on TTFT p50 and at -0.1% and +0.2% on ITL p99, so the capped arms' costs are real rather than noise. TPOT under the cap at 8K (+2.4%) sits inside its own control swing (+5.2%), which matches the decode result in the power section: capping does not touch decode, it slows prefill.
+
+Two caveats on the absolute figures. Random-token prompts make the model emit low-entropy output that the MTP drafter predicts easily, giving an acceptance length of 3.45-3.72 out of a maximum 4 (86-93%), above what real code produces; decode here is therefore easier than production load and these throughputs should not be compared with the rows elsewhere in this file. Only the arm-to-arm deltas transfer, and they are sound because acceptance matched across arms. Random prompts also share no prefixes, making this the no-reuse worst case for prefill, whereas real agent traffic reuses 80-90% of its prefix; the cap costs less in practice than it does here.
+
 ## Quality, prior daily (NVFP4 + TurboQuant)
 
 | eval | config | result |
