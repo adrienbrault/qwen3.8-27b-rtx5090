@@ -27,4 +27,4 @@ A patch, flag or technique taken from a PR, issue, repo or paper is credited in 
 
 ## Sync with the private repo
 
-The launchers here (`scripts/serve*.sh`) and the private repo's `flan/launch-*.sh` describe the same served configuration and change in the same session. Results land in `bench/RESULTS.md` newest first, with the section naming its results directory.
+The launchers here (`scripts/serve*.sh`) and the private repo's `flan/launch-*.sh` describe the same served configuration and change in the same session. Each experiment gets its own file in `bench/results/`, named after it, with the heading naming its results directory; `bench/RESULTS.md` is the index of links to them, newest first. A new result means a new file plus one index line — never prose appended to the index.

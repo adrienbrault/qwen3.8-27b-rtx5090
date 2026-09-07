@@ -1,6 +1,6 @@
 # Benchmarks
 
-[RESULTS.md](RESULTS.md) holds every measurement, newest first. The served configuration is at the top; the Qwen3.6-era archive is at the bottom. [reproduce/](reproduce/README.md) holds the SWE-Bench prediction files and the rescoring script.
+[RESULTS.md](RESULTS.md) indexes every measurement, newest first; each experiment lives in its own file under [results/](results/). The served configuration is at the top; the Qwen3.6-era archive is at the bottom. [reproduce/](reproduce/README.md) holds the SWE-Bench prediction files and the rescoring script.
 
 ## Probes in this repo
 

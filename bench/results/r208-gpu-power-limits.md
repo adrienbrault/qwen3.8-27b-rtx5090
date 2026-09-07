@@ -33,7 +33,15 @@ Clock-to-power is workload-dependent, so no single clock is "300 W" for both hal
 
 That is the useful result: **the clock-locked arm drew less power than the capped arm (250 vs 340 W at c8 decode) and cost roughly 4× more throughput.** A power cap is a ceiling the card only meets under sustained heavy draw, leaving short bursts free to boost; a clock lock removes the boost unconditionally, and decode is made of short bursts. To lower the power envelope, use `-pl`, not `-lgc`.
 
-A 400 W cap on both cards is the free setting: 315 W less than the 600+575 stock sum across the pair, no measurable decode cost, ~10% slower deep prefill.
+A 400 W cap on both cards is the free setting: 375 W less than the 600+575 stock sum across the pair, no measurable decode cost, ~10% slower deep prefill.
+
+## The daily has run capped since 2026-09-08; every number here was measured at stock
+
+Both cards are capped at 400 W whenever the daily is serving. Experiments run at stock limits, and **every measurement in this repository — the rows above, the mixed-load results and everything else — was taken at stock (GPU0 600 W, GPU1 575 W)**, so the published numbers describe an uncapped machine.
+
+400.00 W is `power.min_limit` on both cards, the lowest the hardware accepts; 300 W is not settable. The defaults are asymmetric, so restoring stock means reading `power.default_limit` per index rather than writing a constant. The launcher applies the limit after the engine is up and its asserts have passed, not before: the pre-warm forward is prefill-shaped and torch.compile autotunes against it, and the compile artifact is already a timing lottery. It is a comfort setting rather than a gate, so a failure to apply it warns and the daily starts anyway.
+
+The cost of the cap on this configuration is the table above: decode never reaches 400 W, so it is unaffected; deep prefill pays ~10%; mixed prefill and decode at concurrency 8 pays +4.5% time to first token at 8K and +10% at 32K, with total throughput down 4.4% and 7.5%. Those are random-prompt benchmarks with no prefix reuse, which is the worst case for the cap — agentic traffic on this box serves 80-90% of its prompt tokens from the prefix cache, so prefill is a smaller share of the work than these rows suggest.
 
 ## Measurement note
 
