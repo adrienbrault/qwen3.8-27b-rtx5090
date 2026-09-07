@@ -39,7 +39,7 @@ The same engine without the connector is the plain profile ([`../scripts/serve-n
 
 Drop the tiers when prompts are mostly fresh, when you cannot carry the rc4 patches, or when the host lacks the pinned RAM. Keep them when agents share large prefixes or sessions are revisited across hours and restarts.
 
-The agentic A/B that motivated the tiers (16 SWE-Bench-Verified tasks at 4 concurrent agents: 3.4× wall-clock with tiers on, external prefix hit 88.8%) and the concurrency sweep (c4 is the knee; past it streams evict each other's prefixes out of L1) were measured in 2026-07 on the previous model and are in [../bench/RESULTS.md](../../bench/RESULTS.md#archive-qwen36-era-2026-07-and-the-2026-08-15-re-platform). The mechanism has not changed: an agent step resends its whole transcript, so nearly every request is a long prefix revisit.
+The agentic A/B that motivated the tiers (16 SWE-Bench-Verified tasks at 4 concurrent agents: 3.4× wall-clock with tiers on, external prefix hit 88.8%) and the concurrency sweep (c4 is the knee; past it streams evict each other's prefixes out of L1) were measured in 2026-07 on the previous model and are in [../bench/results/archive-qwen36-era.md](../../bench/results/archive-qwen36-era.md). The mechanism has not changed: an agent step resends its whole transcript, so nearly every request is a long prefix revisit.
 
 ## Why a tier that looks fine can be wrong
 

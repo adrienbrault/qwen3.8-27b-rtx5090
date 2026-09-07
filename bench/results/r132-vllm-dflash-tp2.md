@@ -1,0 +1,5 @@
+# DFlash2 + fp8 KV + TP=2 on vLLM: every tracked speed cell improved and both prior limits removed (2026-08-31, `results/2026-08-31-r132-vllm-dflash-tp2`)
+
+[← all results](../RESULTS.md)
+
+Given both 5090s, vLLM's DFlash2 (ns7, syvai W4A16 drafter, fp8 KV) leads every tracked speed cell: **code c1 260.0** (old record 221.7, and the new floor matches it, with one run at 305), code c4 963.3 (+30% over the hours-old SGLang TP=2 record), code c8 1,382 with the single-GPU 4-concurrent cap gone, and deep-30K 172.6, faster than its own surface prose. Max-len booted at the full 262,144, against a single-GPU cap of 122,880, with a 711K-token pool. Acceptance held at about 0.33/draft. The mechanism: DFlash2's lower acceptance means more base-model forwards per emitted token, which is exactly the weight-bandwidth-bound work TP=2 doubles, so the speculative profile and the second GPU compound (+17–30%) where high-acceptance MTP saw about 0–8%. This is not yet the served daily: quality (tool-eval, needles, fidelity-on-verify-path) is unmeasured on this shape, and it runs without the disk tier.

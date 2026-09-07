@@ -1,0 +1,5 @@
+# Tier and util tuning: the disk tier's quality cost removed and pool restored (2026-08-29, `results/2026-08-29-r113-tuning`)
+
+[← all results](../RESULTS.md)
+
+Two flag changes were promoted into the daily the same night. `offload_prompt_only: true` plus 4 write threads brings tool-eval back to **90.0 ± 1.4** (×4): the tier's −1.8-point cost was decode-block write traffic, and prefix reuse only ever hits prompt blocks, so skipping decode KV costs nothing. Util 0.93 → 0.955 recovers the CUDA-graph-profiling reserve the boot log itself points out, taking pool 345K → 381,300 (98% of the LMCache generation's), with burst-eviction needles green. Also measured: the MTP depth curve still peaks at ns=4 on this engine (ns5 ties, ns6 loses despite higher raw acceptance); `max-num-batched-tokens` 16384 misses the 262K KV budget by 0.06 GiB at util 0.93, so smaller prefill chunks do buy KV headroom via activation workspace; and decode c1 numbers on this stack swing ±10% boot-to-boot tracking speculative acceptance (0.43–0.69 on identical prompts), so compare decode within one boot or normalize by acceptance.

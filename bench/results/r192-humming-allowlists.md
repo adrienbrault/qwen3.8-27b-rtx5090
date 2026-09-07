@@ -1,0 +1,16 @@
+# R192, the W4A16 allowlists on the Humming kernel: same fidelity as Marlin, 3 to 4 points cheaper at c8, and two costs the R188 table did not show (2026-09-05 06:29 to 07:11 UTC, `results/2026-09-05-r192-humming`, `scripts/r192-humming.sh`, patch 0139b)
+
+[← all results](../RESULTS.md)
+
+Same image lineage and allowlists as R188 with the Humming W4A16 kernel selected per layer, a fresh control boot, 16 sequences, 13.98 GB pin on every arm. Step rate relative to this run's control (72.0 / 71.7 / 354.7 / 453.7 steps/s at code c1 / prose c1 / code c8 / code c16). Prefill is the 100K-token cold request of the capacity probe.
+
+| arm | dense PPL gap to bf16 | dense top-1 | agentic PPL gap | agentic top-1 | code c1 | prose c1 | code c8 | code c16 | 100K prefill | free VRAM after boot |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| control | +0.745% | 92.77% | +2.680% | 95.57% | 72.0 | 71.7 | 354.7 | 453.7 | 17.0 s | 2,015 MiB |
+| all MLP projections (224 per rank) | +0.260% | 94.04% | +1.435% | 96.65% | +1.0% | +1.5% | −10.8% | −18.4% | 22.3 s | 1,083 MiB |
+| gate_up only (112) | +0.500% | 93.62% | +1.823% | 96.29% | +0.6% | +1.0% | −7.5% | −14.0% | 20.5 s | 2,149 MiB |
+| layers 38 to 55 (72) | +0.459% | 93.33% | +1.942% | 96.10% | −0.1% | −0.1% | −4.2% | −7.1% | 18.7 s | 2,029 MiB |
+
+Fidelity is the same as the Marlin arms of R188 within the ruler floor (the two control boots, one configuration on two compile artifacts, read +0.667% and +0.745% dense). Humming costs 3 to 4 points less at c8 and 1 to 3 less at c16 than Marlin (−15.0 / −21.2, −9.1 / −15.1, −4.6 / −8.1 for the same three allowlists). The 100K prefill is 10 to 31% slower on every W4A16 arm, Marlin and Humming alike, because both kernels are slow at large M (census: 122 µs against 43 µs for the served kernel at M = 160 on gate_up).
+
+The code c1 probe reports parity in steps per second but not in tokens per second: on every arm that puts W4A16 on gate_up in layers 0 to 37 the accepted draft tokens drop (all-MLP 181 and 247 tok/s at acceptance 0.216, gate_up-only 221 and 254 at 0.253, against 305 and 324 at 0.374 for the control; the R188 Marlin arms all-MLP, gate_up-only and layers 19 to 37 showed the same), while layers 38 to 55 does not (308 and 337 at 0.388) and prose c1 and code c8 acceptance are unchanged everywhere. Each run is one sampled continuation (temperature 0.6) of a per-seed prompt and the spread across seeds is large: units that run three seeds read about 200 tok/s on the third seed with W4A4 as well (R190c and R190e controls, 200 to 202 against 381 to 382 on the second). The comparison only holds seed by seed: on the two seeds that the two-run arms share, 15 of 16 W4A4 control runs across R187, R188, R192 and R190d sit at 290 to 324 tok/s (one at 197), and 7 of 10 early-layer W4A16 runs sit below 260. A target that moves closer to bf16 and is then accepted less by the drafter is consistent with the drafter having been fitted to the W4A4 target's distribution; a six-run c1 read on the candidate arm is part of any promotion gate. The layers-38-to-55 arm is the one whose cost is bounded on every axis measured: dense gap +0.75% to +0.46%, agentic +2.68% to +1.94%, c8 −4.2%, c16 −7.1%, prefill +10%, c1 unchanged in steps and tokens, same pin and headroom.

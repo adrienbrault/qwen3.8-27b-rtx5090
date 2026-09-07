@@ -1,0 +1,5 @@
+# Spending the TP=2 pool surplus on checkpoint quality: audition rejected (2026-08-31, `results/2026-08-31-r140-quant-quality`)
+
+[← all results](../RESULTS.md)
+
+With ~719K tokens of KV pool available, the audition covered the "preserve the sensitive layers" checkpoints the single-GPU era had vetoed for capacity: RadixArk's FP8-GDN plus NVFP4 recipe (with and without a bf16 lm_head) and the W4A4 checkpoint that once measured the best tool-eval on this box. The stack was the same for all arms (TP=2, DFlash2 ns9, fp8 KV, disk tier), with templates verified byte-identical. **The daily's full-NVFP4 checkpoint beat every arm.** The FP8-GDN recipe scored lower on tool-eval (88.2 vs 90.2) while costing 16% decode and 100K pool. The bf16 head cost 34% decode for no gain, a third falsification of the "never quantize the head" assumption: at high accepted-tokens-per-step the head read amortizes even worse. The historical 92-point checkpoint regressed to 89.0 ± 2.9 on the modern stack. Calibration quality of a uniform recipe beats selective precision preservation, and old quality numbers do not survive stack changes, so they must be remeasured before being relied on.

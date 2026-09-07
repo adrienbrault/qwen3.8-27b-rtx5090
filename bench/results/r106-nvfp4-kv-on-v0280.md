@@ -1,0 +1,12 @@
+# NVFP4 KV cache enabled on v0.28.0 / sm120: patch set validated and V-scale falsification measured (2026-08-28, `results/2026-08-28-r106-nvfp4kv`, `patches-v0280/`)
+
+[← all results](../RESULTS.md)
+
+Stock v0.28.0 gates `--kv-cache-dtype nvfp4` to SM100 datacenter Blackwell. `patches-v0280/` lifts it for sm120: a rebase of the still-open vLLM PR #49891 plus the linear-V-scale writer fix, produced against the image's own FlashInfer 0.6.16.post3. Validation on the 5090 passed every gate:
+
+- Pool measured **352,702 tokens @262K max-len, util 0.93** (fp8 on the same engine: 225K @200K). Part of the remaining gap to the 0.26 stack's 388K is v0.28's CUDA-graph memory profiling reserving about 1 GiB, which is a util-tuning knob.
+- fp8 purity control: the patched image's fp8 boot is byte-identical to stock, with the same pool to the token and decode within noise, because every change is gated on sm12x+nvfp4.
+- Fidelity on the prefill-logprob ruler against the FP8 reference measured top-1 0.8895 / ΔNLL 2.25% / KL 0.166, statistical parity with both fp8-on-0.28 and the patched-0.26 nvfp4 stack. 90K-depth needles were clean.
+- The falsification run (same boot, overlay disabled so the stock V-swizzled writer serves) dropped top-1 to 0.8552, with ΔNLL 8.82% (13.1% on agent text) and KL +50%, and **zero behavioral symptoms**. That is a direct measurement of the scale-layout bug class: an engine can look healthy while serving badly corrupted attention. Gate on a numerical ruler rather than needles alone, and fail closed if the overlay-ACTIVE line is missing.
+
+Decode (async ON, aggregate t/s): nvfp4 prose 109.9 c1 / 447.8 c4, code 142.8 / 565.4, which is −16–27% against fp8 on the same engine. The boot logs give the reason: v0.28 gives sm120 fp8 the dedicated XQA decode kernel (`decode_backend=xqa`), while this nvfp4 route still decodes through generic FA2 (`decode_backend=flashinfer-native`). FlashInfer 0.6.16.post3 ships an sm120-exclusive XQA-NVFP4 decode kernel (linear scale-factor layout, compatible with the fixed writer) that vLLM does not wire. Wiring it, plus the drafter-cudagraph patch this rebase omitted, is the identified path to nvfp4 decode at roughly fp8 speed with the 1.57× pool. DFlash drafts on nvfp4 KV currently hit vLLM's non-causal guard, and the patch set includes both the per-layer `--kv-cache-dtype-skip-layers` fallback and a guard-relaxation A/B diff.
