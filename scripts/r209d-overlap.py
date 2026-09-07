@@ -9,15 +9,19 @@ gives n_prefill(t) and n_decode(t) with no engine accounting in the path.
 
 Two questions, kept separate:
   1. REGIME -- what fraction of wall time had at least one request in each phase simultaneously.
-  2. MECHANISM -- do the long decode stalls land while a prefill is in flight? Each stall is compared against the base rate
-     (the share of time any prefill was in flight). Stalls at the base rate would mean the tail is unrelated to prefill;
-     stalls well above it mean a chunk shared the batch, which is what chunked prefill is supposed to do.
+  2. MECHANISM -- do the long decode stalls land while a prefill is in flight? Reported as the CONDITIONAL stall rate:
+     every inter-token gap is classified by n_prefill at its midpoint, and P(stall | prefill in flight) is compared with
+     P(stall | none). Comparing a stall INTERVAL against the per-cell share of prefill time instead would overstate the
+     effect, since a 0.5-0.9 s window touches a prefill cell by chance far more often than a single cell does.
+  3. Is the TTFT tail a start-up artefact? Reported from arrival spread and the p99 request's arrival rank -- simultaneous
+     client starts and Poisson arrivals filling the concurrency cap are different shapes and get different sentences.
 Usage: r209d-overlap.py <results-dir>
 """
 import csv, datetime, json, os, statistics, sys
 
 R = sys.argv[1]
 DT = 0.05
+CONC = 8  # --max-concurrency used by both rows
 
 
 def load(path):
@@ -55,6 +59,10 @@ def phases(pre, dec):
 
 
 def stalls(reqs, lo, pre):
+    # The null must NOT be the per-cell share of time with a prefill in flight: a stall is an INTERVAL of ~0.5-0.9 s, and
+    # "did any cell inside it carry a prefill" is satisfied by chance far more often than a single cell is, so comparing
+    # against the per-cell rate overstates the effect. Classify each gap by n_prefill at its MIDPOINT instead and report the
+    # conditional stall rate with and without a prefill in flight -- interval length drops out of that comparison entirely.
     allitl = [x for r in reqs for x in r["itls"]]
     if not allitl:
         return None
@@ -73,7 +81,22 @@ def stalls(reqs, lo, pre):
             t += x
     base = sum(1 for v in pre if v) / n
     big = [x for x in allitl if x > thr]
-    return dict(median_itl_ms=round(med * 1000, 2), threshold_ms=round(thr * 1000, 1), stalls=tot,
+    with_pre = no_pre = stall_with = stall_no = 0
+    for r in reqs:
+        t = r["p1"]
+        for x in r["itls"]:
+            ci = min(n - 1, max(0, int((t + x / 2 - lo) / DT)))
+            if pre[ci]:
+                with_pre += 1
+                stall_with += x > thr
+            else:
+                no_pre += 1
+                stall_no += x > thr
+            t += x
+    return dict(gaps_with_prefill=with_pre, gaps_without_prefill=no_pre,
+                stalls_with_prefill=stall_with, stalls_without_prefill=stall_no,
+                p_stall_given_prefill=round(stall_with / with_pre, 4) if with_pre else None,
+                p_stall_given_no_prefill=round(stall_no / no_pre, 4) if no_pre else None,median_itl_ms=round(med * 1000, 2), threshold_ms=round(thr * 1000, 1), stalls=tot,
                 total_itls=len(allitl), stall_rate=round(tot / len(allitl), 4),
                 one_in=round(len(allitl) / tot, 1) if tot else None,
                 mean_stall_ms=round(statistics.mean(big) * 1000, 1) if big else None,
@@ -115,15 +138,25 @@ for row in ("mix-8k", "mix-32k-deep"):
     lo, hi = min(r["p0"] for r in reqs), max(r["d1"] for r in reqs)
     pre, dec = grid(reqs, lo, hi)
     rec = {"full": phases(pre, dec)}
-    # STEADY STATE: the opening wave is 8 simultaneous arrivals prefilling in lockstep, which is exactly the regime this run
-    # is NOT about. Steady state starts at the first request's first token and ends at the last request's arrival.
-    a = min(r["p1"] for r in reqs) - lo
+    # STEADY STATE: start where the concurrency slots are actually saturated -- the CONC-th first token, not the first, since
+    # at the first token 7 of 8 requests are still in the start-up ramp. Ends at the last request's arrival.
+    a = sorted(r["p1"] for r in reqs)[min(CONC, len(reqs)) - 1] - lo
     b = max(r["p0"] for r in reqs) - lo
     if b > a:
         i, j = int(a / DT), int(b / DT)
         rec["steady"] = phases(pre[i:j], dec[i:j])
         rec["steady_window_s"] = [round(a, 1), round(b, 1)]
     rec["stalls"] = stalls(reqs, lo, pre)
+    # Is the TTFT tail a START-UP artefact or steady-state queueing? Simultaneous starts (the 8K row) and Poisson arrivals
+    # filling the concurrency cap (the 32K row, --request-rate 0.6) are DIFFERENT shapes and must not share a sentence.
+    starts = sorted(r["p0"] for r in reqs)
+    kk = int(0.99 * (len(reqs) - 1))
+    byttft = sorted(range(len(reqs)), key=lambda i: reqs[i]["ttft"])[kk]
+    order = sorted(range(len(reqs)), key=lambda i: reqs[i]["p0"])
+    rec["arrivals"] = dict(first_conc_spread_s=round(starts[min(CONC, len(reqs)) - 1] - starts[0], 3),
+                           p99_ttft_s=round(reqs[byttft]["ttft"], 2),
+                           p99_arrived_at_s=round(reqs[byttft]["p0"] - lo, 2),
+                           p99_arrival_rank=order.index(byttft) + 1, n=len(reqs))
     rec["requests"] = len(reqs)
     rec["sum_ttft_s"] = round(sum(r["ttft"] for r in reqs), 1)
     rec["window_s"] = round(hi - lo, 1)
@@ -153,14 +186,22 @@ for scope in ("full", "steady"):
               f"{d['idle']:>7.3f}{d['mean_pre']:>10.2f}{d['mean_dec']:>10.2f}")
 
 print("\n== decode stalls vs in-flight prefill (mechanism) ==")
-print(f"{'row':<14}{'med_itl':>9}{'thr_ms':>8}{'stalls':>8}{'one_in':>8}{'mean_ms':>9}{'p50_ms':>8}{'%decode':>9}{'coincide':>10}{'base':>7}")
+print(f"{'row':<14}{'med_itl':>9}{'one_in':>8}{'mean_ms':>9}{'p50_ms':>8}{'%dec':>7}{'P(stall|pre)':>22}{'P(stall|no pre)':>22}")
 for row, rec in out.items():
-    s = rec.get("stalls")
-    if not s:
+    st = rec.get("stalls")
+    if not st:
         continue
-    print(f"{row:<14}{s['median_itl_ms']:>9.2f}{s['threshold_ms']:>8.1f}{s['stalls']:>8}{s['one_in']:>8.1f}"
-          f"{s['mean_stall_ms']:>9.1f}{s['median_stall_ms']:>8.1f}{s['stall_share_of_decode']:>9.3f}"
-          f"{(s['coincide_with_prefill'] or 0):>10.3f}{s['base_rate']:>7.3f}")
+    print(f"{row:<14}{st['median_itl_ms']:>9.2f}{st['one_in']:>8.1f}{st['mean_stall_ms']:>9.1f}"
+          f"{st['median_stall_ms']:>8.1f}{st['stall_share_of_decode']:>7.3f}"
+          f"{st['p_stall_given_prefill']:>13.4f} ({st['stalls_with_prefill']}/{st['gaps_with_prefill']})"
+          f"{st['p_stall_given_no_prefill']:>13.4f} ({st['stalls_without_prefill']}/{st['gaps_without_prefill']})")
+
+print("\n== TTFT tail: start-up ramp or steady state? ==")
+for row, rec in out.items():
+    a = rec.get("arrivals")
+    if a:
+        print(f"{row:<14} first {CONC} arrivals spread {a['first_conc_spread_s']:.3f}s; p99 TTFT {a['p99_ttft_s']:.2f}s held "
+              f"by the request arriving at t={a['p99_arrived_at_s']:.2f}s (arrival rank {a['p99_arrival_rank']} of {a['n']})")
 
 print("\n== occupancy (Little's law -- MAGNITUDE ONLY, not evidence of interleaving) ==")
 for row, rec in out.items():
