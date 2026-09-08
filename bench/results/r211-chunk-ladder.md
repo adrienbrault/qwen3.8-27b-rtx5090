@@ -1,6 +1,6 @@
 # R211: the prefill chunk ladder
 
-2026-09-08 10:34 to 11:19 UTC, results `2026-09-08-r211-mnbt-ladder`, `scripts/r211-mnbt-ladder.sh`, `scripts/r211-summary.py`.
+2026-09-08 10:34 to 11:52 UTC, results `2026-09-08-r211-mnbt-ladder` and `2026-09-08-r211b-mnbt-knee`, `scripts/r211-mnbt-ladder.sh`, `scripts/r211b-mnbt-knee.sh`, `scripts/r211-summary.py`.
 
 ## `--max-num-batched-tokens` is not the chunk size
 
@@ -77,3 +77,42 @@ The served configuration runs 8,192, a 5-block chunk. It was set to 4,096 for 76
 Across every arm, roughly 75 % of time-to-first-token is queue rather than prefill compute. Arm E raises `--max-num-seqs` from 16 to 32 at the same 2-block chunk: steady time-to-first-token falls from 13.71 s to 9.01 s, a 34 % reduction, and queue time falls 36 %, for a 3.8 % smaller KV pool (1,259,372 tokens against 1,309,368). It costs 12 % on median end-to-end latency and 26 % on mean inter-token latency, because twenty admitted streams share the compute that sixteen had. Responses start sooner and finish later.
 
 On the cold ramp the same change does nothing (44.06 s against 45.07 s): admitting twenty requests at once does not create capacity for them.
+
+## The knee, and the admission cap at the right chunk size
+
+A second run added the untested 3- and 4-block rungs and `--max-num-seqs 32` at a 5-block chunk. It used the same prompts as the first (the seed is pinned), and its `A3` arm re-runs the 5-block reference as a cross-run anchor: steady wall 118.17 s against 116.97 and 118.29, steady time-to-first-token 9.55 s against 9.55 and 9.37, ramp time-to-first-token 36.25 s against 36.24 and 36.24. The two runs are on one scale.
+
+Three same-config repeats give a better noise floor than two, and it is not uniform across metrics: steady median end-to-end latency **0.18 %**, steady wall-clock 1.1 %, steady output throughput 1.2 %, ramp time-to-first-token 1.1 %, ramp median end-to-end 1.3 %, stall median 2.0 %, stall rate 3.6 % relative — but ramp **wall-clock is ±2.4 %** (113.49, 114.94, 109.50 s), so ramp wall-clock differences under about 5 % say nothing.
+
+**steady row, against the three-repeat reference** (wall 129.5 s, 443.4 output tok/s, median E2EL 35.87 s, stall median 1.100 s)
+
+| chunk | `--max-num-batched-tokens` | wall | output tok/s | stall median | median E2EL |
+| --- | --- | --- | --- | --- | --- |
+| 1 block | 1536 | +4.6 % | −4.9 % | 0.250 s | +8.7 % |
+| 2 blocks | 4096 | +6.6 % | −6.9 % | 0.442 s | +2.6 % |
+| 3 blocks | 4480 | +4.2 % | −4.6 % | 0.494 s | +3.2 % |
+| 4 blocks | 5952 | **+0.2 %** | **−0.2 %** | **0.492 s** | +5.0 % |
+| 5 blocks | 8192 | reference | reference | 1.100 s | reference |
+| 11 blocks | 16384 | −0.6 % | +0.6 % | 1.058 s | −0.8 % |
+
+Four blocks is the knee: full throughput with a 55 % shorter stall. It still costs 5.0 % of median end-to-end latency, which is 28 times the 0.18 % noise on that metric. Every arm below 5 blocks costs 2.6 to 5.0 % of median end-to-end latency while leaving total wall-clock alone — the batch finishes in the same time but individual requests finish less evenly early. That is a fairness shift, not a throughput one.
+
+The clean 1 : 2 : 5 : 11 scaling does not survive the 3- and 4-block rungs, for an arithmetic reason rather than a broken mechanism. A request with about 8,000 uncached tokens splits as 7,360 + 640 at five blocks, 5,888 + 2,112 at four, 4,416 + 3,584 at three, and 2,944 + 2,944 + 2,112 at two. The final chunk is not snapped to a block boundary, so the stall median is taken over a *mixture* of chunk sizes, and it only matches the ratio when the chunk nearly divides the remaining prefill. The 2-block arm does, and hits 0.40 exactly; three and four blocks measure 0.494 and 0.492 against 0.66 and 0.88 predicted from the leading chunk alone.
+
+**`--max-num-seqs` 32 at a 5-block chunk** (pool 1,259,372, 3.8 % smaller) is the one alternative worth offering, and it is a trade rather than a win:
+
+| | 5 blocks, 16 seqs | 5 blocks, 32 seqs |
+| --- | --- | --- |
+| steady time-to-first-token | 13.33 s | **8.70 s** (−34.7 %) |
+| steady queue time | 9.77 s | **5.46 s** (−44 %) |
+| ramp time-to-first-token | 40.96 s | 38.00 s (−7.2 %) |
+| steady output tok/s | 443.4 | 435.4 (−1.8 %) |
+| steady median E2EL | 35.87 s | 37.52 s (+4.6 %) |
+| steady p90 E2EL | 57.29 s | 67.28 s (+17.4 %) |
+| steady mean ITL | 102 ms | 121 ms (+19 %) |
+
+Twenty admitted streams share the compute that sixteen had: responses start much sooner and finish later, with a notably worse tail. It beats the same cap at a 2-block chunk on every axis, so if this cap is ever wanted it belongs at five blocks.
+
+## Conclusion
+
+Across fourteen arms in two runs, nothing beats the served 8,192 / 16-sequence configuration for work scored on completion. A 4-block chunk (5952) is worth taking only by someone who wants visibly steadier streaming and will pay 5 % of median end-to-end latency for it; 32 sequences only by someone who wants a first token in about 3 s instead of about 9.6 s and will accept a 17 % worse p90.
