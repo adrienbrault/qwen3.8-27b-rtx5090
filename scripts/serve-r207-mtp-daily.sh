@@ -13,7 +13,12 @@
 #   ruler (median 2× ns9's at 30K) — do not flip NS on the daily without a new r173c-style ruler run.
 # Pin: KV pool is PINNED (kv_cache_memory_bytes) because the util path sizes the pool before graph capture (Bug C). 14.5 GB at
 #   SEQS 8 leaves 1,311–1,809 MiB free after pre-warm across boots (r173b); the guard below fails the boot under MIN_FREE_MIB.
-# Bug B dodge ASSERTED (XQA off, MNBT 8192, FIWS 512 MiB): nvfp4 prefill above MNBT≈4,929 corrupts under XQA (R155).
+# Bug B dodge ASSERTED (XQA off, FIWS 512 MiB): nvfp4 prefill above MNBT≈4,929 corrupts under XQA (R155); XQA=0 is the actual
+#   fix (R155n13a2 turned the red 262K shape green), and MNBT 4096 < M*=4,929 is additionally on the safe side of that boundary.
+# MNBT 4096 since 2026-09-08 (was 8192): R209d measured decode stalls of 485 ms mean / 658 ms median with an 8K prefill in flight,
+#   and 0 stalls in 7,045 decode steps with none — the stall a decoding stream sees IS the time to compute one prefill chunk.
+#   Halving the chunk halves the pause. Total prefill work is unchanged (marginally less efficient per chunk): this buys
+#   interleaving granularity, not throughput. Effect on wall-clock under concurrency not yet measured.
 # EXP=1 → :8029 / vllm-exp / eval-l2 (batteries); EXP=eval → :8030 / vllm-eval; default → :8020 daily. Experiments may pass
 #   CAND_IMG / SPLIT_KV / OFFLOAD / KV_BYTES / SEQS / SPEC_NS / SPEC_DTP / TIER_* / CPUB; the daily port ignores the env. Since the
 #   promotion, experiments default to the DAILY image and to its spec route (MTP ns3 since R207; knobs off unless PCIE_IPC=1 / BSS=1) — pass
@@ -111,11 +116,11 @@ SPLIT_ENV=""; [ "$SPLIT_KV" = 1 ] && SPLIT_ENV="-e VLLM_SM12X_NVFP4_PREFILL_SPLI
 if [ "$EXP" = 0 ]; then PCIE_IPC=1; else PCIE_IPC=${PCIE_IPC:-0}; fi
 case "$PCIE_IPC" in 0|1) ;; *) echo "FAILED: PCIE_IPC must be 0 or 1 (got $PCIE_IPC)"; exit 1;; esac
 PCIE_ENV=""; [ "$PCIE_IPC" = 1 ] && PCIE_ENV="-e VLLM_SM12X_PCIE_IPC_AR=1"
-XARGS=""; XMOUNT=""; MNBT_=8192; FUS_=""; SPX_=""; XENV=""; CCX_=""
-# R183 EXP-only passthrough (the EXP=0 path is unchanged): EXP_MNBT (chunk size; the 8192 assert follows it), FUSIONS_APPEND (raw
+XARGS=""; XMOUNT=""; MNBT_=4096; FUS_=""; SPX_=""; XENV=""; CCX_=""
+# R183 EXP-only passthrough (the EXP=0 path is unchanged): EXP_MNBT (chunk size; the daily's 4096 assert follows it), FUSIONS_APPEND (raw
 # pass_config pairs -> v0280 FUSIONS), SPEC_EXTRA (raw JSON pairs appended inside --speculative-config), EXTRA_ENV_APPEND (-e pairs), CC_EXTRA (raw top-level
 # compilation-config pairs -> v0280 CCEXTRA).
-if [ "$EXP" != 0 ]; then XARGS="${EXTRA_ARGS_APPEND:-}"; XMOUNT="${EXTRA_MOUNT_APPEND:-}"; MNBT_=${EXP_MNBT:-8192}; FUS_="${FUSIONS_APPEND:-}"; SPX_="${SPEC_EXTRA:-}"; XENV="${EXTRA_ENV_APPEND:-}"; CCX_="${CC_EXTRA:-}"; fi
+if [ "$EXP" != 0 ]; then XARGS="${EXTRA_ARGS_APPEND:-}"; XMOUNT="${EXTRA_MOUNT_APPEND:-}"; MNBT_=${EXP_MNBT:-4096}; FUS_="${FUSIONS_APPEND:-}"; SPX_="${SPEC_EXTRA:-}"; XENV="${EXTRA_ENV_APPEND:-}"; CCX_="${CC_EXTRA:-}"; fi
 case "$MNBT_" in *[!0-9]*|"") echo "FAILED: EXP_MNBT must be an integer (got $MNBT_)"; exit 1;; esac
 # R195: the daily forces batch-sharded sampling on; experiments opt in with BSS=1 or by passing the flag in EXTRA_ARGS_APPEND (r191/r193* do).
 if [ "$EXP" = 0 ]; then BSS=1; else BSS=${BSS:-0}; case "${XARGS:-}" in *enable-batch-sharded-sampling*) BSS=1;; esac; fi
@@ -170,7 +175,7 @@ else
 fi
 [ "$(echo "$BOOTLOG" | grep -ac "decode_backend=xqa")" -eq 0 ] || fail "XQA decode engaged — Bug B dodge not in force"
 [ "$(echo "$BOOTLOG" | grep -ac "$(basename "$MODEL")\|compressed-tensors\|quantization=modelopt")" -ge 1 ] || fail "checkpoint identity"   # R199: ModelOpt candidates (CAND_MODEL) log quantization=modelopt, never their dir name
-[ "$(echo "$ARGS" | grep -ac -- "--max-num-batched-tokens $MNBT_")" -ge 1 ] || fail "MNBT is not $MNBT_ (Bug B dodge = 8192 on the daily)"
+[ "$(echo "$ARGS" | grep -ac -- "--max-num-batched-tokens $MNBT_")" -ge 1 ] || fail "MNBT is not $MNBT_ (4096 on the daily since 2026-09-08; see header)"
 [ "$(echo "$ARGS" | grep -ac -- "--mamba-ssm-cache-dtype $SSM_DTYPE")" -ge 1 ] || fail "SSM cache dtype is not $SSM_DTYPE on the container"
 # R197: the attention block is sized to the mamba page, which grows with the number of speculative slots (ns9 → 1,584; ns7 → 1,552; MTP ns3 → 1,472),
 # so the exact-value assert holds for the daily's own method+ns only; EXP arms with another ns/method must still show the sizing line, and log its value.
