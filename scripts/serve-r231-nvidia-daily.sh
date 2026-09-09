@@ -1,0 +1,273 @@
+#!/usr/bin/env bash
+# R234 2026-09-09: KV pin 13.98 -> 14.86 GB/GPU, pool 1,309,368 -> 1,391,795 (+82,427, +6.3%), band moved with it.
+#   The pool follows this pin, not the weights, so the NVIDIA checkpoint's smaller weights bought free VRAM and no
+#   pool until this line changed. Not raised further, and the limit is not memory: booting each higher pin three
+#   times with the tier wiped and per-boot seeds gave 15.90 GB = 2/3 clean and 16.90 GB = 1/3, both still holding
+#   >= 1,371 MiB free through a five-concurrent-120K + one-250K stress. The warmup flake rate rises with the pin and
+#   1-in-3 would make every restart a coin toss (results/2026-09-09-r232-nvidia-pool-ladder, -r233-nvidia-pin-clean).
+# DAILY (since 2026-09-09, R231 promotion): the same vLLM 0.29 nvfp4-KV route as R207, on a different checkpoint.
+#   nvidia/Qwen3.8-27B-NVFP4 replaces RedHatAI/Qwen3.8-27B-NVFP4. Everything else below is unchanged.
+# What the checkpoint changes: NVFP4 group-16 on all 64 MLP layers (RedHat leaves 56-63 in FP8), an NVFP4 lm_head
+#   (RedHat's is FP8), and W4A4 - an input scale on all 401 quantized layers, so activations are quantized too.
+#   Quantized with ModelOpt 0.47.0.dev80, `kv_cache_quant_algo: null`, so the KV dtype is this launcher's, not the
+#   checkpoint's. It served on FlashInferCutlassNvFp4LinearKernel, not Marlin (results/2026-09-09-r226b2-nvidia).
+# What it costs: fidelity. Against the bf16 model on the dense ruler it is +1.83% perplexity where the RedHat
+#   checkpoint it replaces is +0.75% (2026-09-09, results/2026-09-09-r226b2-nvidia; two boots of one configuration
+#   differ by 0.10-0.15%, so the gap is real). It was promoted anyway, on a deliberate call, because every other
+#   measured quantity is at parity: the KV pool is identical at 1,309,368 tokens (the pool follows
+#   --kv-cache-memory-bytes, not the weights, so NVIDIA's smaller weights show up as free VRAM), decode is within
+#   noise on a paired A/B at equal image, route and sequence limit (2026-09-09, results/2026-09-09-r230-nvidia-vs-redhat),
+#   and SWE-bench Verified reads 387/500 against 386-388 for three other checkpoints spanning that whole fidelity
+#   range (2026-09-09, results/2026-09-09-r227-miniswe-nvidia). SWE-bench does not adjudicate quantization on this
+#   model; the bf16 rulers do, and they prefer the checkpoint this one replaces.
+# Rollback: launch-daily-redhat-mtp-0909.sh (the same route on the RedHat checkpoint, frozen 2026-09-09).
+#
+# The R207 header follows, unchanged except where it names the checkpoint; the route it describes is the route here.
+# DAILY (since 2026-09-04, R168 promotion, user "Promote, go"; sheet flan/r168-DECISION.md): the vLLM 0.29 nvfp4-KV route.
+#   RedHatAI/Qwen3.8-27B-NVFP4 weights (unchanged since R156) + NVFP4 KV + DFlash2 ns9 draft_tp2 in CUDA graphs on the dual
+#   5090s (TP2), syvai W4A16 drafter, native disk tier with 0137 LRU eviction, 16 GiB CPU tier, embed-table UVA offload (0135).
+#   Image S = rc2 + patches-v0290 + FlashInfer 0.6.16.post3 swap (`vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616`, split_kv=0).
+# Why (r168e/r169/r170/r172/r173, all vs the R156 bf16 rulers): pool 937,795 tokens pinned (fp8 daily 654,491 / 628,798,
+#   +43%); disk tier actually SERVES 131K/220K prompts (4/4; the v0.28 daily never served above ~100K, 0/4 even at 16 GiB);
+#   tier eviction holds a cap under floods and restarts (the fp8 daily's tier stranded at 100% on 2026-09-01); S image is the
+#   closest of the three 0.29 attention paths to bf16 (dense top-1 92.797%, +0.753% PPL; fp8 daily 93.07% / +0.376%), and the
+#   bf16 DECODE reference (r173c) puts it in the same 0.0051–0.0062 band as fp8 KV at 30K.
+# Cost (r173/r173b, steady-state): code c8 ≈ −5% (1,134–1,146 vs 1,143–1,153), deep30k prose c1 ≈ −5% (147 vs 150–164),
+#   short-request admission lower at c32 (nvfp4 blocks are 2,944 tokens). ns7 (+12.5% c8) was RETRACTED on the bf16 decode
+#   ruler (median 2× ns9's at 30K) — do not flip NS on the daily without a new r173c-style ruler run.
+# Pin: KV pool is PINNED (kv_cache_memory_bytes) because the util path sizes the pool before graph capture (Bug C). 14.5 GB at
+#   SEQS 8 leaves 1,311–1,809 MiB free after pre-warm across boots (r173b); the guard below fails the boot under MIN_FREE_MIB.
+# Bug B dodge ASSERTED (XQA off, FIWS 512 MiB): nvfp4 prefill above MNBT≈4,929 corrupts under XQA (R155); XQA=0 is the actual
+#   fix (R155n13a2 turned the red 262K shape green), and MNBT 4096 < M*=4,929 is additionally on the safe side of that boundary.
+# MNBT 8192, and it is NOT a free parameter: block_size is 1,472 and the scheduler snaps every non-final prefill chunk DOWN to a
+#   multiple of it (the escape hatch requires a non-eagle-family drafter, and MTP is eagle-family), so the effective chunk is
+#   floor(MNBT/1472) blocks — 8192 -> 5 blocks = 7,360 tokens. Only block multiples are distinct settings: 8192 and 7424 give the
+#   same engine. MNBT was 4096 (2 blocks) for 76 minutes on 2026-09-08 and the chunk ladder reverted it. The stall mechanism is
+#   real — measured stall-median ratio 0.40 against 2,944/7,360 = 0.400 predicted — but halving the chunk also roughly DOUBLES the
+#   stall rate, so 2 blocks cost 7.5 % output throughput, 2.6 % steady end-to-end latency and 12 % on a cold burst, to buy mean
+#   inter-token latency 104 -> 97 ms. Above 5 blocks buys nothing at realistic prefix reuse: the stall is min(chunk, the request's
+#   remaining prefill), and at 82 % hit a request has only ~8K uncached. Time-to-first-token is ~75 % queue in every arm, so the
+#   lever there is --max-num-seqs, not this flag.
+# EXP=1 → :8029 / vllm-exp / eval-l2 (batteries); EXP=eval → :8030 / vllm-eval; default → :8020 daily. Experiments may pass
+#   CAND_IMG / SPLIT_KV / OFFLOAD / KV_BYTES / SEQS / SPEC_NS / SPEC_DTP / TIER_* / CPUB; the daily port ignores the env. Since the
+#   promotion, experiments default to the DAILY image and to its spec route (MTP ns3 since R207; knobs off unless PCIE_IPC=1 / BSS=1) — pass
+#   CAND_IMG=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs for the 0.6.18 rc2 image, or SPEC_METHOD=dflash SPEC_NS=7 for a DFlash control.
+# R182 (2026-09-04, user "Ok promote"): SSM state cached in bf16 (`--mamba-ssm-cache-dtype bfloat16`). The hybrid allocator stores a GDN
+#   state snapshot per block (mamba_cache_mode=align) and sizes the attention block to that page, so the fp32 state made a request cost
+#   6.4% of the pool at admission + ~0.2%/1K tokens (R178: 15 short or four 100K requests fill 903K "tokens"). bf16 halves the page:
+#   block 2,944 → 1,584, pool 1,020,596 at the same 13.98 GB pin (R179), fixed cost 3.5%, 100K prompt 16.5%, five 100K co-resident
+#   (R180); rulers vs bf16 neutral (dense 92.771%/+0.744% vs 92.716%/+0.770%), 80-chunk decode ruler at 30K 0.00576 vs 0.00443
+#   median |Δlogprob|, 31/31 per chunk, tails equal (R181). Block change = every tier hash changes; native-l2 wiped at promotion.
+# R197 (2026-09-05 14:0x UTC, user "I validate switching from d9 to d7"): DFlash draft length 9 → 7. The speculative-length ladder
+#   (results/2026-09-05-r197-spec-ladder, :8029, same image/flags/pin, SEQS 16, PCIE_IPC=1, BSS=1) read ns7 vs ns9: code c8 1,633 vs 1,480 t/s
+#   (+16 % steps/s), prose c8 1,134 vs 941, code c16 2,455 vs 1,996 (+25 % steps/s), code c1 273 vs 306 (−11 %), prose c1/30K within noise;
+#   ns6 ≡ ns7 on tok/s, ns8 between, ns10/11 below ns9 batched. Acceptance per draft token falls with ns (0.47 at 6 → 0.25 at 11).
+#   ns IS a compile factor in practice (the attention block follows the speculative slot count: ns7 → 1,552-token block, pool 1,052,277 at
+#   the 13.98 GB pin vs 1,584 / 1,020,596 at ns9), so the cross-ns numerics are void under R193 and the tier hashes change: native-l2 is
+#   wiped on the first daily boot whose block stamp differs (below). Rollback: launch-daily-r195-ns9-0905.sh.
+# R185 (2026-09-05, user "seems like no brainer? Lets use?!"): FlashInfer main's pcie_ipc all-reduce (patch 0138 + package pcie_ipc_ar21;
+#   image `...-fi0616-pcieipc` = the S image + one 359 KB layer, Dockerfile.pcieipc) behind VLLM_SM12X_PCIE_IPC_AR=1, ASSERTED at boot
+#   ("PCIe IPC all-reduce enabled" + backend order PCIE_IPC, CUSTOM, PYNCCL). R185/R185b (results/2026-09-05-r185-pcieipc, knob on vs
+#   off on the same image, same night): code c1 +4.6%, prose c1 +5.4%, prose 30K +3.1%, c16 +2.6%, c8 flat in tok/s = +4.9% steps/s;
+#   numerics identical on every paired ruler (decode ctx0/30K, agentic). Experiments: PCIE_IPC=1 opts in (default OFF so batteries stay
+#   comparable with the R183 band); the daily port forces it on. Gates on the live daily: r189-promote-pcieipc.sh.
+# Rollback: bash /srv/qwen5090/launch-daily-r182-nopcie-0905.sh (fi0616 image, no 0138, frozen pre-R185 launcher; tear this one down
+#   first); older: launch-daily-r174-ssm-fp32-0904.sh (fp32 SSM), launch-daily-redhat-fp8-0902.sh (v0.28 fp8 daily)
+# R195 (2026-09-05, user "yes" on the R193e sheet): batch-sharded sampling (`--enable-batch-sharded-sampling`: each TP rank samples its
+#   half of the batch from local logits, an all-to-all replaces the 19.9 MB per-step logits all-gather). Image `...-pcieipc-bsshash` =
+#   the pcieipc image + patch 0147 (the flag removed from ParallelConfig.compute_hash, so ON/OFF share one AOT compile artifact; marker
+#   /opt/prs-markers/0147 asserted). R193e (results/2026-09-05-r193e-pin-bss; one artifact + VLLM_TRITON_FORCE_FIRST_CONFIG=1 on both arms):
+#   ON vs OFF bitwise 20/20 median 0 at ctx0 and 30K; steps/s +2.6% c8, +4.5% c16, +1.5% c1 (R193b/R193c same size). Seeded T>0 requests
+#   draw a different sample stream than the unsharded sampler (R187). Experiments: BSS=1 (or the flag in EXTRA_ARGS_APPEND) opts in;
+#   the daily port forces it on and asserts the "Batch-sharded sampling enabled" line. Gates on the live daily: r195-promote-bss.sh.
+#   NOTE the daily's compile artifact changed with the image (0147 changes the hash string): cd95c505/d5e217de/fd65aadf (r193b OFF-h),
+#   another compile-lottery draw (R193) — its bf16 ruler position is read by r195.
+# Rollback: bash /srv/qwen5090/launch-daily-r189-nobss-0905.sh (pcieipc image, no 0147, sharded sampling off; frozen pre-R195 launcher;
+#   same block size so the native-l2 tier is shared; tear this one down first).
+# R207 (2026-09-06 23:09 UTC boot, 23:39 gates green, user "Alright let's switch to mtp"; sheet flan/r206-DECISION.md): the speculative route switches from the
+#   DFlash2 drafter to the checkpoint's own MTP head, ns3. Image `...-bsshash-mtppcie-mtpcache-eagleshift` = the R195 daily image + patch
+#   0148 (the sequential MTP drafter admitted on the pcie_ipc all-reduce, capture rows <= 320) + 0152/0154/0155/0156 (upstream cache fixes)
+#   + 0158 (the eagle block-drop keeps the state one block before the dropped block, so a re-sent prefix hits). MTP needs no drafter weights
+#   and no /draft mount; VLLM_SM12X_PCIE_IPC_MTP=1 admits it on the pcie_ipc path and both boot lines are asserted below.
+#   Why (R206, paired on :8029 the same night, SEQS 16, same pin/knobs): pool 1,309,368 vs 1,052,277 (+24%), code c16 +11%, prose c8 +12%,
+#   prose c16 +23%, acceptance per draft token 0.69 vs 0.40 (code); cost: code c1 -24% and +0.26 s on a warm revisit. tool-eval and the
+#   fidelity rulers land in the same band (dense corpus PPL 5.3019 vs the R203 pair 5.3062 / 5.3010, inside the daily's own two-boot noise).
+#   R206c (SEQS 64 arms): MTP serves c32 (+36% code / +56% prose) and c64 (64 running, 0 preemptions) where DFlash stops admitting at 36.
+#   The daily stays at SEQS 16 — the configuration R206/R206b actually measured. SEQS > 40 on this route needs the launcher to cap
+#   `max_cudagraph_capture_size` at 320 (the pcie_ipc slab holds 320 rows; 0148 raises ValueError above it) and a pinned KV_BYTES case.
+#   Block 1,552 -> 1,472 (the mamba page follows the speculative slot count), so native-l2 is wiped on the first boot, as at R182/R197.
+#   The MTP CPU tier holds 595 blocks at 16 GiB (DFlash 1,921): an eagle block carries the speculative state copies, so each tier block is
+#   ~3.2x larger. 595 x 1,472 = 875K tokens of staging, still enough to serve 131K-262K prompts (R206 needles 4/4 cold + 4/4 tier-served).
+# Rollback: bash /srv/qwen5090/launch-daily-r197-dflash-ns7-0906.sh (DFlash2 ns7 on the R195 image, block 1,552 — the tier is wiped again on
+#   the way back; tear this one down first).
+set -uo pipefail
+EXP=${EXP:-0}; EXP_SEQS=${SEQS:-8}; KV_BYTES=${KV_BYTES:-}; OFFLOAD=${OFFLOAD:-1}; SPLIT_KV=${SPLIT_KV:-0}; SSM_DTYPE=${SSM_DTYPE:-bfloat16}  # R182; experiments may pass SSM_DTYPE=float32 (NOT in the unset list below: R183 found every EXP boot dying on "SSM_DTYPE: unbound"; the daily branch forces bfloat16)
+# Daily: pool band 1.28M–1.34M around the deterministic 1,309,368 (R207 MTP ns3, SEQS 16 pin, bf16 SSM; dflash ns7 gave 1,052,277) and a 512 MiB free floor. Experiments
+# keep an 850K–1.1M band (fp32-SSM pins land at ~904K / ~869K, bf16-SSM at ~986K–1.02M) and the 384 MiB Bug C floor (the r17x boot_cand retry ladders expect it).
+DAILY_METHOD=mtp; DAILY_NS=3; DAILY_BLOCK=1472   # R207: MTP head ns3 -> 1,472-token attention block (dflash ns7 gave 1,552, ns9 1,584). Every tier hash carries the block size.
+if [ "$EXP" = 0 ]; then MIN_FREE_MIB=${MIN_FREE_MIB:-512}; P_MIN=1360000; P_MAX=1425000; else MIN_FREE_MIB=${MIN_FREE_MIB:-384}; P_MIN=850000; P_MAX=1100000; fi
+# R197: the pool follows the speculative configuration (each slot holds a GDN state snapshot; the MTP head needs no drafter weights): MTP ns3
+# booted at 1,309,368 and the 1.1M ceiling rejected a healthy engine. EXP arms with another spec method/length get a wide band and log the pool.
+if [ "$EXP" != 0 ] && { [ "${SPEC_METHOD:-$DAILY_METHOD}" != "$DAILY_METHOD" ] || [ "${SPEC_NS:-$DAILY_NS}" != "$DAILY_NS" ]; }; then P_MIN=${POOL_MIN:-600000}; P_MAX=${POOL_MAX:-1500000}; fi
+DAILY_IMG=vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash-mtppcie-mtpcache-eagleshift   # R207: the R195 image + 0148 (MTP on pcie_ipc) + 0152/0154/0155/0156 (cache fixes) + 0158 (eagle-drop replay boundary)
+# Tier knobs (0137): the daily boots with a 300 GB LRU cap on the 393 GB native-l2 fs, evict_scope root (stale namespaces from
+# other configs are evicted too), 40 GB min-free (the launcher's own GC threshold). Experiments (EXP≠0) honour the env, unset = no cap.
+if [ "$EXP" != 0 ] || [ "${DAILY_ALLOW_ENV:-0}" = 1 ]; then T_CAP=${TIER_CAP_GB:-}; T_SCOPE=${TIER_EVICT_SCOPE:-}; T_MINFREE=${TIER_MIN_FREE_GB:-}; CPU_B=${CPUB:-17179869184}; IMG=${CAND_IMG:-$DAILY_IMG}
+else T_CAP=300; T_SCOPE=root; T_MINFREE=40; CPU_B=17179869184; IMG=$DAILY_IMG; fi
+if [ "${DAILY_ALLOW_ENV:-0}" != 1 ]; then
+  unset MODEL_DIR IMAGE KVD_OVERRIDE MAXLEN UTIL NS SPEC_JSON NOSPEC EXTRA_ENV EXTRA_MOUNT EXTRA_ARGS \
+        POOL_MIN POOL_MAX TP PP FIWS NO_TIER PIP_ARM CGMODE FUSIONS MNBT SEQS PREFIX_CACHE EAGER MMLIMIT MMKW CPUB \
+        MAMBA_MODE GATE_KB PORT NAME BIND_ADDR L2MNT CACHE_DIR ALLOW_NO_XQA ALLOW_NO_PREWARM HEALTH_TRIES \
+        TIER_CAP_GB TIER_EVICT_SCOPE TIER_MIN_FREE_GB 2>/dev/null || true
+fi
+DRAFT=/srv/qwen5090/models/dflash2-qwen38-syvai-w4a16
+MODEL=/srv/qwen5090/models/qwen3.8-27b-nvidia-nvfp4
+# R196 EXP-only passthrough: CAND_MODEL=<dir> audits another checkpoint on the daily route (same KV dtype, drafter, knobs); the daily port ignores it.
+if [ "$EXP" != 0 ] && [ -n "${CAND_MODEL:-}" ]; then MODEL=$CAND_MODEL; fi
+if [ "$EXP" = 1 ]; then PORT=8029; NAME=vllm-exp; BIND=127.0.0.1; L2=/srv/qwen5090/eval-l2; SEQS=$EXP_SEQS
+elif [ "$EXP" = eval ]; then PORT=8030; NAME=vllm-eval; BIND=${EVAL_BIND:-127.0.0.1}; L2=/srv/qwen5090/eval-l2; SEQS=$EXP_SEQS
+else PORT=8020; NAME=vllm-27b; BIND=0.0.0.0; L2=/srv/qwen5090/native-l2; SEQS=16; SSM_DTYPE=bfloat16; fi   # SEQS 16 since 2026-09-04 (R176, user): R159 c16 = +34% aggregate on the fp8 shape; pin 13.98 GB → pool 903,793 (−3.6% vs SEQS 8)   # BIND 0.0.0.0 deliberate: owui-proxy/harbor reach the engine via 172.17.0.1
+if [ "$EXP" = 0 ]; then ST_=$(cat "$L2/.block" 2>/dev/null || true); if [ "$ST_" != "$DAILY_BLOCK" ]; then
+  echo "native-l2 block stamp '${ST_:-none}' != $DAILY_BLOCK: wiping the tier's _model_* content (was $(du -sh "$L2" 2>/dev/null | cut -f1); R182/R197 — the tier cannot serve blocks of another size)"
+  sudo find "$L2" -mindepth 1 -maxdepth 1 -name '_model_*' -exec rm -rf {} + ; sync; fi; fi
+if [ -z "$KV_BYTES" ]; then case "$SEQS" in
+  8) KV_BYTES=14500000000;; 16) KV_BYTES=14860000000;; 32) KV_BYTES=13440000000;;   # bytes unchanged by R182; the 8/32 pools were read with fp32 SSM (937,795 / ~869K) and are ~+13% with bf16
+  *) echo "FAILED: no pinned KV budget for SEQS=$SEQS (set KV_BYTES)"; exit 1;; esac; fi
+OFFLOAD_ARGS=""; [ "$OFFLOAD" = 1 ] && OFFLOAD_ARGS="--offload-backend uva --cpu-offload-gb 1 --cpu-offload-params embed_tokens"
+case "$SSM_DTYPE" in bfloat16|float32|float16|auto) ;; *) echo "FAILED: SSM_DTYPE must be bfloat16|float32|float16|auto (got $SSM_DTYPE)"; exit 1;; esac
+SSM_ARGS="--mamba-ssm-cache-dtype $SSM_DTYPE"
+# 0136: FlashInfer 0.6.18 forces split-KV OFF for NVFP4 KV in the FA2 prefill wrapper (= the spec-verification path); SPLIT_KV=1
+# re-enables it. The S image ships FlashInfer 0.6.16.post3 whose split path is on by default, so the daily runs SPLIT_KV=0 (r168e:
+# closest to bf16 of the three paths; r173c: its decode dumps are identical to rc2 ON's at ctx0 and 30K).
+SPLIT_ENV=""; [ "$SPLIT_KV" = 1 ] && SPLIT_ENV="-e VLLM_SM12X_NVFP4_PREFILL_SPLIT_KV=1"
+# R185: the daily forces the pcie_ipc all-reduce on; experiments opt in with PCIE_IPC=1 (an image without 0138 then fails the assert below).
+# (R187 fix 2026-09-05: the first version assigned 1 and then read its own value, so every experiment saw PCIE_IPC=1 and images without 0138 failed the assert)
+if [ "$EXP" = 0 ]; then PCIE_IPC=1; else PCIE_IPC=${PCIE_IPC:-0}; fi
+case "$PCIE_IPC" in 0|1) ;; *) echo "FAILED: PCIE_IPC must be 0 or 1 (got $PCIE_IPC)"; exit 1;; esac
+PCIE_ENV=""; [ "$PCIE_IPC" = 1 ] && PCIE_ENV="-e VLLM_SM12X_PCIE_IPC_AR=1"
+XARGS=""; XMOUNT=""; MNBT_=8192; FUS_=""; SPX_=""; XENV=""; CCX_=""
+# R183 EXP-only passthrough (the EXP=0 path is unchanged): EXP_MNBT (chunk size; the daily's 8192 assert follows it), FUSIONS_APPEND (raw
+# pass_config pairs -> v0280 FUSIONS), SPEC_EXTRA (raw JSON pairs appended inside --speculative-config), EXTRA_ENV_APPEND (-e pairs), CC_EXTRA (raw top-level
+# compilation-config pairs -> v0280 CCEXTRA).
+if [ "$EXP" != 0 ]; then XARGS="${EXTRA_ARGS_APPEND:-}"; XMOUNT="${EXTRA_MOUNT_APPEND:-}"; MNBT_=${EXP_MNBT:-8192}; FUS_="${FUSIONS_APPEND:-}"; SPX_="${SPEC_EXTRA:-}"; XENV="${EXTRA_ENV_APPEND:-}"; CCX_="${CC_EXTRA:-}"; fi
+case "$MNBT_" in *[!0-9]*|"") echo "FAILED: EXP_MNBT must be an integer (got $MNBT_)"; exit 1;; esac
+# R195: the daily forces batch-sharded sampling on; experiments opt in with BSS=1 or by passing the flag in EXTRA_ARGS_APPEND (r191/r193* do).
+if [ "$EXP" = 0 ]; then BSS=1; else BSS=${BSS:-0}; case "${XARGS:-}" in *enable-batch-sharded-sampling*) BSS=1;; esac; fi
+case "$BSS" in 0|1) ;; *) echo "FAILED: BSS must be 0 or 1 (got $BSS)"; exit 1;; esac
+BSS_ARGS=""; if [ "$BSS" = 1 ]; then case "${XARGS:-}" in *enable-batch-sharded-sampling*) ;; *) BSS_ARGS="--enable-batch-sharded-sampling";; esac; fi
+NS_=$DAILY_NS; DTP_=2; SPEC_METHOD_=$DAILY_METHOD; if [ "$EXP" != 0 ]; then NS_=${SPEC_NS:-$DAILY_NS}; DTP_=${SPEC_DTP:-2}; SPEC_METHOD_=${SPEC_METHOD:-$DAILY_METHOD}; fi   # R207: EXP defaults follow the daily; a DFlash control must pass SPEC_METHOD=dflash SPEC_NS=7 (and CAND_IMG=...-pcieipc-bsshash for the pre-R207 image — dflash on the 0158 image is UNMEASURED)
+# R197 EXP-only passthrough: SPEC_METHOD=mtp swaps the DFlash2 drafter for the checkpoint's own MTP head (vLLM method qwen3_5_mtp, SPEC_NS
+# tokens, no /draft mount; the drafter-graph asserts below apply to dflash only). The daily port runs MTP ns3 since R207 (dflash ns7 until then).
+# R203 EXP-only passthrough: SPEC_METHOD=none boots with no speculative decoding at all (NOSPEC=1 in launch-daily-v0280.sh, the R115 A-arm switch):
+# no drafter mount, no --speculative-config, no drafter graphs; the attention block follows the spec-free mamba page (value logged, not asserted).
+case "$SPEC_METHOD_" in dflash|mtp|none) ;; *) echo "FAILED: SPEC_METHOD must be dflash, mtp or none (got $SPEC_METHOD_)"; exit 1;; esac
+[ "$SPEC_METHOD_" != none ] || [ "$EXP" != 0 ] || { echo "FAILED: SPEC_METHOD=none is EXP-only"; exit 1; }
+NOSPEC_=0
+case "$NS_$DTP_" in *[!0-9]*) echo "FAILED: SPEC_NS/SPEC_DTP must be integers (got $NS_/$DTP_)"; exit 1;; esac
+if [ "$SPEC_METHOD_" = none ]; then
+  SPEC_JSON_=""; DRAFT_MOUNT=""; SPEC_DESC="no speculative decoding"; NOSPEC_=1
+elif [ "$SPEC_METHOD_" = mtp ]; then
+  SPEC_JSON_='{"method":"qwen3_5_mtp","num_speculative_tokens":'$NS_"${SPX_:+,$SPX_}"'}'; DRAFT_MOUNT=""; SPEC_DESC="MTP head ns$NS_"
+else
+  SPEC_JSON_='{"method":"dflash","model":"/draft","num_speculative_tokens":'$NS_',"draft_tensor_parallel_size":'$DTP_',"attention_backend":"FLASHINFER"'"${SPX_:+,$SPX_}"'}'; DRAFT_MOUNT="-v $DRAFT:/draft:ro"; SPEC_DESC="DFlash2 ns$NS_ draft_tp$DTP_ in CUDA graphs"
+fi
+# R207/0148: the sequential MTP drafter is only admitted on the pcie_ipc all-reduce behind its own switch (without it the drafter falls back
+# to the CUSTOM/PYNCCL path and the "MTP drafter admitted" line below is absent).
+if [ "$PCIE_IPC" = 1 ] && [ "$SPEC_METHOD_" = mtp ]; then PCIE_ENV="$PCIE_ENV -e VLLM_SM12X_PCIE_IPC_MTP=1"; fi
+[ -f "$MODEL/model.safetensors.index.json" ] || [ -f "$MODEL/model.safetensors" ] || { echo "FAILED: checkpoint missing at $MODEL"; exit 1; }
+sudo docker image inspect "$IMG" >/dev/null 2>&1 || { echo "FAILED: image $IMG missing (build: build-v0290rc2.sh + the fi0616 swap layer + patches-v0290/Dockerfile.pcieipc + Dockerfile.bss-not-a-compile-factor)"; exit 1; }
+env PORT=$PORT NAME=$NAME BIND_ADDR=$BIND MODEL_DIR="$MODEL" TP=2 L2MNT="$L2" CPUB=$CPU_B ${T_CAP:+TIER_CAP_GB=$T_CAP} ${T_SCOPE:+TIER_EVICT_SCOPE=$T_SCOPE} ${T_MINFREE:+TIER_MIN_FREE_GB=$T_MINFREE} \
+    IMAGE="$IMG" KVD_OVERRIDE=nvfp4 ALLOW_NO_XQA=1 \
+    NO_TIER=0 FIWS=536870912 MNBT=$MNBT_ SEQS=$SEQS ${FUS_:+FUSIONS="$FUS_"} ${CCX_:+CCEXTRA="$CCX_"} UTIL=0.88 MAXLEN=262144 POOL_MIN=$P_MIN POOL_MAX=$P_MAX \
+    EXTRA_MOUNT="$DRAFT_MOUNT $XMOUNT" \
+    EXTRA_ARGS="--kv-cache-memory-bytes $KV_BYTES $OFFLOAD_ARGS $SSM_ARGS $BSS_ARGS $XARGS" \
+    SPEC_JSON="$SPEC_JSON_" NOSPEC=$NOSPEC_ \
+    EXTRA_ENV="-e NCCL_P2P_LEVEL=SYS -e VLLM_SM12X_NVFP4_XQA=0 -e VLLM_SM12X_DFLASH_GRAPHS=1 $SPLIT_ENV $PCIE_ENV $XENV" \
+    bash /srv/qwen5090/launch-daily-v0280.sh || { echo "0.29 nvfp4 DAILY FAILED — engine NOT up$([ "$EXP" != 0 ] || echo '; rollback: launch-daily-r197-dflash-ns7-0906.sh')"; exit 1; }
+BOOTLOG=$(sudo docker logs "$NAME" 2>&1)
+ARGS=$(sudo docker inspect "$NAME" --format '{{json .Args}} {{json .Config.Env}}')
+fail(){ echo "FAILED: $1"; exit 1; }
+VER=$(sudo docker exec "$NAME" python3 -c 'import vllm; print(vllm.__version__)' 2>/dev/null)
+FIVER=$(sudo docker exec "$NAME" python3 -c 'import flashinfer; print(flashinfer.__version__)' 2>/dev/null)
+case "$VER" in 0.29*) ;; *) fail "engine is vllm '$VER', not 0.29.x (image drift)";; esac
+if [ "$IMG" = "$DAILY_IMG" ]; then case "$FIVER" in 0.6.16*) ;; *) fail "S image should carry FlashInfer 0.6.16.x, got '$FIVER' (image drift)";; esac; fi
+# fail-closed asserts (grep -c, not -q: pipefail + -q SIGPIPE gotcha)
+[ "$(echo "$BOOTLOG" | grep -ac "as specified by kv_cache_memory_bytes")" -ge 1 ] || fail "pinned KV budget not honoured (no kv_cache_memory_bytes line)"
+# 0131 shrinks the graph-bound POOLED PREFILL wrappers, which only the spec-verification decode path creates (q = ns+1 per request); a spec-free
+# boot (SPEC_METHOD=none, R203) decodes through the FlashInfer decode wrapper and never logs the line — the assert is spec-ON only.
+if [ "$SPEC_METHOD_" != none ]; then [ "$(echo "$BOOTLOG" | grep -ac "int workspace shrunk 8 MiB -> 1 MiB")" -ge 1 ] || fail "0131 pooled int workspace not active (image/env drift)"; fi
+if [ "$SPEC_METHOD_" = dflash ]; then
+  [ "$(echo "$BOOTLOG" | grep -ac "Capturing dflash2 CUDA graphs")" -ge 1 ] || fail "drafter graphs not captured (0129 inactive?)"
+  [ "$(echo "$BOOTLOG" | grep -ac "running the draft eagerly")" -eq 0 ] || fail "drafter fell back to eager"
+else
+  [ "$(echo "$BOOTLOG" | grep -ac "Capturing dflash2 CUDA graphs")" -eq 0 ] || fail "SPEC_METHOD=$SPEC_METHOD_ but the DFlash2 drafter captured graphs"
+fi
+[ "$(echo "$BOOTLOG" | grep -ac "decode_backend=xqa")" -eq 0 ] || fail "XQA decode engaged — Bug B dodge not in force"
+[ "$(echo "$BOOTLOG" | grep -ac "$(basename "$MODEL")\|compressed-tensors\|quantization=modelopt")" -ge 1 ] || fail "checkpoint identity"   # R199: ModelOpt candidates (CAND_MODEL) log quantization=modelopt, never their dir name
+[ "$(echo "$ARGS" | grep -ac -- "--max-num-batched-tokens $MNBT_")" -ge 1 ] || fail "MNBT is not $MNBT_ (8192 = 5 blocks on the daily; see header)"
+[ "$(echo "$ARGS" | grep -ac -- "--mamba-ssm-cache-dtype $SSM_DTYPE")" -ge 1 ] || fail "SSM cache dtype is not $SSM_DTYPE on the container"
+# R197: the attention block is sized to the mamba page, which grows with the number of speculative slots (ns9 → 1,584; ns7 → 1,552; MTP ns3 → 1,472),
+# so the exact-value assert holds for the daily's own method+ns only; EXP arms with another ns/method must still show the sizing line, and log its value.
+if [ "$SSM_DTYPE" = bfloat16 ]; then
+  if [ "$EXP" = 0 ] || { [ "$SPEC_METHOD_" = "$DAILY_METHOD" ] && [ "$NS_" = "$DAILY_NS" ]; }; then
+    [ "$(echo "$BOOTLOG" | grep -ac "Setting attention block size to $DAILY_BLOCK tokens")" -ge 1 ] || fail "bf16 SSM state at $DAILY_METHOD ns$DAILY_NS should give a $DAILY_BLOCK-token attention block (R180/R197/R207); block line missing or different"
+    [ "$EXP" != 0 ] || echo "$DAILY_BLOCK" | sudo tee "$L2/.block" >/dev/null
+  else
+    BLK_=$(echo "$BOOTLOG" | grep -aoE 'Setting attention block size to [0-9]+ tokens' | head -1 | tr -dc 0-9)
+    [ -n "$BLK_" ] || fail "attention block sizing line missing"; echo "EXP $SPEC_DESC: attention block $BLK_ tokens (daily $DAILY_METHOD ns$DAILY_NS = $DAILY_BLOCK)"
+  fi
+fi
+if [ "$SPEC_METHOD_" = dflash ]; then
+  [ "$(echo "$ARGS" | grep -acE "num_speculative_tokens.{1,5}$NS_[,}]")" -ge 1 ] && [ "$(echo "$ARGS" | grep -acE "draft_tensor_parallel_size.{1,5}$DTP_[,}]")" -ge 1 ] || fail "speculative config is not ns$NS_ draft_tp$DTP_ on the container"
+elif [ "$SPEC_METHOD_" = mtp ]; then
+  [ "$(echo "$ARGS" | grep -acE "num_speculative_tokens.{1,5}$NS_[,}]")" -ge 1 ] && [ "$(echo "$ARGS" | grep -ac "qwen3_5_mtp")" -ge 1 ] || fail "speculative config is not MTP ns$NS_ on the container"
+else
+  [ "$(echo "$ARGS" | grep -ac "speculative-config")" -eq 0 ] || fail "SPEC_METHOD=none but a --speculative-config is on the container"
+  [ "$(echo "$ARGS" | grep -ac "num_speculative_tokens")" -eq 0 ] || fail "SPEC_METHOD=none but num_speculative_tokens is on the container"
+fi
+[ "$(echo "$ARGS" | grep -ac "VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE=536870912")" -ge 1 ] || fail "FlashInfer workspace is not 512 MiB (Bug B dodge)"
+[ "$(echo "$ARGS" | grep -ac "VLLM_SM12X_NVFP4_XQA=0")" -ge 1 ] || fail "VLLM_SM12X_NVFP4_XQA=0 missing"
+# CPU tier (r172): every disk-tier hit is promoted through the CPU tier, so 16 GiB is what lets 131K–262K prompts be served. The block count
+# depends on the route: dflash stores ~1,010 blocks of 2,944 / ~1,880 of 1,584 / ~1,921 of 1,552, while an eagle/MTP block also carries the
+# speculative state copies and is ~3.2x larger (R207: 595 blocks of 1,472 = 875K tokens, still 4/4 tier-served needles at 131K/220K in R206).
+# Measured on disk: an MTP tier block file is 28,827,648 B for 1,472 tokens (19.6 KB/token) vs dflash 8.9 MB for 1,552 (5.8 KB/token), so the
+# 300 GB disk cap holds ~15M tokens instead of ~52M. Read volume per served token did NOT rise (2,529 MB / 129,536 tok vs 2,968 MB / 130,368).
+[ "$(echo "$ARGS" | grep -acE "cpu_bytes_to_use.{1,5}$CPU_B[,}]")" -ge 1 ] || fail "CPU tier is not $CPU_B bytes on the container"
+CPUBLK=$(echo "$BOOTLOG" | grep -aoE 'primary tier \(lru, [0-9]+ blocks\)' | tail -1 | grep -oE '[0-9]+')
+MIN_CPUBLK=900; [ "$SPEC_METHOD_" != mtp ] || MIN_CPUBLK=550
+[ "$EXP" != 0 ] || [ "${CPUBLK:-0}" -ge "$MIN_CPUBLK" ] || fail "CPU tier has ${CPUBLK:-?} blocks (expected >= $MIN_CPUBLK for $SPEC_METHOD_: ~1,921 of 1,552 on dflash, 595 of 1,472 on MTP)"
+if [ -n "$T_CAP" ]; then [ "$(echo "$ARGS" | grep -acE "max_capacity_gb.{1,5}$T_CAP[,}]")" -ge 1 ] || fail "0137 tier cap $T_CAP GB not on the container"; fi
+if [ "$OFFLOAD" = 1 ]; then  # R167 / NOTES18 §5, fail closed
+  [ "$(echo "$BOOTLOG" | grep -ac 'Offloader set to UVAOffloader')" -ge 1 ] || fail "UVAOffloader not selected (0135 inactive?)"
+  [ "$(echo "$BOOTLOG" | grep -ac 'Total CPU offloaded parameters: 1.18')" -ge 1 ] || fail "target embed shard not offloaded (no 'Total CPU offloaded parameters: 1.18')"
+  [ "$(echo "$BOOTLOG" | grep -ac 'matched no parameters')" -eq 0 ] || fail "offload selector matched no parameters"
+  [ "$(echo "$ARGS" | grep -ac 'VLLM_WEIGHT_OFFLOADING_DISABLE_UVA=1\|VLLM_WEIGHT_OFFLOADING_DISABLE_PIN_MEMORY=1')" -eq 0 ] || fail "UVA/pinning disabled by env"
+else
+  [ "$(echo "$BOOTLOG" | grep -ac 'CPU offloaded parameters')" -eq 0 ] || fail "OFFLOAD=0 but the engine offloaded parameters"
+fi
+if [ "$SPLIT_KV" = 1 ]; then [ "$(echo "$BOOTLOG" | grep -ac "re-enabled FlashInfer split-KV")" -ge 1 ] || fail "SPLIT_KV=1 but 0136 did not engage (image without 0136?)"
+else [ "$(echo "$BOOTLOG" | grep -ac "re-enabled FlashInfer split-KV")" -eq 0 ] || fail "split-KV re-enabled although SPLIT_KV=0"; fi
+if [ "$PCIE_IPC" = 1 ]; then  # R185, fail closed: a silent fallback to CustomAllreduce is the failure mode this guards
+  [ "$(echo "$BOOTLOG" | grep -ac "PCIe IPC all-reduce enabled")" -ge 1 ] || fail "PCIE_IPC=1 but no 'PCIe IPC all-reduce enabled' line (image without 0138, or the kernel fell back to CUSTOM)"
+  [ "$(echo "$BOOTLOG" | grep -acF "Using ['PCIE_IPC', 'CUSTOM', 'PYNCCL'] all-reduce backends")" -ge 1 ] || fail "all-reduce backend order is not PCIE_IPC, CUSTOM, PYNCCL"
+  [ "$(echo "$ARGS" | grep -ac "VLLM_SM12X_PCIE_IPC_AR=1")" -ge 1 ] || fail "VLLM_SM12X_PCIE_IPC_AR=1 missing on the container"
+  if [ "$SPEC_METHOD_" = mtp ]; then  # R207/0148, fail closed: without the switch the MTP drafter silently leaves the pcie_ipc path
+    [ "$(echo "$BOOTLOG" | grep -ac "SM12X PCIe IPC: MTP drafter admitted")" -ge 1 ] || fail "MTP on pcie_ipc: no 'MTP drafter admitted' line (image without 0148, or capture rows > 320 — cap max_cudagraph_capture_size at 320 above SEQS 40)"
+    [ "$(echo "$ARGS" | grep -ac "VLLM_SM12X_PCIE_IPC_MTP=1")" -ge 1 ] || fail "VLLM_SM12X_PCIE_IPC_MTP=1 missing on the container"
+  fi
+else [ "$(echo "$BOOTLOG" | grep -ac "PCIe IPC all-reduce enabled")" -eq 0 ] || fail "pcie_ipc all-reduce engaged although PCIE_IPC=0"; fi
+if [ "$BSS" = 1 ]; then  # R195, fail closed (-ge 1: rank 1 does not always log INFO, R190e)
+  [ "$(echo "$BOOTLOG" | grep -ac "Batch-sharded sampling enabled")" -ge 1 ] || fail "BSS=1 but no 'Batch-sharded sampling enabled' line"
+  [ "$(echo "$ARGS" | grep -ac -- "--enable-batch-sharded-sampling")" -ge 1 ] || fail "--enable-batch-sharded-sampling missing on the container"
+else [ "$(echo "$BOOTLOG" | grep -ac "Batch-sharded sampling enabled")" -eq 0 ] || fail "sharded sampling engaged although BSS=0"; fi
+if [ "$IMG" = "$DAILY_IMG" ]; then for M_ in 0147 0148 0158; do sudo docker exec "$NAME" test -f /opt/prs-markers/$M_ || fail "daily image lacks the $M_ marker (image drift: 0147 = sharded sampling not a compile factor, 0148 = MTP on pcie_ipc, 0158 = eagle-drop replay boundary)"; done; fi
+# R207/0158, fail closed on the daily route: without the replay boundary an eagle/MTP boot drops the block that a re-sent prefix needs and
+# every revisit re-prefills (R205: prefix-cache hits 0). The line names the retention interval and the scheduler block size.
+if [ "$SPEC_METHOD_" = mtp ] && [ "$IMG" = "$DAILY_IMG" ]; then
+  [ "$(echo "$BOOTLOG" | grep -ac "SM12X eagle-drop replay boundary retained")" -ge 1 ] || fail "0158 replay boundary not active (MTP prefix hits would be 0)"
+fi
+FREE=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | sort -n | head -1)
+[ "$FREE" -ge "$MIN_FREE_MIB" ] || fail "only $FREE MiB free after pre-warm (< $MIN_FREE_MIB) — Bug C headroom missing; lower KV_BYTES"
+POOL=$(echo "$BOOTLOG" | grep -a 'GPU KV cache size' | tail -1 | grep -oE 'cache size: [0-9,]+' | tr -dc 0-9)
+LABEL="0.29 nvfp4 DAILY UP"; [ "$EXP" = 0 ] || LABEL="0.29 nvfp4 EXP UP"
+echo "$LABEL on ${BIND}:${PORT} (vllm $VER, FlashInfer $FIVER, NVIDIA NVFP4 weights + NVFP4 KV pinned $KV_BYTES B/GPU + $SPEC_DESC + SSM $SSM_DTYPE + 0131/0134 + embed offload=$OFFLOAD + split_kv=$SPLIT_KV + pcie_ipc=$PCIE_IPC + bss=$BSS + native disk tier${T_CAP:+ cap ${T_CAP} GB} + CPU tier $CPU_B B, dual 5090, image $IMG, SEQS $SEQS). Pool $POOL, min free VRAM $FREE MiB.$([ "$EXP" != 0 ] || echo ' Rollback: launch-daily-redhat-mtp-0909.sh')"

@@ -12,6 +12,7 @@ Hardware since 2026-08-31: two RTX 5090 32 GB (`sm_120`), Ryzen 7 9800X3D, 64 GB
 
 ## Index
 
+- [R231 and R234: the NVIDIA checkpoint promoted to the served configuration, then the KV pin raised to a 1,391,795-token pool — promoted against the dense fidelity ruler, and the pin limited by boot-flake rate rather than memory (2026-09-09 10:11 to 13:38 UTC, results `2026-09-09-r231b-promote-nvidia`, `2026-09-09-r232-nvidia-pool-ladder`, `2026-09-09-r233-nvidia-pin-clean`, `2026-09-09-r234-promote-pin`)](results/r231-promote-nvidia.md)
 - [R211: the prefill chunk ladder — `--max-num-batched-tokens` is not the chunk size, a smaller chunk halves the stall but doubles the stall rate, and nothing in fourteen arms beats the served setting on completion (2026-09-08 10:34 to 11:52 UTC, results `2026-09-08-r211-mnbt-ladder` and `2026-09-08-r211b-mnbt-knee`, scripts/r211-mnbt-ladder.sh, scripts/r211b-mnbt-knee.sh)](results/r211-chunk-ladder.md)
 - [R210: the served configuration on one card instead of two — the KV pool falls to 21.5% (2026-09-07 23:14 to 23:53 UTC, results `2026-09-08-r210e-tp1-pool`, scripts/r210e-tp1-pool.sh)](results/r210-one-card-pool.md)
 - [Mixed prefill+decode at concurrency 8 (2026-09-07/08, results `2026-09-07-r209-mixed-load/`, `-r209b-mixed-deep/`, `-r209c-mixed-8k/`, `2026-09-08-r209d-overlap/`)](results/r209-mixed-load.md)
