@@ -44,6 +44,11 @@ EXTRA_MOUNT=${EXTRA_MOUNT:-}
 FIWS=${FIWS:-134217728}
 PREFIX_CACHE=${PREFIX_CACHE:-1}   # 0 = --no-enable-prefix-caching (ReplaySSM A/B only)
 MMLIMIT=${MMLIMIT:-'{"image":16,"video":0}'}  # R161 (promoted 2026-09-03): --limit-mm-per-prompt JSON; count is free at profile time (profiler encodes encoder_budget//max_item_tokens items)
+
+# --enable-prompt-tokens-details: reporting only, no engine effect. vLLM leaves
+#   usage.prompt_tokens_details = null unless this flag is set, so OpenAI-compatible clients that read
+#   prompt_tokens_details.cached_tokens display a 0 % prefix-cache hit rate. The cache itself is on
+#   regardless (--enable-prefix-caching); only the usage field was missing.
 MMKW=${MMKW:-}               # R161: --mm-processor-kwargs JSON, e.g. '{"max_pixels":1048576}' caps tokens per image (default cap 16.7 Mpx = 16,384 tok)
 MMKW_LINE=""; [ -n "$MMKW" ] && MMKW_LINE="--mm-processor-kwargs '$MMKW'"
 MAMBA_MODE=${MAMBA_MODE:-align}   # ReplaySSM requires 'none' (loses hybrid prefix caching — R128)
@@ -193,6 +198,7 @@ sudo docker run -d --name "$NAME" --restart unless-stopped --oom-score-adj -800 
     $CC_LINE \
     --default-chat-template-kwargs '{\"preserve_thinking\":true,\"reasoning_effort\":\"medium\"}' \
     --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_xml \
+    --enable-prompt-tokens-details \
     --override-generation-config '{\"temperature\":0.6,\"top_p\":0.95,\"top_k\":20}' $EXTRA_ARGS"
 
 echo "launching $NAME (v0.28 nvfp4+XQA+MTP+native-offload) on ${BIND_ADDR}:$PORT ..."
