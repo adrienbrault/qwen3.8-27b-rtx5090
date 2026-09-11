@@ -43,7 +43,14 @@ PIP_ARM=${PIP_ARM:-0}
 EXTRA_MOUNT=${EXTRA_MOUNT:-}
 FIWS=${FIWS:-134217728}
 PREFIX_CACHE=${PREFIX_CACHE:-1}   # 0 = --no-enable-prefix-caching (ReplaySSM A/B only)
-MMLIMIT=${MMLIMIT:-'{"image":16,"video":0}'}  # R161 (promoted 2026-09-03): --limit-mm-per-prompt JSON; count is free at profile time (profiler encodes encoder_budget//max_item_tokens items)
+MMLIMIT=${MMLIMIT:-'{"image":32,"video":0}'}  # R161 (promoted 2026-09-03): --limit-mm-per-prompt JSON; count is free at profile time (profiler encodes encoder_budget//max_item_tokens items)
+# Raised 16 -> 32 on 2026-09-11. Per-REQUEST cap on image items, checked in
+#   multimodal/processing/context.py:validate_num_items at input processing, before the request reaches
+#   the scheduler — prefix caching acts on KV blocks of an already-validated prompt and cannot relieve
+#   it. An agent loop resends the whole transcript each step, so every screenshot-reading tool result
+#   rides along as another image item and the 17th one 400s mid-turn. Context is the cap that actually
+#   binds: measured on the daily 2026-09-11, 1512x982 = 1,470 prompt tokens, 2560x1600 = 4,013, so 32
+#   retina screenshots ~= 128K of the 262K window. Past this, set MMKW max_pixels first.
 
 # --enable-prompt-tokens-details: reporting only, no engine effect. vLLM leaves
 #   usage.prompt_tokens_details = null unless this flag is set, so OpenAI-compatible clients that read
