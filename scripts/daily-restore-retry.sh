@@ -7,7 +7,12 @@ export PATH="$HOME/.local/bin:$PATH"
 # FORCE_RESTORE=1 restores regardless. Dead-PID markers are ignored and removed.
 if [ "${FORCE_RESTORE:-0}" != 1 ]; then
   for m in /srv/qwen5090/gpu-queue/*; do [ -e "$m" ] || continue; pid=$(cat "$m" 2>/dev/null); [ "$pid" = "${GPU_QUEUE_SELF:-}" ] && continue
-    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then echo "DAILY RESTORE SKIPPED: $(basename "$m") (pid $pid) is queued for the GPUs next"; exit 0; else rm -f "$m"; fi
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then echo "DAILY RESTORE SKIPPED: $(basename "$m") (pid $pid) is queued for the GPUs next"
+      # 2026-09-16: the shm sweep used to live only in the daily launcher, so skipping the restore skipped the sweep too
+      # and orphans accumulated across a chain. That is how a 16 GB vllm_offload mmap came to be squatting on the box
+      # when R329's --ngram_ram arm tried to load a 32.6 GB n-gram table into a 60 GB machine: earlyoom SIGKILLed it at
+      # 23:16 with no traceback and no dmesg line, and it looked like an engine bug. Sweep on the skip path as well.
+      bash /srv/qwen5090/shm-sweep.sh quiet; exit 0; else rm -f "$m"; fi
   done
 fi
 for att in 1 2; do
