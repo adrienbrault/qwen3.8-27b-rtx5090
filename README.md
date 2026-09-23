@@ -10,7 +10,7 @@ The served configuration since 2026-09-09 ([R231/R234](bench/results/r231-promot
 
 The figures below are drawn by [bench/plot.py](bench/plot.py) from raw records in this repository. This one is a single boot of the served launcher ([R675](bench/results/r675-27b-curves.md)): decode is [scripts/decode_ss.py](scripts/decode_ss.py), greedy, 1,024 forced tokens per stream, three runs per shape, the rate taken over the samples where every stream was decoding.
 
-![Decode rate against concurrency, aggregate and per stream](docs/img/decode-scaling.svg)
+![Decode rate against concurrency on the served 16-sequence boot, aggregate and per stream](docs/img/decode-scaling-16.svg)
 
 Aggregate throughput keeps rising to the served limit of 16 sequences: 2,443 t/s of code, 153 per stream. The MTP head accepts 0.61–0.68 drafts per verify on code and 0.46–0.49 on prose at every concurrency.
 

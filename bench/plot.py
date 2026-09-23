@@ -114,8 +114,9 @@ def decode_figure(rates, name, caption, label):
 
 def figure_decode_scaling():
     rates = {k: decode_ss(R675 / f"decode-{k}.jsonl") for k in ("code", "prose")}
-    decode_figure(rates, "decode-scaling.svg",
-                  "Decode rate against concurrency, aggregate and per stream", "decode scaling (R675)")
+    decode_figure(rates, "decode-scaling-16.svg",
+                  "Decode rate against concurrency on the served 16-sequence boot, aggregate and per stream",
+                  "decode scaling (R675)")
 
 
 def figure_decode_scaling_64():
