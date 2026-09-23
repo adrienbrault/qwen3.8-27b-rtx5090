@@ -8,11 +8,19 @@ Every number in this repo was measured on one machine on the date given, and the
 
 The served configuration since 2026-09-09 ([R231/R234](bench/results/r231-promote-nvidia.md)): two RTX 5090, [nvidia/Qwen3.8-27B-NVFP4](https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4) weights, [vLLM](https://github.com/vllm-project/vllm) 0.29 with an NVFP4 KV cache pinned at 14.86 GB per card, the checkpoint's own MTP head at 3 draft tokens, FlashInfer's `pcie_ipc` all-reduce as the two-card decode all-reduce (patch 0138) and vLLM's batch-sharded sampling (patch 0147), launcher [scripts/serve-r231-nvidia-daily.sh](scripts/serve-r231-nvidia-daily.sh). Each row links its write-up in [bench/RESULTS.md](bench/RESULTS.md), which names the raw results directory on the serving host and the driver script.
 
-The figures below are drawn by [bench/plot.py](bench/plot.py) from raw records in this repository. The solid series is one boot of the served launcher ([R675](bench/results/r675-27b-curves.md)): decode is [scripts/decode_ss.py](scripts/decode_ss.py), greedy, 1,024 forced tokens per stream, three runs per shape, the rate taken over the samples where every stream was decoding; prefill is [scripts/kv_capacity_probe.py](scripts/kv_capacity_probe.py), three salted cold prompts per length, counted by the server. The dashed 32- and 64-stream points are a boot with the served sequence limit raised ([R206c](bench/results/r206c-mtp-c32-c64.md), 2026-09-06, RedHatAI checkpoint, 13.98 GB pin) — a different configuration, drawn dashed.
+The figures below are drawn by [bench/plot.py](bench/plot.py) from raw records in this repository. This one is a single boot of the served launcher ([R675](bench/results/r675-27b-curves.md)): decode is [scripts/decode_ss.py](scripts/decode_ss.py), greedy, 1,024 forced tokens per stream, three runs per shape, the rate taken over the samples where every stream was decoding.
 
 ![Decode rate against concurrency, aggregate and per stream](docs/img/decode-scaling.svg)
 
-Aggregate throughput keeps rising to the served limit of 16 sequences: 2,443 t/s of code, 153 per stream. The MTP head accepts 0.61–0.68 drafts per verify on code and 0.46–0.49 on prose at every concurrency. On the raised-limit boot the aggregate reaches 4,497 t/s of code at 64 streams, 70 per stream, with about 2.9K tokens of context left per request — longer requests queue.
+Aggregate throughput keeps rising to the served limit of 16 sequences: 2,443 t/s of code, 153 per stream. The MTP head accepts 0.61–0.68 drafts per verify on code and 0.46–0.49 on prose at every concurrency.
+
+The same probe on a boot with the served sequence limit raised to 64 ([R206c](bench/results/r206c-mtp-c32-c64.md), 2026-09-06, RedHatAI checkpoint, 13.98 GB pin — a different configuration, so its own figure):
+
+![Decode rate against concurrency on the seq-64 boot, aggregate and per stream](docs/img/decode-scaling-64.svg)
+
+The aggregate reaches 4,497 t/s of code at 64 streams, 70 per stream, with about 2.9K tokens of context left per request — longer requests queue.
+
+From the same R675 boot, cold prefill ([scripts/kv_capacity_probe.py](scripts/kv_capacity_probe.py), three salted prompts per length, counted by the server) and one-stream decode on top of filler context:
 
 ![Cold prefill rate and decode rate at depth against prompt length](docs/img/prefill.svg)
 
@@ -34,7 +42,7 @@ Cold prefill starts at 8,365 t/s and falls to 3,958 at 200K prompt tokens, becau
 
 Conditions behind the table:
 
-- The served sequence limit is 16. The dashed 32- and 64-stream points come from a port-8029 boot with the limit raised, on the checkpoint served before 2026-09-09. Above 40 sequences that boot needs `max_cudagraph_capture_size` capped at 320, and at 64 sequences each request has about 2.9K tokens of context, so long prompts queue ([R206c](bench/results/r206c-mtp-c32-c64.md)).
+- The served sequence limit is 16. The second decode figure comes from a port-8029 boot with the limit raised, on the checkpoint served before 2026-09-09. Above 40 sequences that boot needs `max_cudagraph_capture_size` capped at 320, and at 64 sequences each request has about 2.9K tokens of context, so long prompts queue ([R206c](bench/results/r206c-mtp-c32-c64.md)).
 - The pool size follows the pin, not the weights. Memory did not limit higher pins; the warmup failure rate did, and it rises with the pin: 15.90 GB booted 2 of 3 times and 16.90 GB 1 of 3, both with more than 1,371 MiB free under load ([R234](bench/results/r231-promote-nvidia.md)).
 - The MTP head accepts 0.65–0.68 drafts on code against 0.38–0.42 for the DFlash2 drafter it replaced. At its promotion the single-stream rows fell and the concurrent rows rose ([R207](bench/results/r207-promote-mtp.md)).
 - The agentic-fidelity row was measured on the RedHat checkpoint. The served NVIDIA checkpoint has been measured on the dense ruler only: 2.12 points of top-1 below RedHat and +1.0 % perplexity, about seven times the 0.10–0.15 % two-boot noise floor ([R231](bench/results/r231-promote-nvidia.md), [docs/FIDELITY.md](docs/FIDELITY.md)).
