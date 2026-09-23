@@ -28,6 +28,16 @@ The served configuration since 2026-09-09 ([R231/R234](bench/results/r231-promot
 | fidelity vs the [bf16 model](https://huggingface.co/Qwen/Qwen3.8-27B), dense text, 555,549 positions | top-1 90.67 %, perplexity +1.83 %, truncated KL 0.0226 | 2026-09-09, [R231](bench/results/r231-promote-nvidia.md) |
 | fidelity vs the bf16 model, agentic turns, 57,972 positions | top-1 95.63 %, perplexity +2.67 % | 2026-09-06, [R206](bench/results/r206-mtp-vs-dflash-paired.md), RedHat checkpoint |
 
+Both figures come from one boot of the served launcher ([R675](bench/results/r675-27b-curves.md)): decode is [scripts/decode_ss.py](scripts/decode_ss.py), greedy, 1,024 forced tokens, three runs per shape, the rate taken over the samples where every stream was decoding; prefill is [scripts/kv_capacity_probe.py](scripts/kv_capacity_probe.py), three salted cold prompts per length, counted by the server.
+
+![Decode rate against concurrency, aggregate and per stream](docs/img/decode-scaling.svg)
+
+Aggregate throughput keeps rising to the served limit of 16 sequences: 2,443 t/s of code, 153 per stream. The MTP head accepts 0.61–0.68 drafts per verify on code and 0.46–0.49 on prose at every concurrency.
+
+![Cold prefill rate and decode rate at depth against prompt length](docs/img/prefill.svg)
+
+Cold prefill starts at 8,365 t/s and falls to 3,958 at 200K prompt tokens, because every full-attention layer reads the whole prefix for each chunk. Decode on an already-prefilled context holds its rate to 60K and reads 13 % lower at 200K.
+
 Conditions behind the table:
 
 - The served sequence limit is 16. The 32- and 64-stream rows come from a port-8029 boot with the limit raised. Above 40 sequences that boot needs `max_cudagraph_capture_size` capped at 320, and at 64 sequences each request has about 2.9K tokens of context, so long prompts queue ([R206c](bench/results/r206c-mtp-c32-c64.md)).
