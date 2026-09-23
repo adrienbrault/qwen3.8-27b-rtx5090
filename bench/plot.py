@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parent.parent
 RESULTS = ROOT / "bench" / "results"
 OUT = ROOT / "docs" / "img"
 R675 = RESULTS / "2026-09-23-r675-27b-curves"
+R206C = RESULTS / "2026-09-06-r206c-mtp-c32c64-v2"
 
 CODE, PROSE, PREFILL = "#0969da", "#cf222e", "#8250df"
 plt.rcParams.update({
@@ -70,11 +71,27 @@ def decode_ss(path):
     return out
 
 
+def decode_ss_dir(path, pattern):
+    """One decode_ss summary per file (a concurrency sweep writes one line per c; a single-shape
+    run writes one line). Returns {c: (agg_median, per_stream_median)}."""
+    out = {}
+    for p in sorted(path.glob(pattern)):
+        out.update(decode_ss(p))
+    return out
+
+
 def figure_decode_scaling():
     rates = {k: decode_ss(R675 / f"decode-{k}.jsonl") for k in ("code", "prose")}
     conc = sorted(set(rates["code"]) & set(rates["prose"]))
     agg = {k: [rates[k][c][0] for c in conc] for k in rates}
     per = {k: [rates[k][c][1] for c in conc] for k in rates}
+
+    # R206c ran the same probe on a seq-64 boot (2026-09-06, RedHatAI checkpoint, 13.98 GB pin) — a
+    # different served configuration, so it is drawn as a dashed series, not a continuation.
+    rates64 = {k: decode_ss_dir(R206C, f"decode-M3-{k}-c*.jsonl") for k in ("code", "prose")}
+    conc64 = {k: sorted(rates64[k]) for k in rates64}
+    agg64 = {k: [rates64[k][c][0] for c in conc64[k]] for k in rates64}
+    per64 = {k: [rates64[k][c][1] for c in conc64[k]] for k in rates64}
 
     # Two panels, not twin axes: the aggregate and per-stream lines cross between 8 and 12 streams and their labels
     # would print on top of one another.
@@ -82,24 +99,34 @@ def figure_decode_scaling():
     for kind, color, dy in (("code", CODE, 7), ("prose", PROSE, -14)):
         ax.plot(conc, agg[kind], marker="o", color=color, linewidth=2, label=kind)
         ax2.plot(conc, per[kind], marker="s", markersize=4, color=color, linewidth=1.8, label=kind)
+        ax.plot(conc64[kind], agg64[kind], marker="o", mfc="white", color=color, linewidth=1.4,
+                linestyle="dashed", label=f"{kind}, seq-64 boot 09-06")
+        ax2.plot(conc64[kind], per64[kind], marker="s", markersize=4, mfc="white", color=color,
+                 linewidth=1.2, linestyle="dashed", label=f"{kind}, seq-64 boot 09-06")
         annotate(ax, conc, agg[kind], color, dy=dy)
         annotate(ax2, conc, per[kind], color, dy=dy)
+        for a, xs, ys, d in ((ax, conc64[kind], agg64[kind], -14 if kind == "prose" else 7),
+                             (ax2, conc64[kind], per64[kind], 7 if kind == "prose" else -14)):
+            a.annotate(f"{ys[-1]:.0f}", (xs[-1], ys[-1]), textcoords="offset points",
+                       xytext=(0, d), ha="center", fontsize=8.5, color=color)
     ax.set_title("Decode rate, all streams")
     ax.set_ylabel("tokens per second, sum of streams")
-    ax.set_ylim(0, max(max(v) for v in agg.values()) * 1.2)
+    ax.set_ylim(0, max(max(max(v) for v in agg.values()), max(max(v) for v in agg64.values())) * 1.2)
     ax2.set_title("Decode rate, one stream")
     ax2.set_ylabel("tokens per second, per stream")
     ax2.set_ylim(0, max(max(v) for v in per.values()) * 1.3)
     for a in (ax, ax2):
         a.set_xlabel("concurrent streams")
-        a.set_xticks(conc)
+        a.set_xticks(conc + [32, 64])
         a.grid(axis="y", color="#eaeef2")
         a.set_axisbelow(True)
     ax.legend(frameon=False, fontsize=9, loc="upper left")
-    ax2.legend(frameon=False, fontsize=9, loc="lower left")
-    print(f"decode scaling (R675) at {conc}")
+    ax2.legend(frameon=False, fontsize=8, loc="lower left")
+    print(f"decode scaling (R675) at {conc}; raised-limit (R206c) at {conc64}")
     print("  aggregate:", {k: [round(v) for v in v2] for k, v2 in agg.items()})
     print("  per stream:", {k: [round(v) for v in v2] for k, v2 in per.items()})
+    print("  aggregate seq-64 boot:", {k: [round(v) for v in v2] for k, v2 in agg64.items()})
+    print("  per stream seq-64 boot:", {k: [round(v) for v in v2] for k, v2 in per64.items()})
     save(fig, "decode-scaling.svg", "Decode rate against concurrency, aggregate and per stream")
 
 

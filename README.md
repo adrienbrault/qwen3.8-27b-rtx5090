@@ -8,19 +8,23 @@ Every number in this repo was measured on one machine on the date given, and the
 
 The served configuration since 2026-09-09 ([R231/R234](bench/results/r231-promote-nvidia.md)): two RTX 5090, [nvidia/Qwen3.8-27B-NVFP4](https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4) weights, [vLLM](https://github.com/vllm-project/vllm) 0.29 with an NVFP4 KV cache pinned at 14.86 GB per card, the checkpoint's own MTP head at 3 draft tokens, FlashInfer's `pcie_ipc` all-reduce as the two-card decode all-reduce (patch 0138) and vLLM's batch-sharded sampling (patch 0147), launcher [scripts/serve-r231-nvidia-daily.sh](scripts/serve-r231-nvidia-daily.sh). Each row links its write-up in [bench/RESULTS.md](bench/RESULTS.md), which names the raw results directory on the serving host and the driver script.
 
+The figures below are drawn by [bench/plot.py](bench/plot.py) from raw records in this repository. The solid series is one boot of the served launcher ([R675](bench/results/r675-27b-curves.md)): decode is [scripts/decode_ss.py](scripts/decode_ss.py), greedy, 1,024 forced tokens per stream, three runs per shape, the rate taken over the samples where every stream was decoding; prefill is [scripts/kv_capacity_probe.py](scripts/kv_capacity_probe.py), three salted cold prompts per length, counted by the server. The dashed 32- and 64-stream points are a boot with the served sequence limit raised ([R206c](bench/results/r206c-mtp-c32-c64.md), 2026-09-06, RedHatAI checkpoint, 13.98 GB pin) — a different configuration, drawn dashed.
+
+![Decode rate against concurrency, aggregate and per stream](docs/img/decode-scaling.svg)
+
+Aggregate throughput keeps rising to the served limit of 16 sequences: 2,443 t/s of code, 153 per stream. The MTP head accepts 0.61–0.68 drafts per verify on code and 0.46–0.49 on prose at every concurrency. On the raised-limit boot the aggregate reaches 4,497 t/s of code at 64 streams, 70 per stream, with about 2.9K tokens of context left per request — longer requests queue.
+
+![Cold prefill rate and decode rate at depth against prompt length](docs/img/prefill.svg)
+
+Cold prefill starts at 8,365 t/s and falls to 3,958 at 200K prompt tokens, because every full-attention layer reads the whole prefix for each chunk. Decode on an already-prefilled context holds its rate to 60K and reads 13 % lower at 200K.
+
 | | value | source |
 |---|---|---|
 | context length | 262,144 tokens | checkpoint |
 | KV pool on the GPUs | 1,391,795 tokens, pinned at 14.86 GB per card, 16 sequences | 2026-09-09, [R234](bench/results/r231-promote-nvidia.md) |
 | KV tiers behind the pool | 16 GiB host RAM, then 300 GB of disk with LRU eviction, kept across restarts | 2026-09-05, [R189](bench/results/r189-promote-pcie-ipc.md) |
-| decode, 1 stream | code 216, prose 164 t/s; prose at 30K context 158 t/s | 2026-09-09, [R234](bench/results/r231-promote-nvidia.md) |
-| decode, 8 streams | code 1,476, prose 1,267 t/s aggregate; 185 / 158 t/s per stream | 2026-09-09, [R234](bench/results/r231-promote-nvidia.md) |
-| decode, 16 streams | code 2,596, prose 2,183 t/s aggregate; 162 / 136 t/s per stream | 2026-09-09, [R234](bench/results/r231-promote-nvidia.md) |
-| decode, 32 streams | code 3,809, prose 3,022 t/s aggregate; 119 / 94 t/s per stream | 2026-09-06, [R206c](bench/results/r206c-mtp-c32-c64.md) |
-| decode, 64 streams | code 4,497, prose 3,608 t/s aggregate; 70 / 56 t/s per stream | 2026-09-06, [R206c](bench/results/r206c-mtp-c32-c64.md) |
 | concurrent requests the pool admits | 74 by the state-copy pricing, 64 measured with no preemptions; 17,584 tokens-equivalent per running request | 2026-09-06, [R206c](bench/results/r206c-mtp-c32-c64.md); 2026-09-05, [R200](bench/results/r200-c32-c64-pool-cost.md) |
-| cold prefill, 1 request | 8.8K / 8.3K / 7.9K / 5.8K / 4.2K t/s at 2K / 6.7K / 30K / 100K / 200K prompt tokens | 2026-09-04, [R183](bench/results/r183-decode-profile-levers.md) |
-| TTFT, cold prompt | 0.8 / 3.8 / 17.1 / 47.7 s at 6.7K / 30K / 100K / 200K prompt tokens | 2026-09-04, [R183](bench/results/r183-decode-profile-levers.md) |
+| TTFT, cold prompt | 0.8 / 3.0 / 17.5 / 50.6 s at 6.7K / 25K / 100K / 200K prompt tokens | 2026-09-23, [R675](bench/results/r675-27b-curves.md) |
 | aggregate prefill under concurrency | 9.0K t/s at 16, 32 and 64 streams, 2K and 8K prompts | 2026-09-05, [R200](bench/results/r200-c32-c64-pool-cost.md) |
 | [SWE-Bench Verified](https://huggingface.co/datasets/princeton-nlp/SWE-bench_Verified), [mini-SWE-agent](https://github.com/SWE-agent/mini-swe-agent) 2.4.6, one attempt | 387/500 = 77.4 % | 2026-09-09, [R231](bench/results/r231-promote-nvidia.md), results `2026-09-09-r227-miniswe-nvidia` |
 | [tool-eval](https://github.com/SeraphimSerapis/tool-eval-bench), 69 × 4 | 88.5 ± 0.6 and 90.5 ± 3.7, two runs | 2026-09-09, [R231/R234](bench/results/r231-promote-nvidia.md) |
@@ -28,19 +32,9 @@ The served configuration since 2026-09-09 ([R231/R234](bench/results/r231-promot
 | fidelity vs the [bf16 model](https://huggingface.co/Qwen/Qwen3.8-27B), dense text, 555,549 positions | top-1 90.67 %, perplexity +1.83 %, truncated KL 0.0226 | 2026-09-09, [R231](bench/results/r231-promote-nvidia.md) |
 | fidelity vs the bf16 model, agentic turns, 57,972 positions | top-1 95.63 %, perplexity +2.67 % | 2026-09-06, [R206](bench/results/r206-mtp-vs-dflash-paired.md), RedHat checkpoint |
 
-Both figures come from one boot of the served launcher ([R675](bench/results/r675-27b-curves.md)): decode is [scripts/decode_ss.py](scripts/decode_ss.py), greedy, 1,024 forced tokens, three runs per shape, the rate taken over the samples where every stream was decoding; prefill is [scripts/kv_capacity_probe.py](scripts/kv_capacity_probe.py), three salted cold prompts per length, counted by the server.
-
-![Decode rate against concurrency, aggregate and per stream](docs/img/decode-scaling.svg)
-
-Aggregate throughput keeps rising to the served limit of 16 sequences: 2,443 t/s of code, 153 per stream. The MTP head accepts 0.61–0.68 drafts per verify on code and 0.46–0.49 on prose at every concurrency.
-
-![Cold prefill rate and decode rate at depth against prompt length](docs/img/prefill.svg)
-
-Cold prefill starts at 8,365 t/s and falls to 3,958 at 200K prompt tokens, because every full-attention layer reads the whole prefix for each chunk. Decode on an already-prefilled context holds its rate to 60K and reads 13 % lower at 200K.
-
 Conditions behind the table:
 
-- The served sequence limit is 16. The 32- and 64-stream rows come from a port-8029 boot with the limit raised. Above 40 sequences that boot needs `max_cudagraph_capture_size` capped at 320, and at 64 sequences each request has about 2.9K tokens of context, so long prompts queue ([R206c](bench/results/r206c-mtp-c32-c64.md)).
+- The served sequence limit is 16. The dashed 32- and 64-stream points come from a port-8029 boot with the limit raised, on the checkpoint served before 2026-09-09. Above 40 sequences that boot needs `max_cudagraph_capture_size` capped at 320, and at 64 sequences each request has about 2.9K tokens of context, so long prompts queue ([R206c](bench/results/r206c-mtp-c32-c64.md)).
 - The pool size follows the pin, not the weights. Memory did not limit higher pins; the warmup failure rate did, and it rises with the pin: 15.90 GB booted 2 of 3 times and 16.90 GB 1 of 3, both with more than 1,371 MiB free under load ([R234](bench/results/r231-promote-nvidia.md)).
 - The MTP head accepts 0.65–0.68 drafts on code against 0.38–0.42 for the DFlash2 drafter it replaced. At its promotion the single-stream rows fell and the concurrent rows rose ([R207](bench/results/r207-promote-mtp.md)).
 - The agentic-fidelity row was measured on the RedHat checkpoint. The served NVIDIA checkpoint has been measured on the dense ruler only: 2.12 points of top-1 below RedHat and +1.0 % perplexity, about seven times the 0.10–0.15 % two-boot noise floor ([R231](bench/results/r231-promote-nvidia.md), [docs/FIDELITY.md](docs/FIDELITY.md)).
