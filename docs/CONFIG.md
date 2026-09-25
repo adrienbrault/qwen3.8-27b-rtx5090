@@ -2,6 +2,8 @@
 
 Every flag of the two-card configuration, why it is set, and what happens without it. The served launcher is [`scripts/serve-r168-daily.sh`](../scripts/serve-r168-daily.sh) (first section below); the v0.28 launchers it wraps are [`scripts/serve-r156-daily.sh`](../scripts/serve-r156-daily.sh) (sets the two-card values and calls the generic launcher) and [`scripts/serve-v0280-daily.sh`](../scripts/serve-v0280-daily.sh) (the generic launcher, whose defaults are the one-card configuration). Inline comments in the scripts are the reference when the two disagree. Earlier generations are in [HISTORY.md](HISTORY.md) and [archive/](archive/).
 
+To run the served configuration on another host, [`scripts/serve.sh`](../scripts/serve.sh) passes the `docker run` arguments of [`scripts/serve-r231-nvidia-daily.sh`](../scripts/serve-r231-nvidia-daily.sh) with the model and cache paths, bind address, GPUs, disk tier and power cap as settings ([`serve.env.example`](../serve.env.example)); the disk tier and the power cap are off unless set.
+
 ## Since 2026-09-04: the vLLM 0.29 nvfp4-KV route ([scripts/serve-r168-daily.sh](../scripts/serve-r168-daily.sh))
 
 The sections below describe the v0.28 fp8 shape, which is unchanged and remains the rollback (`serve-r156-daily.sh`). The served launcher wraps the same `serve-v0280-daily.sh` body with these deltas, each asserted at boot:
