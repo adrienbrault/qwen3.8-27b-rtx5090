@@ -60,7 +60,10 @@ LAUNCHER=scripts/serve-r231-nvidia-daily.sh
 VLLM_BASE=${VLLM_BASE:-vllm/vllm-openai@sha256:383e409fc7695d6e40cd40d452f3ec277a3d1c462d7b1510034768d26f2cd397}
 VLLM_WHEEL_URL=${VLLM_WHEEL_URL:-https://wheels.vllm.ai/586f1d6d2da011744e1bae26c8686dc206bf648c/vllm-0.29.0rc2-cp38-abi3-manylinux_2_28_x86_64.whl}
 FI_VER=0.6.16.post3
-T=vllm-qwen38:v0290rc2-nvfp4kv
+# IMAGE_REPO builds the same chain under another repository name (e.g. a verification build beside an existing one);
+# the launcher still expects vllm-qwen38, so the final-tag check compares with the repository swapped.
+IMAGE_REPO=${IMAGE_REPO:-vllm-qwen38}
+T=$IMAGE_REPO:v0290rc2-nvfp4kv
 export DOCKER_BUILDKIT=1
 
 log(){ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
@@ -68,6 +71,7 @@ die(){ log "FAILED: $*"; exit 1; }
 
 EXPECT=$(sed -nE 's/^DAILY_IMG=([^ ]+).*/\1/p' "$LAUNCHER" | head -1)
 [ -n "$EXPECT" ] || die "no DAILY_IMG= line in $LAUNCHER"
+EXPECT=$IMAGE_REPO:${EXPECT#*:}
 
 # Every file a Dockerfile COPYs must exist in the context (checked in DRY_RUN too; no docker needed).
 check_copy_sources(){ local df=$1 line src missing=0
