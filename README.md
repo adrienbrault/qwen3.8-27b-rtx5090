@@ -64,7 +64,7 @@ Conditions behind the table:
   - Patches 0152, 0154 to 0156 and 0158 make the prefix cache and the offload tiers hit under the MTP head, including the linear-attention state blocks ([THIRD_PARTY.md](THIRD_PARTY.md)).
   - [FlashInfer](https://github.com/flashinfer-ai/flashinfer) pinned at 0.6.16.post3, because 0.6.18 drops decode at 30K context from 143 to 26.5 t/s ([scripts/r168-deep-decode.sh](scripts/r168-deep-decode.sh)).
   - vLLM's `--enable-batch-sharded-sampling`, served since 2026-09-05, with patch 0147 so the flag does not fork the compile artifact. At temperature 0 it is bitwise identical to the unsharded sampler on one artifact ([R193e](bench/results/r193e-pin-and-bss.md)), and it adds 2.6 % steps per second at 8 streams and 4.5 % at 16. A request that passes a seed at temperature above 0 draws a different sample stream than before.
-  - [scripts/build-v0290rc2.sh](scripts/build-v0290rc2.sh) builds the base image; the served image adds the layers `Dockerfile.pcieipc`, `Dockerfile.bss-not-a-compile-factor`, `Dockerfile.pcie-mtp`, `Dockerfile.mtp-cache` and `Dockerfile.mtp-eagle-shift` from [patches-v0290/](patches-v0290/), in that order. Each patch has a design note next to its diff and a provenance line in [THIRD_PARTY.md](THIRD_PARTY.md).
+  - [scripts/build-served-image.sh](scripts/build-served-image.sh) builds the served image from [patches-v0290/](patches-v0290/) as nine layers, in this order: `Dockerfile` (the vLLM v0.29.0rc2 wheel over a vLLM nightly, 0101 to 0113), `Dockerfile.revival`, `Dockerfile.prs`, `Dockerfile.fiswap` (FlashInfer 0.6.16.post3), `Dockerfile.pcieipc`, `Dockerfile.bss-not-a-compile-factor`, `Dockerfile.pcie-mtp`, `Dockerfile.mtp-cache`, `Dockerfile.mtp-eagle-shift`. The nightly is pinned by digest: its tag was no longer on Docker Hub on 2026-09-25, and the digest still resolved. Each patch has a design note next to its diff and a provenance line in [THIRD_PARTY.md](THIRD_PARTY.md).
 - **Speculative decoding**: the checkpoint's own MTP head, 3 draft tokens, since 2026-09-06 ([R207](bench/results/r207-promote-mtp.md)).
   - Before that, [syvai/Qwen3.8-27B-DFlash2-W4A16](https://huggingface.co/syvai/Qwen3.8-27B-DFlash2-W4A16) in CUDA graphs at tensor-parallel 2 ([DFlash2](https://inco.ai/blog/dflash2/), [vLLM PR #52816](https://github.com/vllm-project/vllm/pull/52816)), at 9 draft tokens from 2026-09-04 and 7 from 2026-09-05.
   - 7 was first rejected on 2026-09-04 because it read twice as far from the bf16 decode reference as 9 ([scripts/r173c-bf16-decode.sh](scripts/r173c-bf16-decode.sh)). R193d found a difference of that size between two boots of one configuration, caused by the per-boot Triton autotune. The 2026-09-05 ladder over 6 to 11 draft tokens then put 7 at +10 % to +23 % tokens per second at 8 and 16 streams against 9, for −11 % on single-stream code ([R197](bench/results/r197-spec-length-ladder.md)).
@@ -104,9 +104,11 @@ huggingface-cli download syvai/Qwen3.8-27B-DFlash2-W4A16 --local-dir /srv/qwen50
 #    so either raise SIZE in the script or pass TIER_CAP_GB below the image size.
 sudo bash scripts/setup-native-l2.sh
 
-# 3a. the base image: vLLM v0.29.0rc2 + patches-v0290 + FlashInfer 0.6.16.post3, from a pinned vLLM nightly base
-bash scripts/build-v0290rc2.sh          # CPU only; about an hour
-#     then the five layer Dockerfiles listed under "Engine" above, each with --build-arg BASE=<previous tag>
+# 3a. the served image: vLLM v0.29.0rc2 + patches-v0290 + FlashInfer 0.6.16.post3, the nine layers listed
+#     under "Engine", tagged as scripts/serve-r231-nvidia-daily.sh expects. Needs Docker BuildKit (buildx,
+#     docker driver); the GPU is not used. About 20 minutes of build plus the downloads; plan for 60 GB of disk.
+#     DRY_RUN=1 prints the docker commands; CHECK=1 adds an identity check that needs the NVIDIA runtime.
+bash scripts/build-served-image.sh
 # 3b. the v0.28.0 image for the fp8 shape and the one-card shapes
 docker build -f patches-v0280/Dockerfile.v0280-nvfp4kv -t vllm-qwen38:v0280-nvfp4kv patches-v0280
 
@@ -263,5 +265,5 @@ MIT ([LICENSE](LICENSE)) for the original work: documentation, scripts, probes a
   - [bench/RESULTS.md](bench/RESULTS.md), every measurement newest first; [docs/HISTORY.md](docs/HISTORY.md), the lineage of the served configuration.
   - [docs/CONFIG.md](docs/CONFIG.md), every flag; [docs/DESIGN.md](docs/DESIGN.md), why it fits; [docs/FIDELITY.md](docs/FIDELITY.md), the bf16 rulers; [docs/R156-DECISION.md](docs/R156-DECISION.md), the checkpoint decision.
   - [docs/GOTCHAS.md](docs/GOTCHAS.md), failure modes; [docs/REJECTED.md](docs/REJECTED.md), what was tried and rejected.
-  - Launchers: [scripts/serve-r231-nvidia-daily.sh](scripts/serve-r231-nvidia-daily.sh), the served one; [scripts/serve-r207-mtp-daily.sh](scripts/serve-r207-mtp-daily.sh), the same route on the RedHatAI checkpoint; [scripts/serve-r168-daily.sh](scripts/serve-r168-daily.sh), the DFlash2 route of 2026-09-04; [scripts/serve-r156-daily.sh](scripts/serve-r156-daily.sh), the fp8 shape; [scripts/serve-v0280-daily.sh](scripts/serve-v0280-daily.sh), the one-card and MTP shapes; [scripts/build-v0290rc2.sh](scripts/build-v0290rc2.sh), the image build.
+  - Launchers: [scripts/serve-r231-nvidia-daily.sh](scripts/serve-r231-nvidia-daily.sh), the served one; [scripts/serve-r207-mtp-daily.sh](scripts/serve-r207-mtp-daily.sh), the same route on the RedHatAI checkpoint; [scripts/serve-r168-daily.sh](scripts/serve-r168-daily.sh), the DFlash2 route of 2026-09-04; [scripts/serve-r156-daily.sh](scripts/serve-r156-daily.sh), the fp8 shape; [scripts/serve-v0280-daily.sh](scripts/serve-v0280-daily.sh), the one-card and MTP shapes; [scripts/build-served-image.sh](scripts/build-served-image.sh), the image build; [scripts/build-v0290rc2.sh](scripts/build-v0290rc2.sh), the 2026-09-03 build of its first four layers alongside the R168 diagnosis images.
   - [THIRD_PARTY.md](THIRD_PARTY.md), provenance of every patch and idea; [LICENSE](LICENSE).
