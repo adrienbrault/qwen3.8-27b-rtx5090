@@ -46,13 +46,16 @@
 #   FORCE=1     rebuild tags that already exist (default: an existing tag is skipped). This replaces the tag a running
 #               launcher serves; the launcher checks the tag, not the image ID, so its next boot uses the rebuilt image.
 #   CHECK=1     identity check of the final image (NVIDIA container runtime required)
+#   NO_CACHE=1  pass --no-cache to every layer, so nothing is reused from an earlier build on this host
+#   IMAGE_REPO  repository name for the nine tags (default vllm-qwen38, the one the launcher serves); another name builds
+#               the chain beside an existing one without touching it
 #   DOCKER="sudo docker"   the docker command (default `docker`); buildx must be installed for the user it runs as
 #   VLLM_BASE / VLLM_WHEEL_URL   override the pinned base and wheel (produces a different image; see above)
 #   LOG_DIR     per-layer build logs (default ./build-logs, gitignored)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-DRY_RUN=${DRY_RUN:-0}; FORCE=${FORCE:-0}; CHECK=${CHECK:-0}
+DRY_RUN=${DRY_RUN:-0}; FORCE=${FORCE:-0}; CHECK=${CHECK:-0}; NO_CACHE=${NO_CACHE:-0}
 read -r -a DOCKER_CMD <<< "${DOCKER:-docker}"
 LOG_DIR=${LOG_DIR:-build-logs}
 CTX=patches-v0290
@@ -60,8 +63,6 @@ LAUNCHER=scripts/serve-r231-nvidia-daily.sh
 VLLM_BASE=${VLLM_BASE:-vllm/vllm-openai@sha256:383e409fc7695d6e40cd40d452f3ec277a3d1c462d7b1510034768d26f2cd397}
 VLLM_WHEEL_URL=${VLLM_WHEEL_URL:-https://wheels.vllm.ai/586f1d6d2da011744e1bae26c8686dc206bf648c/vllm-0.29.0rc2-cp38-abi3-manylinux_2_28_x86_64.whl}
 FI_VER=0.6.16.post3
-# IMAGE_REPO builds the same chain under another repository name (e.g. a verification build beside an existing one);
-# the launcher still expects vllm-qwen38, so the final-tag check compares with the repository swapped.
 IMAGE_REPO=${IMAGE_REPO:-vllm-qwen38}
 T=$IMAGE_REPO:v0290rc2-nvfp4kv
 export DOCKER_BUILDKIT=1
@@ -87,6 +88,7 @@ build(){ # $1 tag, $2 Dockerfile, rest = extra docker build args
   local tag=$1 df=$2 attempt rc start created lf; shift 2
   check_copy_sources "$df"
   local cmd=("${DOCKER_CMD[@]}" build --progress=plain -f "$CTX/$df" "$@" -t "$tag" "$CTX")
+  [ "$NO_CACHE" = 1 ] && cmd=("${cmd[@]:0:2}" --no-cache "${cmd[@]:2}")
   if [ "$DRY_RUN" = 1 ]; then printf '%q ' "${cmd[@]}"; echo; return 0; fi
   if [ "$FORCE" != 1 ] && "${DOCKER_CMD[@]}" image inspect "$tag" >/dev/null 2>&1; then log "--- $tag exists, skipped (FORCE=1 rebuilds)"; return 0; fi
   lf="$LOG_DIR/${tag##*:}.log"
@@ -110,7 +112,7 @@ build(){ # $1 tag, $2 Dockerfile, rest = extra docker build args
   done
   die "build $tag rc=$rc (log $lf)"; }
 
-log "=== build of $EXPECT from $CTX/ (DRY_RUN=$DRY_RUN FORCE=$FORCE CHECK=$CHECK) ==="
+log "=== build of $EXPECT from $CTX/ (DRY_RUN=$DRY_RUN FORCE=$FORCE CHECK=$CHECK NO_CACHE=$NO_CACHE) ==="
 if [ "$DRY_RUN" != 1 ]; then
   mkdir -p "$LOG_DIR"
   "${DOCKER_CMD[@]}" buildx version >/dev/null 2>&1 || die "'${DOCKER_CMD[*]} buildx' is not available. Dockerfile.pcieipc and Dockerfile.bss-not-a-compile-factor use RUN --network=none, which needs BuildKit; install the buildx plugin for the user that runs '${DOCKER_CMD[*]}'"
@@ -144,7 +146,7 @@ if [ "$DRY_RUN" = 1 ]; then log "=== DRY_RUN: final tag $FINAL matches DAILY_IMG
 
 if [ "$CHECK" = 1 ]; then
   log "--- identity check of $FINAL (loads libcuda and the compiled ops; nothing runs on the GPU)"
-  "${DOCKER_CMD[@]}" run --rm --runtime nvidia --gpus all --entrypoint python3 "$FINAL" -c '
+  "${DOCKER_CMD[@]}" run --rm --runtime nvidia --gpus all -e CUDA_VISIBLE_DEVICES= --entrypoint python3 "$FINAL" -c '
 import os, torch, vllm, flashinfer
 import vllm._C_stable_libtorch, vllm._moe_C_stable_libtorch
 assert vllm.__version__ == "0.29.0rc2", vllm.__version__
