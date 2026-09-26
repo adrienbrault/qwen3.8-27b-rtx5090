@@ -1,0 +1,2 @@
+e0ba6947c0025001108f2ced57bf2ce1f00901297021d90c9ffe3bbbbc6dc5cd     10197 lines  manifest-served.txt
+e0ba6947c0025001108f2ced57bf2ce1f00901297021d90c9ffe3bbbbc6dc5cd     10197 lines  manifest-verify.txt

@@ -21,11 +21,13 @@
 # CUDA code compiles for sm_120a with nvcc from the base image. CHECK=1 adds an identity check that needs the NVIDIA container
 # runtime (it loads libcuda and the compiled ops, and runs nothing on the GPU).
 #
-# Cost, from the 2026-09-03 and 09-04 builds on a Ryzen 7 9800X3D (results/2026-09-03-r168-v0290rc2-image, build niced beside
-# other work): the first layer about 10 minutes once the base is local, the FlashInfer swap about 5 minutes, the other seven
-# layers under a minute together. Downloads: the base image (8.65 GB compressed), the vLLM wheel (316 MB), FlashInfer
-# 0.6.16.post3 with its cubin and cu130 jit-cache wheels, and a vLLM source checkout (csrc/ only). Disk: the served image
-# occupies 47.5 GB under the containerd image store, 30.5 GB of it the unpacked base; plan for 60 GB free with build cache.
+# Cost, from the 2026-09-26 NO_CACHE=1 build on a Ryzen 7 9800X3D with the base image already local (results
+# 2026-09-26-r738-build-verify, bench/results/r738-build-verify.md; build niced beside a serving engine): 9 min 2 s in all,
+# the first layer 4 min 37 s (142 s of it the vLLM source clone), the FlashInfer swap 3 min 35 s, the other seven layers
+# about 40 s together. Downloads dominate. Downloads: the base image (8.65 GB compressed), the vLLM wheel (316 MB),
+# FlashInfer 0.6.16.post3 with its cubin and cu130 jit-cache wheels, and a vLLM source checkout (csrc/ only). Disk: the
+# build added 28 GB with the base present; the base itself takes about 39 GB under the containerd image store (8.65 GB of
+# compressed blobs plus 30.5 GB unpacked). Plan for 70 GB free.
 #
 # Pinned upstream inputs. Each can disappear upstream; the build then fails at that step, and nothing here substitutes silently.
 #   base   vllm/vllm-openai@sha256:383e409fc7695d6e40cd40d452f3ec277a3d1c462d7b1510034768d26f2cd397, the multi-arch index of
@@ -87,8 +89,8 @@ check_copy_sources(){ local df=$1 line src missing=0
 build(){ # $1 tag, $2 Dockerfile, rest = extra docker build args
   local tag=$1 df=$2 attempt rc start created lf; shift 2
   check_copy_sources "$df"
-  local cmd=("${DOCKER_CMD[@]}" build --progress=plain -f "$CTX/$df" "$@" -t "$tag" "$CTX")
-  [ "$NO_CACHE" = 1 ] && cmd=("${cmd[@]:0:2}" --no-cache "${cmd[@]:2}")
+  local nc=(); [ "$NO_CACHE" = 1 ] && nc=(--no-cache)   # after `build`, whatever DOCKER expands to (e.g. "sudo docker")
+  local cmd=("${DOCKER_CMD[@]}" build ${nc[@]+"${nc[@]}"} --progress=plain -f "$CTX/$df" "$@" -t "$tag" "$CTX")
   if [ "$DRY_RUN" = 1 ]; then printf '%q ' "${cmd[@]}"; echo; return 0; fi
   if [ "$FORCE" != 1 ] && "${DOCKER_CMD[@]}" image inspect "$tag" >/dev/null 2>&1; then log "--- $tag exists, skipped (FORCE=1 rebuilds)"; return 0; fi
   lf="$LOG_DIR/${tag##*:}.log"

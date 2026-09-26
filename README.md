@@ -97,8 +97,9 @@ Requirements: x86_64 Linux, two RTX 5090, Docker with the NVIDIA container runti
 huggingface-cli download nvidia/Qwen3.8-27B-NVFP4 --local-dir $HOME/models/qwen3.8-27b-nvidia-nvfp4
 
 # 2. the served image: vLLM v0.29.0rc2 + patches-v0290 + FlashInfer 0.6.16.post3, the nine layers listed
-#    under "Engine". Needs Docker BuildKit (buildx, docker driver); the GPU is not used. About 20 minutes
-#    of build plus the downloads; plan for 60 GB of disk. DRY_RUN=1 prints the docker commands.
+#    under "Engine". Needs Docker BuildKit (buildx, docker driver); the GPU is not used. About 10 minutes
+#    once the base image is local, plus its 8.65 GB pull; plan for 70 GB of disk (R738, 2026-09-26).
+#    DRY_RUN=1 prints the docker commands.
 bash scripts/build-served-image.sh
 
 # 3. settings: MODEL_DIR is the only required one; serve.env.example lists the others with their defaults
@@ -178,7 +179,8 @@ sudo bash scripts/setup-native-l2.sh
 
 # 3a. the served image: vLLM v0.29.0rc2 + patches-v0290 + FlashInfer 0.6.16.post3, the nine layers listed
 #     under "Engine", tagged as scripts/serve-r231-nvidia-daily.sh expects. Needs Docker BuildKit (buildx,
-#     docker driver); the GPU is not used. About 20 minutes of build plus the downloads; plan for 60 GB of disk.
+#     docker driver); the GPU is not used. About 10 minutes once the base image is local, plus its 8.65 GB pull;
+#     plan for 70 GB of disk (R738, 2026-09-26).
 #     DRY_RUN=1 prints the docker commands; CHECK=1 adds an identity check that needs the NVIDIA runtime.
 bash scripts/build-served-image.sh
 # 3b. the v0.28.0 image for the fp8 shape and the one-card shapes

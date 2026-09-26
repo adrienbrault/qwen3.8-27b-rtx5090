@@ -1,0 +1,9 @@
+2026-09-26T01:58:32Z --- disk before
+df-bytes used,avail: 1451688361984 432489484288
+TYPE            TOTAL     ACTIVE    SIZE      RECLAIMABLE
+Images          182       13        492.2GB   -9.587e+10B (-19%)
+Containers      13        9         3.42GB    1.45GB (42%)
+Local Volumes   5         2         3.609GB   1.352GB (37%)
+Build Cache     12        0         5.205GB   42.68MB
+Reclaimable:	5.205GB
+Total:		5.205GB

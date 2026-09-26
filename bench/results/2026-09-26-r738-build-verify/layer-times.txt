@@ -1,0 +1,18 @@
+2026-09-26T01:58:33Z --- build vllm-qwen38-verify:v0290rc2-nvfp4kv (Dockerfile) attempt 1, log build-logs/v0290rc2-nvfp4kv.log
+2026-09-26T02:03:10Z build vllm-qwen38-verify:v0290rc2-nvfp4kv OK
+2026-09-26T02:03:10Z --- build vllm-qwen38-verify:v0290rc2-nvfp4kv-revival (Dockerfile.revival) attempt 1, log build-logs/v0290rc2-nvfp4kv-revival.log
+2026-09-26T02:03:21Z build vllm-qwen38-verify:v0290rc2-nvfp4kv-revival OK
+2026-09-26T02:03:21Z --- build vllm-qwen38-verify:v0290rc2-nvfp4kv-revival-prs (Dockerfile.prs) attempt 1, log build-logs/v0290rc2-nvfp4kv-revival-prs.log
+2026-09-26T02:03:26Z build vllm-qwen38-verify:v0290rc2-nvfp4kv-revival-prs OK
+2026-09-26T02:03:26Z --- build vllm-qwen38-verify:v0290rc2-nvfp4kv-revival-prs-fi0616 (Dockerfile.fiswap) attempt 1, log build-logs/v0290rc2-nvfp4kv-revival-prs-fi0616.log
+2026-09-26T02:07:01Z build vllm-qwen38-verify:v0290rc2-nvfp4kv-revival-prs-fi0616 OK
+2026-09-26T02:07:01Z --- build vllm-qwen38-verify:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc (Dockerfile.pcieipc) attempt 1, log build-logs/v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc.log
+2026-09-26T02:07:20Z build vllm-qwen38-verify:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc OK
+2026-09-26T02:07:20Z --- build vllm-qwen38-verify:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash (Dockerfile.bss-not-a-compile-factor) attempt 1, log build-logs/v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash.log
+2026-09-26T02:07:22Z build vllm-qwen38-verify:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash OK
+2026-09-26T02:07:22Z --- build vllm-qwen38-verify:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash-mtppcie (Dockerfile.pcie-mtp) attempt 1, log build-logs/v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash-mtppcie.log
+2026-09-26T02:07:26Z build vllm-qwen38-verify:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash-mtppcie OK
+2026-09-26T02:07:26Z --- build vllm-qwen38-verify:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash-mtppcie-mtpcache (Dockerfile.mtp-cache) attempt 1, log build-logs/v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash-mtppcie-mtpcache.log
+2026-09-26T02:07:29Z build vllm-qwen38-verify:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash-mtppcie-mtpcache OK
+2026-09-26T02:07:29Z --- build vllm-qwen38-verify:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash-mtppcie-mtpcache-eagleshift (Dockerfile.mtp-eagle-shift) attempt 1, log build-logs/v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash-mtppcie-mtpcache-eagleshift.log
+2026-09-26T02:07:31Z build vllm-qwen38-verify:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash-mtppcie-mtpcache-eagleshift OK

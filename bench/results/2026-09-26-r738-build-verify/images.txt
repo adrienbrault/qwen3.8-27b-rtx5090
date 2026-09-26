@@ -1,0 +1,14 @@
+vllm-qwen38-verify:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash-mtppcie-mtpcache-eagleshift 4e14e23b10df 47.5GB
+vllm-qwen38-verify:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash-mtppcie-mtpcache 242e9d0c09b3 47.5GB
+vllm-qwen38-verify:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash-mtppcie 34dd5355a534 47.5GB
+vllm-qwen38-verify:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash c5d20faee4ec 47.5GB
+vllm-qwen38-verify:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc c21e1fdae135 47.5GB
+vllm-qwen38-verify:v0290rc2-nvfp4kv-revival-prs-fi0616 702f4bca6174 47.5GB
+vllm-qwen38-verify:v0290rc2-nvfp4kv-revival-prs 3d2ed1027506 38GB
+vllm-qwen38-verify:v0290rc2-nvfp4kv-revival 3f809b977646 38GB
+vllm-qwen38-verify:v0290rc2-nvfp4kv b709328b36ca 38GB
+vllm-qwen38:v0300-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash-mtppcie-mtpcache-fireload-fiws 57d9d21da487 46.6GB
+vllm-qwen38:v0300-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash-mtppcie-mtpcache-fireload 41ee2c5e0a89 46.6GB
+vllm-qwen38:v0300-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash-mtppcie-mtpcache 118298e9d7a3 46.6GB
+vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash-mtppcie-mtpcache-eagleshift 496fe1c83492 47.5GB
+vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash 86741f1035b8 47.5GB
