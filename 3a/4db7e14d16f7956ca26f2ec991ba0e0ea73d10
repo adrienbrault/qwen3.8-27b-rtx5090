@@ -1,0 +1,134 @@
+README.md
+  h_c86d546d9a059f 3,9,18,27-28,30-31,33,37,42,47,52-53,55,58,99-102,112,118,173,177-180,190,192,206-208,217-218,241-246,275-276,302,318-319,340
+THIRD_PARTY.md
+  h_c86d546d9a059f 39-40,103-113
+bench/RESULTS.md
+  h_c86d546d9a059f 7,9-11,19
+bench/results/r27-v031-splitkv.md
+  h_c86d546d9a059f 1-86
+docs/CONFIG.md
+  h_c86d546d9a059f 5,7,9,11-27
+docs/GOTCHAS.md
+  h_c86d546d9a059f 15-17
+docs/HISTORY.md
+  h_c86d546d9a059f 9-11,33-45
+patches-v0310/0101-sm120-nvfp4kv-fa2-routing-v0310.diff
+  h_c86d546d9a059f 1-461
+patches-v0310/0102-nvfp4-writer-linear-vscale-sm12x-v0310.diff
+  h_c86d546d9a059f 1-75
+patches-v0310/0103-sm120-nvfp4-xqa-decode-v0310.diff
+  h_c86d546d9a059f 1-219
+patches-v0310/0104-mtp-drafter-full-cudagraph-v0310.diff
+  h_c86d546d9a059f 1-281
+patches-v0310/0105-dflash-noncausal-nvfp4-fa2-v0310.diff
+  h_c86d546d9a059f 1-32
+patches-v0310/0106-dflash2-selector-sampling-v0310.diff
+  h_c86d546d9a059f 1-81
+patches-v0310/0108-gdn-kernels-v0310.diff
+  h_c86d546d9a059f 1-178
+patches-v0310/0109-dflash-noncausal-complete-v0310.diff
+  h_c86d546d9a059f 1-65
+patches-v0310/0112-xqa-verify-v0310.diff
+  h_c86d546d9a059f 1-101
+patches-v0310/0113-dflash-speculator-graphs-v0310.diff
+  h_c86d546d9a059f 1-45
+patches-v0310/0116-dflash-nvfp4-revival-v0310.diff
+  h_c86d546d9a059f 1-86
+patches-v0310/0117-dflash-nvfp4-warmup-v0310.diff
+  h_c86d546d9a059f 1-55
+patches-v0310/0118b-dflash-eager-escape-v0310.diff
+  h_c86d546d9a059f 1-17
+patches-v0310/0119-dflash-nvfp4-fullgraph-width-v0310.diff
+  h_c86d546d9a059f 1-22
+patches-v0310/0129-dflash-nvfp4-drafter-graphs-v0310.diff
+  h_c86d546d9a059f 1-57
+patches-v0310/0131-nvfp4-pooled-int-workspace-v0310.diff
+  h_c86d546d9a059f 1-60
+patches-v0310/0132-masked-nvfp4-xqa-sm120-v0310.diff
+  h_c86d546d9a059f 1-155
+patches-v0310/0133-gdn-packed-decode-bv16-v0310.diff
+  h_c86d546d9a059f 1-95
+patches-v0310/0134-dflash-no-eagle-block-drop-v0310.diff
+  h_c86d546d9a059f 1-63
+patches-v0310/0135-embed-uva-offload-v0310.diff
+  h_c86d546d9a059f 1-179
+patches-v0310/0136-opt-in-nvfp4-prefill-split-kv-v0310.diff
+  h_c86d546d9a059f 1-49
+patches-v0310/0137-fs-tier-eviction-v0310.diff
+  h_c86d546d9a059f 1-1052
+patches-v0310/0138-pcie-ipc-all-reduce-v0310.diff
+  h_c86d546d9a059f 1-428
+patches-v0310/0147-bss-not-a-compile-factor-v0310.diff
+  h_c86d546d9a059f 1-14
+patches-v0310/0148-pcie-ipc-mtp-drafter-v0310.diff
+  h_c86d546d9a059f 1-226
+patches-v0310/0154-mamba-groups-not-eagle-v0310.diff
+  h_c86d546d9a059f 1-40
+patches-v0310/0160-qwen35-mtp-no-temp-vocab-v0310.diff
+  h_c86d546d9a059f 1-80
+patches-v0310/0162-fi-autotune-reload-after-save-v0310.diff
+  h_c86d546d9a059f 1-18
+patches-v0310/Dockerfile.A_S-splitkv
+  h_c86d546d9a059f 1-18
+patches-v0310/Dockerfile.v0310
+  h_c86d546d9a059f 1-74
+patches-v0310/PORT-STATUS.md
+  h_c86d546d9a059f 1-67
+patches-v0310/README.md
+  h_c86d546d9a059f 1-36
+patches-v0310/apply_layer.py
+  h_c86d546d9a059f 1-36
+patches-v0310/assert_sources.py
+  h_c86d546d9a059f 1-14
+patches-v0310/audit_fi_r27c.py
+  h_c86d546d9a059f 1-59
+patches-v0310/guard_flashinfer_workspace.py
+  h_c86d546d9a059f 1-66
+patches-v0310/overlay/build_overlay.py
+  h_c86d546d9a059f 1-86
+patches-v0310/overlay/diag_vsf_layout.py
+  h_c86d546d9a059f 1-135
+patches-v0310/overlay/overlay_binding.cpp
+  h_c86d546d9a059f 1-59
+patches-v0310/overlay/vllm_sm12x_nvfp4kv.py
+  h_c86d546d9a059f 1-58
+patches-v0310/pcie_ipc_ar21/NOTICE
+  h_c86d546d9a059f 1-18
+patches-v0310/pcie_ipc_ar21/__init__.py
+  h_c86d546d9a059f 1-6
+patches-v0310/pcie_ipc_ar21/build.py
+  h_c86d546d9a059f 1-84
+patches-v0310/pcie_ipc_ar21/csrc/bindings.cu
+  h_c86d546d9a059f 1-141
+patches-v0310/pcie_ipc_ar21/fixed_config.py
+  h_c86d546d9a059f 1-76
+patches-v0310/pcie_ipc_ar21/include/flashinfer/comm/pcie_ipc_all_reduce.cuh
+  h_c86d546d9a059f 1-2247
+patches-v0310/pcie_ipc_ar21/pcie-tune-free.json
+  h_c86d546d9a059f 1-75
+patches-v0310/pcie_ipc_ar21/workspace.py
+  h_c86d546d9a059f 1-203
+patches-v0310/pristine-hashes.json
+  h_c86d546d9a059f 1-34
+patches-v0310/series
+  h_c86d546d9a059f 1-28
+patches-v0310/test_cpu.py
+  h_c86d546d9a059f 1-202
+scripts/serve-v031-splitkv-daily.sh
+  h_c86d546d9a059f 1-353
+scripts/serve.sh
+  h_c86d546d9a059f 2,14,98,100,122-123,135,162-163,166,203,207,211-215,220
+serve.env.example
+  h_c86d546d9a059f 10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3a4db7e14d16f7956ca26f2ec991ba0e0ea73d10",
+  "prompts": {},
+  "humans": {
+    "h_c86d546d9a059f": {
+      "author": "Adrien Brault <adrien.brault@gmail.com>"
+    }
+  }
+}
