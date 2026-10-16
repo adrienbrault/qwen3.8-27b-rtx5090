@@ -27,6 +27,9 @@ ROOT = Path(__file__).resolve().parent.parent
 RESULTS = ROOT / "bench" / "results"
 OUT = ROOT / "docs" / "img"
 R675 = RESULTS / "2026-09-23-r675-27b-curves"
+# r27-as-curves (2026-10-16): R675's instruments, shapes and runs re-measured on the served v0.31.0 launcher (A_S). The
+# decode-scaling-16 and prefill.svg read it.
+R27C = RESULTS / "2026-10-16-r27-as-curves"
 # R793 (2026-09-28): `vllm bench serve` v0.30.0 on ShareGPT V3 and Spec-Bench against the same served launcher, a fresh
 # boot per cell, passes A and B; drawn dashed over R675's decode curve.
 R793 = RESULTS / "2026-09-28-r793-27b-std-bench-1608"
@@ -203,7 +206,7 @@ def std_figure(rates, std, name, caption, rounds=("R675", "R793"),
     concurrency to its x position (None: the concurrency itself, ticks at the dashed round's levels); with it every
     concurrency of either line gets a tick labelled with its value, and the label boxes scale with the x span. `first`
     is the x position from which the dashed lines are labelled."""
-    cells, src, base = std
+    cells, src, base = std if std is not None else ({}, {}, None)   # None: decode alone only, no dashed round
     X = xpos or (lambda c: c)
     fig, (ax, ax2) = plt.subplots(1, 2, figsize=(10.4, 4.9))
     sconc = sorted({c for (_, c) in cells})
@@ -217,7 +220,7 @@ def std_figure(rates, std, name, caption, rounds=("R675", "R793"),
                    linewidth=2, label=f"{kind}, decode alone ({rounds[0]})")
             series[i].append((xs, ys, color, kind == "code"))
     sxs = [X(c) for c in sconc]
-    for key, dname, color in STD_DATASETS:
+    for key, dname, color in (STD_DATASETS if cells else ()):
         for a, idx, i in ((ax, 0, 0), (ax2, 1, 1)):
             ys = [cells[(key, c)][idx] for c in sconc]
             a.plot(sxs, ys, marker="s", markersize=4, color=color, linewidth=2, linestyle="--",
@@ -228,13 +231,13 @@ def std_figure(rates, std, name, caption, rounds=("R675", "R793"),
     ax.set_ylim(0, max(ys_agg) * 1.2)
     ax2.set_ylim(0, max(ys_per) * 1.5)   # room for the four-entry legend above the lines
     ax.set_title("All streams")
-    ax.set_ylabel("tokens per second, sum of streams\n(dashed: output tok/s, wall clock)")
+    ax.set_ylabel("tokens per second, sum of streams" + ("\n(dashed: output tok/s, wall clock)" if cells else ""))
     ax2.set_title("One stream")
-    ax2.set_ylabel("tokens per second, per stream\n(dashed: 1000 / TPOT p50)")
+    ax2.set_ylabel("tokens per second, per stream" + ("\n(dashed: 1000 / TPOT p50)" if cells else ""))
     ticks = sorted(set(sconc) | {c for k in rates for c in rates[k]})
     for a in (ax, ax2):
         if xpos is None:
-            a.set_xticks(sconc)
+            a.set_xticks(sconc or ticks)
         else:
             a.set_xticks([X(c) for c in ticks], [str(c) for c in ticks])
         a.set_xlabel("concurrent streams")
@@ -251,18 +254,23 @@ def std_figure(rates, std, name, caption, rounds=("R675", "R793"),
     print(f"decode scaling ({rounds[0]}): aggregate", {k: [round(rates[k][c][0]) for c in sorted(rates[k])] for k in rates})
     print(f"decode scaling ({rounds[0]}): per stream", {k: [round(rates[k][c][1]) for c in sorted(rates[k])] for k in rates})
     print(f"standard benchmark (passes A/B mean) at {sconc}")
-    for key, dname, _ in STD_DATASETS:
+    for key, dname, _ in (STD_DATASETS if cells else ()):
         print(f"  {dname:11}  output tok/s {[round(cells[(key, c)][0], 1) for c in sconc]}"
               f"   per stream {[round(cells[(key, c)][1]) for c in sconc]}")
-    print("  sources:", sorted({(k, c, v) for (k, c), v in src.items() if v != base}), "; every other cell", base)
+    if cells:
+        print("  sources:", sorted({(k, c, v) for (k, c), v in src.items() if v != base}), "; every other cell", base)
     save(fig, name, caption)
 
 
 def figure_decode_scaling():
-    rates = {k: decode_ss(R675 / f"decode-{k}.jsonl") for k in ("code", "prose")}
-    std_figure(rates, std_bench(), "decode-scaling-16.svg",
-               "Decode rate against concurrency on the served 16-sequence boot: decode alone (R675, solid) and "
-               "vllm bench serve on ShareGPT V3 and Spec-Bench (R793, dashed), sum over streams and per stream")
+    """The served figure: decode alone on the served v0.31.0 launcher (r27-as-curves). R793's standard-benchmark lines
+    were measured on the v0.29.0rc2 launcher, so they stay out of this figure until R793 is re-run on the served one."""
+    rates = {k: decode_ss(R27C / f"decode-{k}.jsonl") for k in ("code", "prose")}
+    std_figure(rates, None, "decode-scaling-16.svg",
+               "Decode rate against concurrency on the served 16-sequence boot (r27-as-curves), sum over streams and per stream",
+               rounds=("r27-as-curves", ""), title="Decode alone, served configuration",
+               note="decode_ss.py, all streams decoding, 1,024 forced tokens, one code and one prose prompt, three runs per "
+                    "point (median), stock power, 2026-10-16, served v0.31.0 launcher (r27-as-curves).")
 
 
 def figure_decode_scaling_64():
@@ -287,7 +295,7 @@ def prefill_points():
     """probes/kv_capacity_probe.py with --conc 1 --tokens 1: one cold request per line, [latency s, prompt tokens]
     as counted by the server. With a single output token the latency is the time to first token."""
     rows = collections.defaultdict(list)
-    for line in open(R675 / "prefill.jsonl"):
+    for line in open(R27C / "prefill.jsonl"):
         r = json.loads(line)
         for req in r["requests"]:
             if isinstance(req[0], (int, float)) and req[0] > 0:
@@ -302,11 +310,11 @@ def depth_decode():
     on their own axis: the filler budget, not measured prompt tokens."""
     out = collections.defaultdict(list)
     for kind in ("code", "prose"):
-        for line in open(R675 / f"decode-{kind}.jsonl"):
+        for line in open(R27C / f"decode-{kind}.jsonl"):
             s = json.loads(line)["summary"]
             if s["c"] == 1:
                 out[kind].append((0, s["ss_per_stream_tps_median"]))
-    for p in sorted(R675.glob("decode-*-c1-*k.jsonl")):
+    for p in sorted(R27C.glob("decode-*-c1-*k.jsonl")):
         kind = p.name.split("-")[1]
         for line in open(p):
             s = json.loads(line)["summary"]

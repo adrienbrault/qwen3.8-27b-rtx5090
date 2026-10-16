@@ -6,26 +6,25 @@ Every number here was measured on one machine on the date given, and each links 
 
 ## Numbers
 
-Decode on [scripts/serve-r231-nvidia-daily.sh](scripts/serve-r231-nvidia-daily.sh), the same configuration on vLLM v0.29.0rc2 (image `vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash-mtppcie-mtpcache-eagleshift`), one boot at stock power limits, measured 2026-09-23 11:33 to 11:51 UTC ([R675](bench/results/r675-27b-curves.md), results `2026-09-23-r675-27b-curves`; the memory clock offset was not recorded): [scripts/decode_ss.py](scripts/decode_ss.py), greedy, one code and one prose prompt, 1,024 forced tokens per stream, all streams starting together, three runs per shape. Rates are tokens per second per stream over the samples where every stream was decoding; the aggregate is the sum over the streams running together. Method: [How the numbers are measured](#how-the-numbers-are-measured). The served v0.31.0 launcher has no curve of its own yet; the last bullet pairs it against this one.
+Decode on [scripts/serve-v031-splitkv-daily.sh](scripts/serve-v031-splitkv-daily.sh) (image `vllm-qwen38:v0310-r27c-A_S-splitkv`), one boot at stock power limits, measured 2026-10-16 20:32 to 20:49 UTC ([r27-as-curves](bench/results/r27-as-curves.md), results `2026-10-16-201838-r27-as-curves`; the memory clock offset was not recorded): [scripts/decode_ss.py](scripts/decode_ss.py), greedy, one code and one prose prompt, 1,024 forced tokens per stream, all streams starting together, three runs per shape. Rates are tokens per second per stream over the samples where every stream was decoding; the aggregate is the sum over the streams running together. Method: [How the numbers are measured](#how-the-numbers-are-measured).
 
-![Decode alone (R675, solid) and vllm bench serve on ShareGPT V3 and Spec-Bench (R793, dashed), sum over streams and per stream](docs/img/decode-scaling-16.svg)
+![Decode alone on the served configuration, sum over streams and per stream](docs/img/decode-scaling-16.svg)
 
-Solid lines: decode alone, the curve described above. Dashed lines: vLLM's serving benchmark `vllm bench serve` v0.30.0 on ShareGPT V3 and Spec-Bench against the same launcher ([R793](bench/results/r793-27b-std-bench.md), 2026-09-28, results `2026-09-28-r793-27b-std-bench-1608` and `2026-09-28-r793b-27b-c6-1905`), a fresh boot per cell and the mean of two passes. Requests arrive as others finish, so their prefill interleaves with the running streams' decode; the aggregate is wall-clock output tok/s and its per-stream rate is 1000 / TPOT p50 ([Standard benchmark](#standard-benchmark-vllm-bench-serve)).
+Code and prose, decode alone, the curve described above. The standard serving benchmark (`vllm bench serve` on ShareGPT V3 and Spec-Bench) has not been run on this launcher yet; its numbers on the previous v0.29.0rc2 launcher are under [Other configurations](#measured-on-earlier-configurations-of-the-served-route).
 
-- The aggregate rises at every step to the served limit of 16 sequences: 2,443 t/s of code and 2,086 of prose at 16 streams, 153 and 130 per stream. One stream decodes 212.5 t/s of code and 169.1 of prose ([R675](bench/results/r675-27b-curves.md)).
-- The rates depend on how many draft tokens the MTP head gets accepted, which depends on the text: 0.61 to 0.68 of the draft tokens on code and 0.46 to 0.49 on prose at every concurrency ([R675](bench/results/r675-27b-curves.md)), 2.92 to 2.96 tokens per verify step on ShareGPT and 3.22 to 3.24 on Spec-Bench ([R793](bench/results/r793-27b-std-bench.md)).
-- On the standard benchmark at 16 streams the server delivers 1,330 (ShareGPT) and 1,628 (Spec-Bench) output tok/s, 97 and 111 per stream; time to the first token p50 is 42 to 44 ms at 1 stream and 176 ms at 16 ([R793](bench/results/r793-27b-std-bench.md)).
-- The served v0.31.0 launcher, paired against the v0.29.0rc2 launcher over two boot pairs on 2026-10-16, reads median decode aggregates of −0.7 % on code and +0.6 % on prose at 4 streams and +2.4 % and +0.1 % at 8; no cell reads as a loss, and the screen's verdict is noise ([r27](bench/results/r27-v031-splitkv.md), results `2026-10-16-r27-audition-screen-065122-1708414`).
+- The aggregate rises at every step to the served limit of 16 sequences: 2,633 t/s of code and 2,206 of prose at 16 streams, 165 and 138 per stream. One stream decodes 229.5 t/s of code and 189.6 of prose ([r27-as-curves](bench/results/r27-as-curves.md)).
+- The rates depend on how many draft tokens the MTP head gets accepted, which depends on the text: 0.63 to 0.67 of the draft tokens on code and 0.46 to 0.49 on prose at every concurrency ([r27-as-curves](bench/results/r27-as-curves.md)).
 
 ![Cold prefill rate and decode rate at depth against prompt length](docs/img/prefill.svg)
 
-Cold prefill on the same boot runs at 8,365 t/s at 6.7K prompt tokens and 3,958 at 200K, because every full-attention layer reads the whole prefix for each chunk ([R675](bench/results/r675-27b-curves.md), [scripts/kv_capacity_probe.py](scripts/kv_capacity_probe.py), prompt tokens counted by the server). One stream decoding on top of filler context holds its code rate to 60K and reads 13 % lower at 200K.
+Cold prefill on the same boot runs at 9,542 t/s at 6.7K prompt tokens and 3,990 at 200K, because every full-attention layer reads the whole prefix for each chunk ([r27-as-curves](bench/results/r27-as-curves.md), [scripts/kv_capacity_probe.py](scripts/kv_capacity_probe.py), prompt tokens counted by the server). One stream decoding on top of filler context holds its code rate to 60K and reads 16 % lower at 200K.
 
 | | value | source |
 |---|---|---|
 | context window | 262,144 tokens | checkpoint |
 | KV pool on the GPUs | 1,391,795 tokens, NVFP4, pinned at 14.86 GB per card, 16 sequences | 2026-10-16, [r27](bench/results/r27-v031-splitkv.md) |
 | free VRAM after boot, before the autotune pre-warm | 5,015 MiB on the fuller card | 2026-10-16, [r27](bench/results/r27-v031-splitkv.md) |
+| time to first token, cold prompt | 0.70 / 2.90 / 17.4 / 50.1 s at 6.7K / 25K / 100K / 200K prompt tokens | 2026-10-16, [r27-as-curves](bench/results/r27-as-curves.md) |
 | KV tiers behind the pool | 16 GiB host RAM, then 300 GB of disk with LRU eviction, kept across restarts | 2026-09-05, [R189](bench/results/r189-promote-pcie-ipc.md) |
 | [tool-eval](https://github.com/SeraphimSerapis/tool-eval-bench), 69 × 4 | 90.5 ± 1.3 | 2026-10-16, [r27](bench/results/r27-v031-splitkv.md), results `2026-10-16-r27-audition-qualify-085528-807233` |
 | fidelity vs the [bf16 model](https://huggingface.co/Qwen/Qwen3.8-27B), dense text, 555,549 positions | top-1 90.71 %, perplexity +1.90 %, truncated KL 0.0226 | 2026-10-16, [r27](bench/results/r27-v031-splitkv.md), four ladders on one boot, identical |
@@ -65,11 +64,13 @@ Also passing (2026-10-16, [r27](bench/results/r27-v031-splitkv.md), results `202
 
 ## How the numbers are measured
 
-- **Decode** ([R675](bench/results/r675-27b-curves.md), [scripts/r675-27b-curves.sh](scripts/r675-27b-curves.sh)): `decode_ss.py` starts all streams together on one code or one prose prompt, forces 1,024 tokens per stream at temperature 0, and takes the rate over the samples where every stream was decoding, median of three runs. Acceptance is accepted draft tokens over draft tokens from the server's counters. At depth, `--ctx N` puts N/1.3 filler words in front of the prompt; the probe does not record the prompt's token count, so the figure plots those points against N, two runs per point.
-- **Prefill** ([R675](bench/results/r675-27b-curves.md)): `kv_capacity_probe.py --conc 1 --tokens 1`, one request at a time with one output token, three prompts per length, each with a fresh seed so that neither the GPU prefix cache nor the CPU and disk tiers hold it.
-- **Power and clocks**: both rounds ran at the stock 600 / 575 W limits. R793 ran at memory clock offset +4500 and core offset 0, read back at boot and after each cell; R675 did not record the offset, and the host's offset read 0 on both cards on 2026-09-25 ([R793](bench/results/r793-27b-std-bench.md#against-the-decode-curve-r675)).
+- **Decode** ([r27-as-curves](bench/results/r27-as-curves.md), [scripts/r27-as-curves.sh](scripts/r27-as-curves.sh); the same instruments as R675): `decode_ss.py` starts all streams together on one code or one prose prompt, forces 1,024 tokens per stream at temperature 0, and takes the rate over the samples where every stream was decoding, median of three runs. Acceptance is accepted draft tokens over draft tokens from the server's counters. At depth, `--ctx N` puts N/1.3 filler words in front of the prompt; the probe does not record the prompt's token count, so the figure plots those points against N, two runs per point.
+- **Prefill** ([r27-as-curves](bench/results/r27-as-curves.md)): `kv_capacity_probe.py --conc 1 --tokens 1`, one request at a time with one output token, three prompts per length, each with a fresh seed so that neither the GPU prefix cache nor the CPU and disk tiers hold it.
+- **Power and clocks**: r27-as-curves and R793 ran at the stock 600 / 575 W limits. R793 ran at memory clock offset +4500 and core offset 0, read back at boot and after each cell; r27-as-curves and R675 did not record the offset ([R793](bench/results/r793-27b-std-bench.md#against-the-decode-curve-r675)).
 
 ### Standard benchmark (vllm bench serve)
+
+Measured on 2026-09-28 against the previous launcher, [scripts/serve-r231-nvidia-daily.sh](scripts/serve-r231-nvidia-daily.sh) (the same configuration on vLLM v0.29.0rc2); the numbers are under [Other configurations](#measured-on-earlier-configurations-of-the-served-route).
 
 - **Client** ([R793](bench/results/r793-27b-std-bench.md), [scripts/r793-27b-std-bench.sh](scripts/r793-27b-std-bench.sh)): `vllm bench serve` v0.30.0 through the request shim of the Flash-Next repository, closed loop at 1, 2, 4, 6, 8, 12 and 16 concurrent requests, greedy, streamed, thinking on.
 - **Samples**: ShareGPT V3, 400 conversations, seed 7310, each output forced with `min_tokens` to the reference reply's length (mean 210 tokens); Spec-Bench, all 480 questions, each output forced to 256 tokens. The outputs are truncated reasoning, not answers.
@@ -158,15 +159,15 @@ The first three columns were measured on 2026-08-31 on the [gittensor](https://h
 
 DFlash2 accepts few draft tokens per step, so its decode is bound by weight bandwidth, which the second card doubles. MTP accepts more per step and amortizes the weight reads, so on MTP the second card adds KV space more than speed. Tool-eval does not separate the three shapes; the bf16 rulers separate them by KV dtype ([docs/FIDELITY.md](docs/FIDELITY.md)).
 
-### The served launcher at 64 sequences
+### The v0.29.0rc2 launcher at 64 sequences
 
-The served launcher with the sequence limit at 64 and graph capture capped at 320 decodes 4,807 t/s of code and 3,961 of prose at 64 streams, and `vllm bench serve` reads 2,010 (ShareGPT V3) and 2,571 (Spec-Bench) output tok/s there, with no request preempted ([R794](bench/results/r794-27b-seq64.md), 2026-09-28).
+The previous launcher ([scripts/serve-r231-nvidia-daily.sh](scripts/serve-r231-nvidia-daily.sh), vLLM v0.29.0rc2) with the sequence limit at 64 and graph capture capped at 320 decodes 4,807 t/s of code and 3,961 of prose at 64 streams, and `vllm bench serve` reads 2,010 (ShareGPT V3) and 2,571 (Spec-Bench) output tok/s there, with no request preempted ([R794](bench/results/r794-27b-seq64.md), 2026-09-28).
 
 ![Decode alone (solid) and vllm bench serve on ShareGPT V3 and Spec-Bench (dashed) on the 64-sequence boot, sum over streams and per stream](docs/img/decode-scaling-64.svg)
 
 | | value | configuration | source |
 |---|---|---|---|
-| concurrent requests at 64 sequences | 64 running, 0 preemptions over the decode sweep and 30 benchmark cells; KV-cache gauge peak 81.0 % | the served launcher at 64 sequences, 14.86 GB pin | 2026-09-28, [R794](bench/results/r794-27b-seq64.md) |
+| concurrent requests at 64 sequences | 64 running, 0 preemptions over the decode sweep and 30 benchmark cells; KV-cache gauge peak 81.0 % | the v0.29.0rc2 launcher at 64 sequences, 14.86 GB pin | 2026-09-28, [R794](bench/results/r794-27b-seq64.md) |
 
 ### Measured on earlier configurations of the served route
 
@@ -174,7 +175,8 @@ These rows were measured on earlier configurations of the served route, all on v
 
 | | value | configuration | source |
 |---|---|---|---|
-| TTFT, cold prompt | 0.8 / 3.0 / 17.5 / 50.6 s at 6.7K / 25K / 100K / 200K prompt tokens | the served configuration on vLLM v0.29.0rc2 | 2026-09-23, [R675](bench/results/r675-27b-curves.md) |
+| decode alone, 16 streams | 2,443 t/s of code and 2,086 of prose, 153 and 130 per stream; one stream 212.5 and 169.1 | the served configuration on vLLM v0.29.0rc2 | 2026-09-23, [R675](bench/results/r675-27b-curves.md) |
+| `vllm bench serve` v0.30.0, 16 streams | 1,330 (ShareGPT V3) and 1,628 (Spec-Bench) output tok/s, wall clock; 97 and 111 per stream (1000 / TPOT p50); time to first token p50 42 to 44 ms at 1 stream, 176 ms at 16 | the served configuration on vLLM v0.29.0rc2 | 2026-09-28, [R793](bench/results/r793-27b-std-bench.md) |
 | [SWE-Bench Verified](https://huggingface.co/datasets/princeton-nlp/SWE-bench_Verified), [mini-SWE-agent](https://github.com/SWE-agent/mini-swe-agent) 2.4.6, one attempt | 387/500 = 77.4 % | NVIDIA checkpoint on vLLM v0.29.0rc2, 13.98 GB pin | 2026-09-09, [R231](bench/results/r231-promote-nvidia.md), results `2026-09-09-r227-miniswe-nvidia` |
 | fidelity vs the bf16 model, greedy decode | median absolute log-prob delta 0.00046 at no context, 0.00516 at 30K | NVIDIA checkpoint on vLLM v0.29.0rc2 | 2026-09-09, [R231](bench/results/r231-promote-nvidia.md) |
 | long prompts resident together | five concurrent 120K prompts at 58.8 % of the pool with no preemptions; one 250K prompt | the served configuration on vLLM v0.29.0rc2 | 2026-09-09, [R231/R234](bench/results/r231-promote-nvidia.md) |
