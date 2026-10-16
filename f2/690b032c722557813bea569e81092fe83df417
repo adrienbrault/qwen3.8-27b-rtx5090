@@ -1,0 +1,19 @@
+bench/results/2026-10-16-r27-as-curves/decode-prose-c1-200k.jsonl
+  s_54522fa78fd0c2::t_e84f8e41c21262 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f2690b032c722557813bea569e81092fe83df417",
+  "prompts": {},
+  "sessions": {
+    "s_54522fa78fd0c2": {
+      "agent_id": {
+        "tool": "windsurf",
+        "id": "spicy-dungeon",
+        "model": "unknown"
+      },
+      "human_author": "Adrien Brault <adrien.brault@gmail.com>"
+    }
+  }
+}
