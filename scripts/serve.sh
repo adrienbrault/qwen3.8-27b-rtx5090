@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Serves the measured configuration on any host with two RTX 5090 cards: the engine of scripts/serve-r231-nvidia-daily.sh
+# Serves the measured configuration on any host with two RTX 5090 cards: the engine of scripts/serve-v031-splitkv-daily.sh
 # (image, vLLM flags, container env, MTP ns3, NVFP4 KV pinned at 14.86 GB per card, 16 sequences) without the serving
 # host's /srv/qwen5090 layout. Settings: serve.env in the repo root, or SERVE_ENV=<file>; environment variables override the
 # file; serve.env.example lists every setting and its default.
@@ -11,7 +11,7 @@
 # boot-time tier eviction by tier-evict.sh). The disk KV tier is off unless KV_TIER_DIR is set.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-SERVED_LAUNCHER=$ROOT/scripts/serve-r231-nvidia-daily.sh
+SERVED_LAUNCHER=$ROOT/scripts/serve-v031-splitkv-daily.sh
 die(){ echo "serve.sh: FAILED: $*" >&2; exit 1; }
 
 # Settings: remember what the environment sets (set-but-empty counts, so KV_TIER_DIR= turns off a tier the file enables),
@@ -95,7 +95,9 @@ RUN=("${DK[@]}" run -d --name "$NAME" --restart unless-stopped --oom-score-adj -
   -e TORCHINDUCTOR_COMPILE_THREADS=8 -e MAX_JOBS=4 -e FLASHINFER_NUM_COMPILE_JOBS=4   # bounds the first boot's JIT host RAM
   -e PYTHONHASHSEED=0                                     # stable prefix-cache and tier hashes across boots
   -e NCCL_P2P_LEVEL=SYS -e VLLM_SM12X_NVFP4_XQA=0 -e VLLM_SM12X_DFLASH_GRAPHS=1
+  -e VLLM_SM12X_NVFP4_PREFILL_SPLIT_KV=1                 # 0136: undo FlashInfer 0.7's split-KV-off guard for NVFP4 KV on SM12x (r27)
   -e VLLM_SM12X_PCIE_IPC_AR=1 -e VLLM_SM12X_PCIE_IPC_MTP=1   # pcie_ipc all-reduce (0138), MTP drafter admitted on it (0148)
+  -e VLLM_USE_V2_MODEL_RUNNER=1                           # the runner the r27 screen and qualify runs booted
   -v "$CACHE_DIR/torch_compile_qwen38_v0280nv":/root/.cache/vllm/torch_compile_cache   # subdir names match the serving host
   -v "$CACHE_DIR/triton":/root/.triton/cache -v "$CACHE_DIR/inductor":/root/.cache/inductor
   -v "$CACHE_DIR/flashinfer":/root/.cache/flashinfer
@@ -117,7 +119,8 @@ RUN=("${DK[@]}" run -d --name "$NAME" --restart unless-stopped --oom-score-adj -
   --kv-cache-memory-bytes 14860000000                     # R234 pin: pool 1,391,795 tokens
   --offload-backend uva --cpu-offload-gb 1 --cpu-offload-params embed_tokens   # embedding table in pinned host RAM (0135)
   --mamba-ssm-cache-dtype bfloat16
-  --enable-batch-sharded-sampling)
+  --enable-batch-sharded-sampling
+  --mamba-backend triton --gdn-prefill-backend flashinfer)   # the GDN backends the r27 runs booted (vLLM v0.31 flags)
 
 if [ "$MODE" = print ]; then
   printf '%q ' "${RUN[@]}"; echo
@@ -129,7 +132,7 @@ fi
 # Preflight: each failure names its fix.
 [ "$IMAGE" = "$SERVED_IMG" ] || echo "WARN: IMAGE=$IMAGE is not the served tag $SERVED_IMG" >&2
 "${DK[@]}" image inspect "$IMAGE" >/dev/null 2>&1 \
-  || die "image $IMAGE not found; build it with: bash scripts/build-served-image.sh (about 20 minutes, 60 GB of disk)"
+  || die "image $IMAGE not found; patches-v0310/README.md describes its build (scripts/build-served-image.sh builds the v0.29 image of serve-r231-nvidia-daily.sh)"
 [ -f "$MODEL_DIR/config.json" ] && [ -f "$MODEL_DIR/tokenizer.json" ] \
   || die "MODEL_DIR=$MODEL_DIR has no config.json/tokenizer.json; download: huggingface-cli download nvidia/Qwen3.8-27B-NVFP4 --local-dir <dir>"
 NGPU=$(nvidia-smi -L 2>/dev/null | grep -c '^GPU ' || true)
@@ -156,10 +159,11 @@ if port_busy "$PORT"; then die "port $PORT is in use; set PORT to a free one"; f
 if [ -n "$KV_TIER_DIR" ]; then
   # The tier's namespace hash covers the mount path, dtype and parallelism, not the weights or the block size, so blocks written
   # under another checkpoint or block size would be read back as this one's. The serving host wipes them; here the choice is yours.
-  CKPT=$(basename "$MODEL_DIR"); BLOCK=1472   # MTP ns3 with the bf16 SSM state gives a 1,472-token attention block (R207)
+  # The block stamp carries the engine generation too: no boot has read a tier written by vLLM v0.29 with v0.31 (r27).
+  CKPT=$(basename "$MODEL_DIR"); BLOCK=1472-v0310   # MTP ns3 with the bf16 SSM state gives a 1,472-token attention block (R207)
   if ls -d "$KV_TIER_DIR"/_model_* >/dev/null 2>&1 && { [ "$(cat "$KV_TIER_DIR/.checkpoint" 2>/dev/null)" != "$CKPT" ] \
        || [ "$(cat "$KV_TIER_DIR/.block" 2>/dev/null)" != "$BLOCK" ]; }; then
-    die "$KV_TIER_DIR holds KV blocks of another checkpoint or block size (stamps .checkpoint/.block); empty it with: sudo find $KV_TIER_DIR -mindepth 1 -maxdepth 1 -name '_model_*' -exec rm -rf {} +"
+    die "$KV_TIER_DIR holds KV blocks of another checkpoint, block size or engine generation (stamps .checkpoint/.block); empty it with: sudo find $KV_TIER_DIR -mindepth 1 -maxdepth 1 -name '_model_*' -exec rm -rf {} +"
   fi
   { echo "$CKPT" > "$KV_TIER_DIR/.checkpoint" && echo "$BLOCK" > "$KV_TIER_DIR/.block"; } 2>/dev/null \
     || die "cannot write the tier stamps .checkpoint/.block in $KV_TIER_DIR"
@@ -196,22 +200,24 @@ NEED=("linear-V-scale store overlay ACTIVE"             # 0102: without it NVFP4
       "Offloader set to UVAOffloader" "Total CPU offloaded parameters: 1.18"
       "PCIe IPC all-reduce enabled" "Using ['PCIE_IPC', 'CUSTOM', 'PYNCCL'] all-reduce backends"
       "SM12X PCIe IPC: MTP drafter admitted" "Batch-sharded sampling enabled"
-      "SM12X eagle-drop replay boundary retained")        # 0158: without it every MTP prefix revisit re-prefills
+      "re-enabled FlashInfer split-KV")                   # 0136 on (r27); 0158's replay boundary is upstream in v0.31 and logs nothing
 [ -z "$KV_TIER_DIR" ] || NEED+=("OffloadingConnector")
 bad=0
 for l in "${NEED[@]}"; do grep -qaF -- "$l" <<< "$LOG" || { echo "boot log lacks: $l" >&2; bad=1; }; done
-for l in "decode_backend=xqa" "re-enabled FlashInfer split-KV"; do
+for l in "decode_backend=xqa"; do
   if grep -qaF -- "$l" <<< "$LOG"; then echo "boot log shows: $l" >&2; bad=1; fi
 done
 VERS=$("${DK[@]}" exec "$NAME" python3 -c 'import vllm, flashinfer; print(vllm.__version__, flashinfer.__version__)' 2>/dev/null || true)
-case "$VERS" in "0.29"*" 0.6.16"*) ;; *) echo "vllm/flashinfer are '$VERS', expected 0.29.x / 0.6.16.x" >&2; bad=1;; esac
-"${DK[@]}" exec "$NAME" test -f /opt/prs-markers/0147 -a -f /opt/prs-markers/0148 -a -f /opt/prs-markers/0158 \
-  || { echo "image lacks a patch marker (0147/0148/0158)" >&2; bad=1; }
+case "$VERS" in "0.31.0"*" 0.7.0.post1") ;; *) echo "vllm/flashinfer are '$VERS', expected 0.31.0 / 0.7.0.post1" >&2; bad=1;; esac
+"${DK[@]}" exec "$NAME" test -f /opt/prs-markers/0136 -a -f /opt/prs-markers/0147 -a -f /opt/prs-markers/0148 -a -f /opt/prs-markers/0154 \
+  || { echo "image lacks a patch marker (0136/0147/0148/0154)" >&2; bad=1; }
+"${DK[@]}" exec "$NAME" grep -q 0158 /opt/prs-markers/upstream \
+  || { echo "image lacks the upstream-source marker for 0152/0155/0156/0158" >&2; bad=1; }
 [ "$bad" = 0 ] || die "the engine answers but differs from the served configuration (lines above); it is still running (--stop removes it)"
 POOL=$(grep -a 'GPU KV cache size' <<< "$LOG" | tail -1 | grep -oE 'cache size: [0-9,]+' | tr -dc 0-9 || true)
 [ "$POOL" = 1391795 ] || echo "WARN: KV pool ${POOL:-?} tokens; the served boots read 1,391,795 at this pin (R234)" >&2
 if [ -n "$KV_TIER_DIR" ]; then   # a host that cannot pin 16 GiB gets fewer CPU-tier blocks, and long prompts stop being tier-served
-  CPUBLK=$(grep -aoE 'primary tier \(lru, [0-9]+ blocks\)' <<< "$LOG" | tail -1 | tr -dc 0-9 || true)
+  CPUBLK=$(grep -aoE 'primary tier \(lru, [0-9]+ (blocks|chunks)\)' <<< "$LOG" | tail -1 | tr -dc 0-9 || true)   # v0.31 says chunks
   [ "${CPUBLK:-0}" -ge 550 ] || echo "WARN: CPU tier holds ${CPUBLK:-?} blocks; the served boots hold 595 of 1,472 tokens (R207)" >&2
 fi
 

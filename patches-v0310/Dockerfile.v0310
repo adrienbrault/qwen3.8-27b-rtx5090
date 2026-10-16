@@ -1,0 +1,74 @@
+# Build ON flan, from a staged local context; --network=none --pull=false.
+# Local assets/debs supplies patch, g++, ninja and dependencies if absent.
+# Local assets/wheels supplies arctic-inference==0.1.1 (Linux x86_64).
+ARG CUDA_TOOLCHAIN=nvidia/cuda:13.0.3-devel-ubuntu24.04
+ARG VLLM_BASE=vllm/vllm-openai:v0.31.0
+FROM ${CUDA_TOOLCHAIN} AS cuda-toolchain
+FROM ${VLLM_BASE}
+ARG OVERLAY_JOBS=4
+ENV UV_CACHE_DIR=/tmp/rebase-uv CUDA_VISIBLE_DEVICES="" \
+    CUDA_HOME=/usr/local/cuda PATH=/opt/rebase/.venv/bin:/usr/local/cuda/bin:${PATH}
+# nvcc is taken from an already-loaded local image, never downloaded here.
+COPY --from=cuda-toolchain /usr/local/cuda/ /usr/local/cuda/
+COPY assets/debs/ /opt/local-debs/
+RUN set -eu; \
+    if ! command -v patch || ! command -v g++ || ! command -v ninja; then \
+      dpkg -i /opt/local-debs/*.deb; \
+    fi; \
+    command -v patch; command -v g++; command -v ninja; command -v nvcc; \
+    uv --offline venv --system-site-packages --python "$(command -v python3)" /opt/rebase/.venv; \
+    /opt/rebase/.venv/bin/python -c 'import vllm, torch, flashinfer; assert vllm.__version__.startswith("0.31.0"); assert torch.__version__.startswith("2.13.0"); assert torch.version.cuda.startswith("13.0"); assert flashinfer.__version__ == "0.7.0.post1"; print(vllm.__version__, torch.__version__, torch.version.cuda, flashinfer.__version__)'; \
+    mkdir -p /opt/prs-markers
+
+# 0102 writer and stable-ABI overlay (independent of the Python patch order).
+COPY vllm-v0.31.0/csrc/ /opt/vllm-src/csrc/
+COPY vllm-v0.31.0/cmake/patches/ /opt/vllm-src/cmake/patches/
+COPY out/A/patches-v0310/ /opt/chain/
+COPY out/A/apply_layer.py out/A/guard_flashinfer_workspace.py out/A/assert_sources.py out/A/pristine-hashes.json /opt/rebase/
+COPY out/audit_fi_r27c.py out/test_cpu.py /opt/rebase/
+RUN /opt/rebase/.venv/bin/python /opt/rebase/assert_sources.py /opt/rebase/pristine-hashes.json
+RUN /opt/rebase/.venv/bin/python /opt/rebase/apply_layer.py /opt/chain 0102 --root /opt/vllm-src
+COPY out/A/patches-v0310/overlay/ /opt/vllm-sm12x/
+ENV VLLM_SM12X_SHADOW_INC=/opt/vllm-sm12x/shadow-include \
+    VLLM_SM12X_CSRC=/opt/vllm-src/csrc VLLM_SM12X_BUILD=/opt/vllm-sm12x/build \
+    VLLM_SM12X_ARCH=120a PYTHONPATH=/opt/vllm-sm12x:${PYTHONPATH:-}
+RUN set -eu; \
+    TINC="$(/opt/rebase/.venv/bin/python -c 'import torch, pathlib; print(pathlib.Path(torch.__file__).parent / "include")')"; \
+    if grep -q 'auto strptr = new std::string' "$TINC/torch/csrc/stable/stableivalue_conversions.h"; then \
+      mkdir -p /opt/vllm-sm12x/shadow-include/torch/csrc/stable; \
+      cp "$TINC/torch/csrc/stable/stableivalue_conversions.h" /opt/vllm-sm12x/shadow-include/torch/csrc/stable/; \
+      patch --batch --forward --fuzz=0 -p1 -d /opt/vllm-sm12x/shadow-include < /opt/vllm-src/cmake/patches/pytorch_stable_string.patch; \
+    fi; \
+    TORCH_CUDA_ARCH_LIST=12.0a MAX_JOBS=${OVERLAY_JOBS} /opt/rebase/.venv/bin/python /opt/vllm-sm12x/build_overlay.py
+COPY assets/wheels/ /opt/local-wheels/
+RUN uv pip install --python /opt/rebase/.venv/bin/python --no-index --no-deps \
+    --find-links /opt/local-wheels arctic-inference==0.1.1
+
+# Base -> revival -> prs -> FlashInfer audit -> PCIe IPC -> BSS -> MTP/cache.
+RUN /opt/rebase/.venv/bin/python /opt/rebase/apply_layer.py /opt/chain 0101 0103 0104 0105 0106 0108 0109 0112 0113
+RUN /opt/rebase/.venv/bin/python /opt/rebase/apply_layer.py /opt/chain 0116 0117 0118b 0119 0129 0131
+RUN /opt/rebase/.venv/bin/python /opt/rebase/apply_layer.py /opt/chain 0132 0133 0134 0135 0136 0137
+# Retain upstream FlashInfer 0.7.0.post1. Adapt 0163 to its installed source.
+RUN /opt/rebase/.venv/bin/python /opt/rebase/guard_flashinfer_workspace.py
+RUN FI_ROOT="$(/opt/rebase/.venv/bin/python -c 'import flashinfer, pathlib; print(pathlib.Path(flashinfer.__file__).parent.parent)')"; \
+    /opt/rebase/.venv/bin/python /opt/rebase/audit_fi_r27c.py "$FI_ROOT" --output /opt/prs-markers/FI-r27c-audit.json
+RUN /opt/rebase/.venv/bin/python /opt/rebase/apply_layer.py /opt/chain 0138
+RUN set -eu; \
+    SITE="$(/opt/rebase/.venv/bin/python -c 'import vllm, pathlib; print(pathlib.Path(vllm.__file__).parent.parent)')"; \
+    cp -R /opt/chain/pcie_ipc_ar21 "$SITE/"; \
+    MAX_JOBS=2 /opt/rebase/.venv/bin/python -m pcie_ipc_ar21.build --build-root /opt/pcie-build --output "$SITE/pcie_ipc_ar21/_C.so"
+RUN /opt/rebase/.venv/bin/python /opt/rebase/apply_layer.py /opt/chain 0147
+RUN /opt/rebase/.venv/bin/python /opt/rebase/apply_layer.py /opt/chain 0148
+RUN /opt/rebase/.venv/bin/python /opt/rebase/apply_layer.py /opt/chain 0154
+RUN /opt/rebase/.venv/bin/python /opt/rebase/apply_layer.py /opt/chain 0160 0162
+RUN SITE="$(/opt/rebase/.venv/bin/python -c 'import vllm, pathlib; print(pathlib.Path(vllm.__file__).parent.parent)')"; \
+    /opt/rebase/.venv/bin/python /opt/rebase/test_cpu.py --torch --tree "$SITE"
+RUN set -eu; \
+    SITE="$(/opt/rebase/.venv/bin/python -c 'import vllm, pathlib; print(pathlib.Path(vllm.__file__).parent.parent)')"; \
+    grep -q get_replay_boundaries "$SITE/vllm/v1/core/kv_cache_coordinator.py"; \
+    grep -q drop_eagle_checkpoint_block "$SITE/vllm/v1/core/single_type_kv_cache_manager.py"; \
+    grep -q 'not self.req.is_finished()' "$SITE/vllm/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py"; \
+    echo '0152 0155 0156 0158 upstream source verified' > /opt/prs-markers/upstream; \
+    echo 'V0310 PHASE A COMPLETE; FlashInfer 0.7.0.post1; 0163 audit required' > /opt/prs-markers/phase-A
+# CUDA_VISIBLE_DEVICES was empty only for the GPU-free build; runtime launcher supplies devices.
+ENV CUDA_VISIBLE_DEVICES=0,1

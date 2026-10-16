@@ -1,0 +1,18 @@
+diff --git a/vllm/model_executor/warmup/kernel_warmup.py b/vllm/model_executor/warmup/kernel_warmup.py
+--- a/vllm/model_executor/warmup/kernel_warmup.py
++++ b/vllm/model_executor/warmup/kernel_warmup.py
+@@ -480,3 +480,14 @@
+         world.barrier()
+     if is_leader:
+         tuner.save_configs(str(cache_path))
++    # R679b: FlashInfer keys its in-memory profiling_cache by hash(runner), and
++    # the cuDNN GEMM runners hash the m-bucket mapper they captured at
++    # construction. Under the tuning_buckets override above that mapper is a
++    # make_bucket_mapper closure; at inference it is the op's default mapper,
++    # so every cuDNN-won entry is unreachable and the op falls back to
++    # runners[0] tactic -1. The file-config path keys by runner class name
++    # (no hash), so reloading what was just saved makes those entries hit.
++    if world.world_size > 1:
++        world.barrier()
++    if cache_path.exists():
++        tuner.load_configs(str(cache_path))

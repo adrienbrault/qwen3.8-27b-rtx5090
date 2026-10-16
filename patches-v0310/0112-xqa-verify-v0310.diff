@@ -1,0 +1,101 @@
+diff --git a/vllm/v1/attention/backends/flashinfer.py b/vllm/v1/attention/backends/flashinfer.py
+--- a/vllm/v1/attention/backends/flashinfer.py
++++ b/vllm/v1/attention/backends/flashinfer.py
+@@ -129,6 +129,14 @@
+     return enabled
+ 
+ 
++@cache
++def _sm12x_xqa_verify_enabled() -> bool:
++    """Whether uniform SM12x NVFP4 speculative verify should use XQA."""
++    import os
++
++    return os.environ.get("VLLM_SM12X_XQA_VERIFY", "0") == "1"
++
++
+ def _pack_draft_block_bool_mask(
+     bool_mask: torch.Tensor, num_packed: int
+ ) -> torch.Tensor:
+@@ -883,6 +891,9 @@
+             and self.head_dim <= 256
+             and _sm12x_nvfp4_xqa_enabled()
+         )
++        self.use_xqa_nvfp4_verify = (
++            self.use_xqa_nvfp4_decode and _sm12x_xqa_verify_enabled()
++        )
+         # Page sizes >= 128 require the trtllm-gen GQA/MQA path (guaranteed by
+         # get_supported_kernel_block_sizes).
+         assert self.page_size <= 64 or (
+@@ -1497,6 +1508,31 @@
+         qo_indptr = common_attn_metadata.query_start_loc
+         qo_indptr_cpu = common_attn_metadata.query_start_loc_cpu
+ 
++        # XQA's uniform speculative API has no per-request Q indptr. Keep
++        # zero-padded or otherwise non-uniform graph batches on the FA2 route.
++        use_xqa_nvfp4_verify_batch = False
++        xqa_nvfp4_verify_q_len = 1
++        if self.use_xqa_nvfp4_verify and num_decodes > 0:
++            decode_q_lens = (
++                qo_indptr_cpu[1 : num_decodes + 1] - qo_indptr_cpu[:num_decodes]
++            )
++            has_multi_token_decode = bool((decode_q_lens > 1).any().item())
++            if has_multi_token_decode:
++                xqa_nvfp4_verify_q_len = int(decode_q_lens[0].item())
++                use_xqa_nvfp4_verify_batch = (
++                    xqa_nvfp4_verify_q_len > 1
++                    and num_decode_tokens
++                    == num_decodes * xqa_nvfp4_verify_q_len
++                    and bool(
++                        (decode_q_lens == xqa_nvfp4_verify_q_len).all().item()
++                    )
++                )
++                if not use_xqa_nvfp4_verify_batch:
++                    num_decodes = 0
++                    num_prefills = num_reqs
++                    num_decode_tokens = 0
++                    num_prefill_tokens = num_actual_tokens
++
+         # Step 1: Decide which dispatch modes to use:
+         # - Cascade attention (distinct mode)
+         # - Prefill (FI native or TRTLLM)
+@@ -1917,6 +1953,11 @@
+                         ragged_q_lens,
+                         num_decodes,
+                         bool(causal),
++                    )
++                elif use_xqa_nvfp4_verify_batch:
++                    q_len_per_req = xqa_nvfp4_verify_q_len
++                    decode_mask = self._get_decode_mask(
++                        q_len_per_req, None, num_decodes, bool(causal)
+                     )
+                 elif self.use_trtllm_gen_varlen_decode:
+                     # CPU placeholders may underestimate query lengths;
+@@ -2843,6 +2884,20 @@
+                 else:
+                     q_len_per_req = num_decode_tokens // attn_metadata.num_decodes
+ 
++                if decode_with_xqa and q_len_per_req is not None and q_len_per_req > 1:
++                    assert q_len_per_req == attn_metadata.decode.q_len_per_req
++                    assert attn_metadata.decode.mask is not None, (
++                        "FlashInfer XQA speculative decode requires a draft mask."
++                    )
++                    assert isinstance(out, torch.Tensor)
++                    assert out.shape[0] == attn_metadata.num_decodes * q_len_per_req
++                    out = out.view(
++                        attn_metadata.num_decodes,
++                        q_len_per_req,
++                        out.shape[1],
++                        out.shape[2],
++                    )
++
+                 lse = None
+                 if use_dcp:
+                     out = torch.empty(
+@@ -2884,6 +2939,7 @@
+                     q_len_per_req=q_len_per_req,
+                     max_q_len=max_q_len,
+                     cum_seq_lens_q=q_cu_seq_lens,
++                    mask=attn_metadata.decode.mask,
+                     kv_cache_sf=(
+                         decode_kv_block_scales if self.is_kvcache_nvfp4 else None
+                     ),

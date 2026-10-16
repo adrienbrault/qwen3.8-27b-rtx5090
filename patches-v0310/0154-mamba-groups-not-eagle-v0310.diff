@@ -1,0 +1,40 @@
+diff --git a/vllm/v1/core/kv_cache_coordinator.py b/vllm/v1/core/kv_cache_coordinator.py
+--- a/vllm/v1/core/kv_cache_coordinator.py
++++ b/vllm/v1/core/kv_cache_coordinator.py
+@@ -105,9 +105,17 @@
+         self.eagle_group_ids: set[int] = {
+             i for i, g in enumerate(kv_cache_config.kv_cache_groups) if g.is_eagle_group
+         }
+-        # Conservatively fall back to flag all groups when no group is flagged.
++        # Conservatively fall back to flag all groups when no group is
++        # flagged — except Mamba groups: an attention-only drafter can never
++        # own a Mamba group, and flagging one widens its lookup window beyond
++        # what block-granular SSM checkpoints can satisfy, silently disabling
++        # all Mamba prefix reuse under MTP/EAGLE.
+         if use_eagle and not self.eagle_group_ids:
+-            self.eagle_group_ids = set(range(len(kv_cache_config.kv_cache_groups)))
++            self.eagle_group_ids = {
++                i
++                for i, g in enumerate(kv_cache_config.kv_cache_groups)
++                if not isinstance(g.kv_cache_spec, MambaSpec)
++            }
+ 
+         # During chunked prefill with EAGLE, the single next prefill lookahead
+         # token past the chunk boundary is combined with the final hidden state
+diff --git a/vllm/v1/core/kv_cache_utils.py b/vllm/v1/core/kv_cache_utils.py
+--- a/vllm/v1/core/kv_cache_utils.py
++++ b/vllm/v1/core/kv_cache_utils.py
+@@ -2253,8 +2253,12 @@
+         return
+     logger.warning(
+         "Speculative decoding (method=%s) is enabled but no KV cache group "
+-        "could be identified as the draft model's.",
++        "could be identified as the draft model's; non-Mamba groups will be "
++        "conservatively treated as draft groups. Mamba groups %s are exempt "
++        "from this fallback (an attention-only drafter cannot own a Mamba "
++        "group; flagging one would silently disable SSM prefix reuse).",
+         spec_config.method,
++        mamba_groups,
+     )
+ 
+ 

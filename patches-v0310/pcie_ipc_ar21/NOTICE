@@ -1,0 +1,18 @@
+R185 PCIe IPC all-reduce source package
+
+Kernel source: FlashInfer main commit
+df8b5c1745c51f44b1e8a492b11c3f6cb157cfd2 (dump fi-main/COMMIT).
+include/flashinfer/comm/pcie_ipc_all_reduce.cuh is copied without modification.
+Copyright (c) 2026 by FlashInfer team; Apache License, Version 2.0,
+as stated in the source header.
+
+csrc/bindings.cu is a separate PyTorch/CUDA ownership adapter, replacing
+main's TVM FFI binding. workspace.py replaces main's Python ownership and
+preparation glue; fixed_config.py extracts the original R184 launch triples.
+These adapter files are licensed under Apache-2.0 as marked in their headers.
+No flashinfer Python modules are included or shadowed.
+
+pcie-tune-free.json is the original dumped R184 file, unchanged. Its
+max_numel=41943040 keys are NOT relabelled as measurements at max_numel=1638400.
+Using these legal launch triples with the smaller slab is an explicit
+performance assumption, described in ../NOTES21.md in the delivery directory.

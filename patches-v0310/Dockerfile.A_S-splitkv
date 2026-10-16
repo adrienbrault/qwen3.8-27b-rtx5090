@@ -1,0 +1,18 @@
+# A_S = arm A's image + the 0136 split-KV override made signature-agnostic for FlashInfer 0.7 (guard now takes
+# (kv_data_type, device)); 2026-10-16 profile: FlashInfer 0.7 forces disable_split_kv for NVFP4 KV on SM120, making the
+# MTP-verify attention 3.6x slower. Python-only layer; enabled at launch with VLLM_SM12X_NVFP4_PREFILL_SPLIT_KV=1.
+# Build on flan: docker build --network=none --pull=false -t vllm-qwen38:v0310-r27c-A_S-splitkv -f Dockerfile .
+FROM vllm-qwen38:v0310-r27c-A-nvfp4kv-mtp
+RUN set -eu; f=/usr/local/lib/python3.12/dist-packages/vllm/v1/attention/backends/flashinfer.py; \
+    echo "b2eb9ca038639912f637186d135889d990085a6a5371f47a28a110e4000b641f  $f" | sha256sum -c -; \
+    grep -c 'lambda _kv_data_type: False' "$f" | grep -qx 1; \
+    sed -i 's/setattr(flashinfer_prefill, guard_name, lambda _kv_data_type: False)/setattr(flashinfer_prefill, guard_name, lambda *_args, **_kwargs: False)  # r27 A_S: 0.7 guard takes (kv_data_type, device)/' "$f"; \
+    grep -c 'lambda \*_args, \*\*_kwargs: False' "$f" | grep -qx 1; \
+    python3 - <<'PY'
+import flashinfer.prefill as p, inspect
+name = '_nvfp4_kv_requires_disabled_split_kv'
+assert hasattr(p, name), name
+print('guard signature', inspect.signature(getattr(p, name)))
+f = lambda *_args, **_kwargs: False
+assert f(None, None) is False and f(None) is False
+PY

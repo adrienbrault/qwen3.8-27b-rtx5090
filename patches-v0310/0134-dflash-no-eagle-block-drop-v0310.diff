@@ -1,0 +1,63 @@
+diff --git a/vllm/config/speculative.py b/vllm/config/speculative.py
+--- a/vllm/config/speculative.py
++++ b/vllm/config/speculative.py
+@@ -1941,9 +1941,21 @@
+         # TODO(ben): Refactor this so the naming is clearer
+         return self.method in ("eagle", "eagle3", "mtp", "dflash", "dspark")
+ 
++    def use_eagle_preserves_target_kv_cache(self) -> bool:
++        # Only eagle-family drafters share (and pollute via their lookahead KV
++        # write) the target's full-attention KV cache groups. DFlash/DSpark draft
++        # from their own KV cache and never write target blocks, so the KV cache
++        # manager must not apply eagle block handling to them (vllm-project/vllm
++        # #53477, #54163): on a hybrid model in align mode it turns prefix-cache
++        # reuse off entirely.
++        return self.method in ("eagle", "eagle3", "mtp")
++
+     def use_eagle_block_drop(self) -> bool:
+         """Whether volatile trailing cache blocks should be discarded."""
+-        return self.use_eagle() and not self.disable_eagle_block_drop
++        return (
++            self.use_eagle_preserves_target_kv_cache()
++            and not self.disable_eagle_block_drop
++        )
+ 
+     def use_dflash(self) -> bool:
+         return self.method == "dflash"
+diff --git a/vllm/v1/core/kv_cache_utils.py b/vllm/v1/core/kv_cache_utils.py
+--- a/vllm/v1/core/kv_cache_utils.py
++++ b/vllm/v1/core/kv_cache_utils.py
+@@ -2143,7 +2143,7 @@
+     The annotator separately checks that the groups partition the layers exactly.
+     """
+     spec_config = vllm_config.speculative_config
+-    if spec_config is None or not spec_config.use_eagle():
++    if spec_config is None or not spec_config.use_eagle_preserves_target_kv_cache():
+         return False
+     if spec_config.method == "mtp":
+         return True
+@@ -2237,7 +2237,7 @@
+ 
+     """
+     spec_config = vllm_config.speculative_config
+-    if spec_config is None or not spec_config.use_eagle():
++    if spec_config is None or not spec_config.use_eagle_preserves_target_kv_cache():
+         return
+     if any(group.is_eagle_group for group in kv_cache_groups):
+         return
+diff --git a/vllm/v1/core/sched/scheduler.py b/vllm/v1/core/sched/scheduler.py
+--- a/vllm/v1/core/sched/scheduler.py
++++ b/vllm/v1/core/sched/scheduler.py
+@@ -299,7 +299,11 @@
+                 )
+             self.use_eagle = speculative_config.use_eagle()
+             self.use_eagle_block_drop = speculative_config.use_eagle_block_drop()
+-            if self.use_eagle and not self.use_eagle_block_drop:
++            if (
++                self.use_eagle
++                and not self.use_eagle_block_drop
++                and speculative_config.use_eagle_preserves_target_kv_cache()
++            ):
+                 logger.warning(
+                     "EAGLE trailing prefix-cache block dropping is disabled. "
+                     "This is experimental and may affect speculative-token "

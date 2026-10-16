@@ -1,12 +1,12 @@
 # Qwen3.8-27B on RTX 5090
 
-Serving configuration, vLLM patches, launch scripts and measurements for [Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B), served as [nvidia/Qwen3.8-27B-NVFP4](https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4) by [vLLM](https://github.com/vllm-project/vllm) v0.29.0rc2 with the patch chain in [patches-v0290/](patches-v0290/) across two RTX 5090 cards. The window is 262,144 tokens, the KV cache is NVFP4, the checkpoint's own MTP head drafts 3 tokens, and vision, reasoning, tool calls and structured output are all on. The target workload is a few concurrent coding agents with long contexts. The one-card and older shapes are under [Other configurations](#other-configurations).
+Serving configuration, vLLM patches, launch scripts and measurements for [Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B), served as [nvidia/Qwen3.8-27B-NVFP4](https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4) by [vLLM](https://github.com/vllm-project/vllm) v0.31.0 with the patch chain in [patches-v0310/](patches-v0310/) and FlashInfer 0.7.0.post1 across two RTX 5090 cards. The window is 262,144 tokens, the KV cache is NVFP4, the checkpoint's own MTP head drafts 3 tokens, and vision, reasoning, tool calls and structured output are all on. The target workload is a few concurrent coding agents with long contexts. The one-card and older shapes are under [Other configurations](#other-configurations).
 
 Every number here was measured on one machine on the date given, and each links the write-up that names its raw results directory. None is an estimate. The index of experiments is [bench/RESULTS.md](bench/RESULTS.md), newest first.
 
 ## Numbers
 
-Decode on the served launcher [scripts/serve-r231-nvidia-daily.sh](scripts/serve-r231-nvidia-daily.sh), image `vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash-mtppcie-mtpcache-eagleshift`, one boot at stock power limits, measured 2026-09-23 11:33 to 11:51 UTC ([R675](bench/results/r675-27b-curves.md), results `2026-09-23-r675-27b-curves`; the memory clock offset was not recorded): [scripts/decode_ss.py](scripts/decode_ss.py), greedy, one code and one prose prompt, 1,024 forced tokens per stream, all streams starting together, three runs per shape. Rates are tokens per second per stream over the samples where every stream was decoding; the aggregate is the sum over the streams running together. Method: [How the numbers are measured](#how-the-numbers-are-measured).
+Decode on [scripts/serve-r231-nvidia-daily.sh](scripts/serve-r231-nvidia-daily.sh), the same configuration on vLLM v0.29.0rc2 (image `vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash-mtppcie-mtpcache-eagleshift`), one boot at stock power limits, measured 2026-09-23 11:33 to 11:51 UTC ([R675](bench/results/r675-27b-curves.md), results `2026-09-23-r675-27b-curves`; the memory clock offset was not recorded): [scripts/decode_ss.py](scripts/decode_ss.py), greedy, one code and one prose prompt, 1,024 forced tokens per stream, all streams starting together, three runs per shape. Rates are tokens per second per stream over the samples where every stream was decoding; the aggregate is the sum over the streams running together. Method: [How the numbers are measured](#how-the-numbers-are-measured). The served v0.31.0 launcher has no curve of its own yet; the last bullet pairs it against this one.
 
 ![Decode alone (R675, solid) and vllm bench serve on ShareGPT V3 and Spec-Bench (R793, dashed), sum over streams and per stream](docs/img/decode-scaling-16.svg)
 
@@ -15,6 +15,7 @@ Solid lines: decode alone, the curve described above. Dashed lines: vLLM's servi
 - The aggregate rises at every step to the served limit of 16 sequences: 2,443 t/s of code and 2,086 of prose at 16 streams, 153 and 130 per stream. One stream decodes 212.5 t/s of code and 169.1 of prose ([R675](bench/results/r675-27b-curves.md)).
 - The rates depend on how many draft tokens the MTP head gets accepted, which depends on the text: 0.61 to 0.68 of the draft tokens on code and 0.46 to 0.49 on prose at every concurrency ([R675](bench/results/r675-27b-curves.md)), 2.92 to 2.96 tokens per verify step on ShareGPT and 3.22 to 3.24 on Spec-Bench ([R793](bench/results/r793-27b-std-bench.md)).
 - On the standard benchmark at 16 streams the server delivers 1,330 (ShareGPT) and 1,628 (Spec-Bench) output tok/s, 97 and 111 per stream; time to the first token p50 is 42 to 44 ms at 1 stream and 176 ms at 16 ([R793](bench/results/r793-27b-std-bench.md)).
+- The served v0.31.0 launcher, paired against the v0.29.0rc2 launcher over two boot pairs on 2026-10-16, reads median decode aggregates of −0.7 % on code and +0.6 % on prose at 4 streams and +2.4 % and +0.1 % at 8; no cell reads as a loss, and the screen's verdict is noise ([r27](bench/results/r27-v031-splitkv.md), results `2026-10-16-r27-audition-screen-065122-1708414`).
 
 ![Cold prefill rate and decode rate at depth against prompt length](docs/img/prefill.svg)
 
@@ -23,40 +24,38 @@ Cold prefill on the same boot runs at 8,365 t/s at 6.7K prompt tokens and 3,958 
 | | value | source |
 |---|---|---|
 | context window | 262,144 tokens | checkpoint |
-| KV pool on the GPUs | 1,391,795 tokens, NVFP4, pinned at 14.86 GB per card, 16 sequences | 2026-09-09, [R234](bench/results/r231-promote-nvidia.md) |
-| free VRAM after boot | 3,351 MiB per card | 2026-09-23, [R675](bench/results/r675-27b-curves.md) |
+| KV pool on the GPUs | 1,391,795 tokens, NVFP4, pinned at 14.86 GB per card, 16 sequences | 2026-10-16, [r27](bench/results/r27-v031-splitkv.md) |
+| free VRAM after boot, before the autotune pre-warm | 5,015 MiB on the fuller card | 2026-10-16, [r27](bench/results/r27-v031-splitkv.md) |
 | KV tiers behind the pool | 16 GiB host RAM, then 300 GB of disk with LRU eviction, kept across restarts | 2026-09-05, [R189](bench/results/r189-promote-pcie-ipc.md) |
-| TTFT, cold prompt | 0.8 / 3.0 / 17.5 / 50.6 s at 6.7K / 25K / 100K / 200K prompt tokens | 2026-09-23, [R675](bench/results/r675-27b-curves.md) |
-| [SWE-Bench Verified](https://huggingface.co/datasets/princeton-nlp/SWE-bench_Verified), [mini-SWE-agent](https://github.com/SWE-agent/mini-swe-agent) 2.4.6, one attempt | 387/500 = 77.4 % | 2026-09-09, [R231](bench/results/r231-promote-nvidia.md), results `2026-09-09-r227-miniswe-nvidia` |
-| [tool-eval](https://github.com/SeraphimSerapis/tool-eval-bench), 69 × 4 | 88.5 ± 0.6 and 90.5 ± 3.7, two runs | 2026-09-09, [R231/R234](bench/results/r231-promote-nvidia.md) |
-| fidelity vs the [bf16 model](https://huggingface.co/Qwen/Qwen3.8-27B), dense text, 555,549 positions | top-1 90.67 %, perplexity +1.83 %, truncated KL 0.0226 | 2026-09-09, [R231](bench/results/r231-promote-nvidia.md) |
-| fidelity vs the bf16 model, greedy decode | median absolute log-prob delta 0.00046 at no context, 0.00516 at 30K | 2026-09-09, [R231](bench/results/r231-promote-nvidia.md) |
+| [tool-eval](https://github.com/SeraphimSerapis/tool-eval-bench), 69 × 4 | 90.5 ± 1.3 | 2026-10-16, [r27](bench/results/r27-v031-splitkv.md), results `2026-10-16-r27-audition-qualify-085528-807233` |
+| fidelity vs the [bf16 model](https://huggingface.co/Qwen/Qwen3.8-27B), dense text, 555,549 positions | top-1 90.71 %, perplexity +1.90 %, truncated KL 0.0226 | 2026-10-16, [r27](bench/results/r27-v031-splitkv.md), four ladders on one boot, identical |
 
-Also passing (2026-09-09, [R231/R234](bench/results/r231-promote-nvidia.md)): needles at 131K and 220K prompt tokens, 4 of 4 cold and 4 of 4 from the disk tier after a flood of 19 unrelated 90K prompts; five concurrent 120K prompts resident at 58.8 % of the pool with no preemptions; one 250K prompt; an indentation probe with 59 of 60 answers indented.
+Also passing (2026-10-16, [r27](bench/results/r27-v031-splitkv.md), results `2026-10-16-r27-audition-qualify-085528-807233`; the same gates passed again in `-110820-405361` and `-123522-1448554`): needles at 131K and 220K prompt tokens, 4 of 4 cold and 4 of 4 from the disk tier after a flood of 20 unrelated 90K prompts; three warm resends identical to their cold answers; an indentation probe with 60 of 60 answers indented.
 
 ## Served configuration
 
-- Since 2026-09-09 ([R231/R234](bench/results/r231-promote-nvidia.md)): weights [nvidia/Qwen3.8-27B-NVFP4](https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4), image `vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash-mtppcie-mtpcache-eagleshift` (vLLM v0.29.0rc2, [patches-v0290/](patches-v0290/) 0101 to 0158, FlashInfer 0.6.16.post3), port 8020. Launcher [scripts/serve-r231-nvidia-daily.sh](scripts/serve-r231-nvidia-daily.sh); [scripts/serve.sh](scripts/serve.sh) starts the same engine with the host paths as settings. Rollback: [scripts/serve-r207-mtp-daily.sh](scripts/serve-r207-mtp-daily.sh), the same route on [RedHatAI/Qwen3.8-27B-NVFP4](https://huggingface.co/RedHatAI/Qwen3.8-27B-NVFP4) at a 13.98 GB pin ([R207](bench/results/r207-promote-mtp.md)). Each promotion is a row in [docs/HISTORY.md](docs/HISTORY.md), and every flag is explained in [docs/CONFIG.md](docs/CONFIG.md).
+- Since 2026-10-16 ([r27](bench/results/r27-v031-splitkv.md)): weights [nvidia/Qwen3.8-27B-NVFP4](https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4), image `vllm-qwen38:v0310-r27c-A_S-splitkv` (vLLM v0.31.0, [patches-v0310/](patches-v0310/), FlashInfer 0.7.0.post1), port 8020. Launcher [scripts/serve-v031-splitkv-daily.sh](scripts/serve-v031-splitkv-daily.sh); [scripts/serve.sh](scripts/serve.sh) starts the same engine with the host paths as settings. Rollback: [scripts/serve-r231-nvidia-daily.sh](scripts/serve-r231-nvidia-daily.sh), the same configuration on vLLM v0.29.0rc2 ([R231/R234](bench/results/r231-promote-nvidia.md)). Each promotion is a row in [docs/HISTORY.md](docs/HISTORY.md), and every flag is explained in [docs/CONFIG.md](docs/CONFIG.md).
 - Tensor parallel 2, 16 sequences, 262,144-token window, NVFP4 KV pinned at 14.86 GB per card (`--kv-cache-memory-bytes`), linear-attention state cached in bf16.
 - The checkpoint's MTP head at 3 draft tokens (`qwen3_5_mtp`).
 - FlashInfer's `pcie_ipc` all-reduce as the two-card decode all-reduce (patch 0138, `VLLM_SM12X_PCIE_IPC_AR=1`; patch 0148 admits the MTP head to it) and batch-sharded sampling (`--enable-batch-sharded-sampling`, patch 0147).
 - KV tiers: 16 GiB of pinned host RAM, then a 300 GB disk tier with LRU eviction and a 40 GB free-space floor.
+- FlashInfer's split-KV path for the MTP verify attention on the NVFP4 cache (patch 0136, `VLLM_SM12X_NVFP4_PREFILL_SPLIT_KV=1`), vLLM's V2 model runner (`VLLM_USE_V2_MODEL_RUNNER=1`), and the Triton Mamba backend with FlashInfer GDN prefill (`--mamba-backend triton --gdn-prefill-backend flashinfer`).
 
 ## What the stack is
 
 - **Weights**: [nvidia/Qwen3.8-27B-NVFP4](https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4), a ModelOpt 0.47.0.dev80 checkpoint: NVFP4 group-16 on all 64 MLP layers, an NVFP4 `lm_head`, and an input scale on all 401 quantized layers, so activations are quantized too (W4A4). It declares no KV quantization; the KV dtype is the launcher's. Its distance from bf16 is in the table above and in [docs/FIDELITY.md](docs/FIDELITY.md).
-- **Engine**: [vLLM v0.29.0rc2](https://github.com/vllm-project/vllm/releases) with the [patches-v0290/](patches-v0290/) chain (0101 to 0158).
+- **Engine**: [vLLM v0.31.0](https://github.com/vllm-project/vllm/releases) with the [patches-v0310/](patches-v0310/) chain (0101 to 0162; [PORT-STATUS.md](patches-v0310/PORT-STATUS.md) says what each v0.29 patch became).
   - NVFP4 KV on `sm_120`, which upstream gates to SM100.
   - A pooled FlashInfer workspace, prefix-cache reuse under speculative decoding, the embedding table in pinned host RAM.
   - LRU eviction for the disk tier, which upstream lacks.
   - FlashInfer main's `pcie_ipc` all-reduce as the two-card decode all-reduce, vendored as patch 0138 behind `VLLM_SM12X_PCIE_IPC_AR=1` and asserted at boot; served since 2026-09-05 ([R185](bench/results/r185-pcie-ipc-all-reduce.md)). Patch 0148 admits the MTP head to it.
-  - Patches 0152, 0154 to 0156 and 0158 make the prefix cache and the offload tiers hit under the MTP head, including the linear-attention state blocks ([THIRD_PARTY.md](THIRD_PARTY.md)).
-  - [FlashInfer](https://github.com/flashinfer-ai/flashinfer) pinned at 0.6.16.post3 ([R168](bench/results/r168-029-program.md)).
+  - The prefix cache and the offload tiers hit under the MTP head, including the linear-attention state blocks: 0152, 0155, 0156 and the 0158 replay boundary are upstream in v0.31.0, 0154 is carried as a patch ([THIRD_PARTY.md](THIRD_PARTY.md)).
+  - [FlashInfer](https://github.com/flashinfer-ai/flashinfer) 0.7.0.post1, the version vLLM v0.31.0 pins, with patch 0136 turning back on the split-KV path that FlashInfer 0.7 turns off for an NVFP4 KV cache on SM12x ([r27](bench/results/r27-v031-splitkv.md)). FlashInfer 0.7 does not pick cuDNN for `bmm_fp8` on SM12x, so the cuDNN FP8 plan eviction that crashed 0.6.16 under CUDA graphs does not apply ([docs/GOTCHAS.md](docs/GOTCHAS.md)).
   - vLLM's `--enable-batch-sharded-sampling`, with patch 0147 so the flag does not fork the compile artifact ([R193e](bench/results/r193e-pin-and-bss.md)).
-  - [scripts/build-served-image.sh](scripts/build-served-image.sh) builds the served image from [patches-v0290/](patches-v0290/) in nine layers; each patch has a design note next to its diff and a provenance line in [THIRD_PARTY.md](THIRD_PARTY.md).
+  - [patches-v0310/README.md](patches-v0310/README.md) describes the two builds behind the served image; [scripts/build-served-image.sh](scripts/build-served-image.sh) builds the v0.29 image of the rollback launcher in nine layers. Each patch has a provenance line in [THIRD_PARTY.md](THIRD_PARTY.md).
 - **Speculative decoding**: the checkpoint's own MTP head, 3 draft tokens, since 2026-09-06 ([R207](bench/results/r207-promote-mtp.md)). The DFlash2 drafter served before it is in [docs/HISTORY.md](docs/HISTORY.md).
 - **KV cache**: NVFP4 KV ([docs/HISTORY.md](docs/HISTORY.md#2026-09-04-the-vllm-029-nvfp4-kv-route-and-the-bf16-gdn-state), [docs/FIDELITY.md](docs/FIDELITY.md)).
-  - The sm120 port is in [patches-v0290/](patches-v0290/), provenance in [THIRD_PARTY.md](THIRD_PARTY.md).
+  - The sm120 port is in [patches-v0310/](patches-v0310/), provenance in [THIRD_PARTY.md](THIRD_PARTY.md).
   - The pool is pinned in bytes, 14.86 GB per card since R234, so every boot has the same size ([R178](bench/results/r168-029-program.md#r178-the-concurrency-ceiling-is-the-kv-pool-what-a-request-costs-of-it-2026-09-04-results2026-09-04-r178-seqs-ladder-scriptsr178-seqs-laddersh-scriptskv_capacity_probepy)).
   - The linear-attention state is cached in bf16 ([R182](bench/results/r168-029-program.md#r182-the-gdn-state-cached-in-bf16-promoted-pool-1020596-tiers-needles-tool-eval-2026-09-04-results2026-09-04-r182-promote-ssm-bf16-scriptsr182-promote-ssm-bf16sh)).
   - A 16 GiB CPU tier and a 300 GB disk tier behind the pool ([scripts/setup-native-l2.sh](scripts/setup-native-l2.sh), [scripts/tier-evict.sh](scripts/tier-evict.sh)).
@@ -97,15 +96,10 @@ Requirements: x86_64 Linux, two RTX 5090, Docker with the NVIDIA container runti
 # 1. the served weights
 huggingface-cli download nvidia/Qwen3.8-27B-NVFP4 --local-dir $HOME/models/qwen3.8-27b-nvidia-nvfp4
 
-# 2. the served image: vLLM v0.29.0rc2 + patches-v0290 + FlashInfer 0.6.16.post3, the nine layers of scripts/build-served-image.sh
-#    under "Engine". Needs Docker BuildKit (buildx, docker driver); the GPU is not used. About 10 minutes
-#    once the base image is local, plus its 8.65 GB pull; plan for 70 GB of disk (R738, 2026-09-26).
-#    DRY_RUN=1 prints the docker commands.
-bash scripts/build-served-image.sh
-#    or pull the published copy (2026-09-26: the served layers plus one label-only layer) and tag it as serve.sh expects
-docker pull ghcr.io/adrienbrault/qwen3.8-27b-rtx5090@sha256:e3b5982cc8fb0f726f6953bb524f9ebef49a4cbb8f0ac7f5fca2c27e47b8f46d
-docker tag  ghcr.io/adrienbrault/qwen3.8-27b-rtx5090@sha256:e3b5982cc8fb0f726f6953bb524f9ebef49a4cbb8f0ac7f5fca2c27e47b8f46d \
-  vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash-mtppcie-mtpcache-eagleshift
+# 2. the served image: vLLM v0.31.0 + patches-v0310 + FlashInfer 0.7.0.post1, tagged vllm-qwen38:v0310-r27c-A_S-splitkv.
+#    Two docker builds, described in patches-v0310/README.md (Dockerfile.v0310, then Dockerfile.A_S-splitkv); the GPU is
+#    not used. There is no one-command build script and no published copy of this image yet. scripts/build-served-image.sh
+#    and ghcr.io/adrienbrault/qwen3.8-27b-rtx5090 give the v0.29 image of the rollback launcher, serve-r231-nvidia-daily.sh.
 
 # 3. settings: MODEL_DIR is the only required one; serve.env.example lists the others with their defaults
 cp serve.env.example serve.env
@@ -115,13 +109,13 @@ sed -i "s|^MODEL_DIR=|MODEL_DIR=$HOME/models/qwen3.8-27b-nvidia-nvfp4|" serve.en
 bash scripts/serve.sh
 ```
 
-[scripts/serve.sh](scripts/serve.sh) runs the served engine: the image tag, vLLM flags, container environment and container limits of [scripts/serve-r231-nvidia-daily.sh](scripts/serve-r231-nvidia-daily.sh), with the serving host's paths replaced by settings. `bash scripts/serve.sh --print` prints the `docker run` command without running anything; `--stop` stops and removes the container. Environment variables override `serve.env`. Where its defaults differ from the serving host:
+[scripts/serve.sh](scripts/serve.sh) runs the served engine: the image tag, vLLM flags, container environment and container limits of [scripts/serve-v031-splitkv-daily.sh](scripts/serve-v031-splitkv-daily.sh), with the serving host's paths replaced by settings. `bash scripts/serve.sh --print` prints the `docker run` command without running anything; `--stop` stops and removes the container. Environment variables override `serve.env`. Where its defaults differ from the serving host:
 
 - The endpoint is published on `127.0.0.1` (`BIND`); the serving host publishes on `0.0.0.0`.
 - GPUs 0 and 1 are passed to the container (`GPUS`); the serving host passes all of its two.
 - No disk KV tier (`KV_TIER_DIR`) and no power cap (`POWER_LIMIT_W`); the serving host runs both. Clock offsets and the serving host's autotune pre-warm are not part of the script.
 
-After `/health` answers, the script checks the boot-log lines, versions and patch markers the served launcher asserts for each patch and setting, and fails naming any that is missing. It leaves out the launcher's checks that need its pre-warm or its host layout, among them the free-VRAM floor after pre-warm. It prints the KV pool; the served boots read 1,391,795 tokens with the tier on (2026-09-09, [R234](bench/results/r231-promote-nvidia.md)). A boot without the tier has not been measured at this pin.
+After `/health` answers, the script checks the boot-log lines, versions and patch markers the served launcher asserts for each patch and setting, and fails naming any that is missing. It leaves out the launcher's checks that need its pre-warm or its host layout, among them the free-VRAM floor after pre-warm. It prints the KV pool; the served boots read 1,391,795 tokens with the tier on (2026-10-16, [r27](bench/results/r27-v031-splitkv.md)). A boot without the tier has not been measured at this pin.
 
 **The disk KV tier is optional.** Without `KV_TIER_DIR` the engine runs without vLLM's offloading connector, the same switch as `NO_TIER=1` in [scripts/serve-v0280-daily.sh](scripts/serve-v0280-daily.sh): the GPU pool is the only KV cache, so a prefix evicted from the pool, and every prefix after a restart, is prefilled again. With `KV_TIER_DIR=<directory>` the engine gets the served tiers: 16 GiB of pinned host RAM, then a disk tier in that directory with an LRU cap of `KV_TIER_CAP_GB` (300 GB by default) and a 40 GB free-space floor (patch 0137). On the served checkpoint, needles at 131K and 220K tokens were answered 4 of 4 from the tier after a flood of 16 unrelated 90K prompts (2026-09-09, [R231](bench/results/r231-promote-nvidia.md)). The paired timing comes from the DFlash2 route of 2026-09-04: the same needles took 1.4 to 2.9 s from the tier against 25 to 57 s cold (`results/2026-09-04-r172-cputier`, [docs/HISTORY.md](docs/HISTORY.md)). An agent step resends its whole transcript, so an agent workload revisits a long prefix on nearly every request ([docs/DESIGN.md](docs/DESIGN.md#what-a-cache-hit-is-worth)). The serving host keeps the tier on a fixed-size loopback filesystem so that it cannot fill the root disk ([below](#the-serving-hosts-launchers)).
 
@@ -176,10 +170,14 @@ The served launcher with the sequence limit at 64 and graph capture capped at 32
 
 ### Measured on earlier configurations of the served route
 
-These rows were measured on the vLLM 0.29 route before the NVIDIA checkpoint and the 14.86 GB pin, and have not been repeated on the served configuration. Each names its configuration.
+These rows were measured on earlier configurations of the served route, all on vLLM 0.29, and have not been repeated on the served configuration. Each names its configuration.
 
 | | value | configuration | source |
 |---|---|---|---|
+| TTFT, cold prompt | 0.8 / 3.0 / 17.5 / 50.6 s at 6.7K / 25K / 100K / 200K prompt tokens | the served configuration on vLLM v0.29.0rc2 | 2026-09-23, [R675](bench/results/r675-27b-curves.md) |
+| [SWE-Bench Verified](https://huggingface.co/datasets/princeton-nlp/SWE-bench_Verified), [mini-SWE-agent](https://github.com/SWE-agent/mini-swe-agent) 2.4.6, one attempt | 387/500 = 77.4 % | NVIDIA checkpoint on vLLM v0.29.0rc2, 13.98 GB pin | 2026-09-09, [R231](bench/results/r231-promote-nvidia.md), results `2026-09-09-r227-miniswe-nvidia` |
+| fidelity vs the bf16 model, greedy decode | median absolute log-prob delta 0.00046 at no context, 0.00516 at 30K | NVIDIA checkpoint on vLLM v0.29.0rc2 | 2026-09-09, [R231](bench/results/r231-promote-nvidia.md) |
+| long prompts resident together | five concurrent 120K prompts at 58.8 % of the pool with no preemptions; one 250K prompt | the served configuration on vLLM v0.29.0rc2 | 2026-09-09, [R231/R234](bench/results/r231-promote-nvidia.md) |
 | what a running request costs of the pool | 17,584 tokens-equivalent, 74 concurrent requests by that pricing | MTP at 3 draft tokens, RedHatAI, 13.98 GB pin | 2026-09-05, [R200](bench/results/r200-c32-c64-pool-cost.md) |
 | aggregate prefill under concurrency | 9.0K t/s at 16, 32 and 64 streams, 2K and 8K prompts | DFlash2 at 7 draft tokens, RedHatAI, 13.98 GB pin | 2026-09-05, [R200](bench/results/r200-c32-c64-pool-cost.md) |
 | GSM8K cot zero-shot ([lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness)), n=120, temperature 0 | 0.85 ± 0.03 | DFlash2, RedHatAI, fp32 linear-attention state | 2026-09-04, [R177](bench/results/r168-029-program.md#r177-the-served-route-at-16-sequences-on-the-r142-matrix-instrument-2026-09-04-results2026-09-04-r177-matrix-scriptsr177-matrixsh) |
@@ -189,9 +187,9 @@ The fp32 and bf16 linear-attention states are 0.05 points of top-1 apart on dens
 
 ### The serving host's launchers
 
-The serving host runs the configurations above through the launchers below, which also carry its experiment and evaluation ports, rollback launchers, tier maintenance and power policy. The served one, `serve-r231-nvidia-daily.sh`, starts the same engine as `scripts/serve.sh` with the disk tier on.
+The serving host runs the configurations above through the launchers below, which also carry its experiment and evaluation ports, rollback launchers, tier maintenance and power policy. The served one, `serve-v031-splitkv-daily.sh`, starts the same engine as `scripts/serve.sh` with the disk tier on.
 
-The scripts assume the host layout used here: models under `/srv/qwen5090/models`, compile caches under `/srv/qwen5090/cache`, the disk tier at `/srv/qwen5090/native-l2`, [scripts/serve-v0280-daily.sh](scripts/serve-v0280-daily.sh) installed as `/srv/qwen5090/launch-daily-v0280.sh` and [scripts/serve-r156-daily.sh](scripts/serve-r156-daily.sh) as `/srv/qwen5090/launch-daily-redhat-fp8-0902.sh`. Adjust the paths at the top of each script for a different layout.
+The scripts assume the host layout used here: models under `/srv/qwen5090/models`, compile caches under `/srv/qwen5090/cache`, the disk tier at `/srv/qwen5090/native-l2`, [scripts/serve-v0280-daily.sh](scripts/serve-v0280-daily.sh) installed as `/srv/qwen5090/launch-daily-v0280.sh`, [scripts/serve-r231-nvidia-daily.sh](scripts/serve-r231-nvidia-daily.sh) as `/srv/qwen5090/launch-daily-v0290-r207.sh` and [scripts/serve-r156-daily.sh](scripts/serve-r156-daily.sh) as `/srv/qwen5090/launch-daily-redhat-fp8-0902.sh`. Adjust the paths at the top of each script for a different layout.
 
 ```bash
 # 1. the served weights; the RedHatAI weights for the rollback and the older shapes;
@@ -205,8 +203,9 @@ huggingface-cli download syvai/Qwen3.8-27B-DFlash2-W4A16 --local-dir /srv/qwen50
 #    so either raise SIZE in the script or pass TIER_CAP_GB below the image size.
 sudo bash scripts/setup-native-l2.sh
 
-# 3a. the served image: vLLM v0.29.0rc2 + patches-v0290 + FlashInfer 0.6.16.post3, the nine layers of scripts/build-served-image.sh
-#     under "Engine", tagged as scripts/serve-r231-nvidia-daily.sh expects. Needs Docker BuildKit (buildx,
+# 3a. the served image: patches-v0310/README.md (two docker builds, tagged as scripts/serve-v031-splitkv-daily.sh expects).
+#     The rollback image: vLLM v0.29.0rc2 + patches-v0290 + FlashInfer 0.6.16.post3, the nine layers of scripts/build-served-image.sh,
+#     tagged as scripts/serve-r231-nvidia-daily.sh expects. Needs Docker BuildKit (buildx,
 #     docker driver); the GPU is not used. About 10 minutes once the base image is local, plus its 8.65 GB pull;
 #     plan for 70 GB of disk (R738, 2026-09-26).
 #     DRY_RUN=1 prints the docker commands; CHECK=1 adds an identity check that needs the NVIDIA runtime.
@@ -215,6 +214,8 @@ bash scripts/build-served-image.sh
 docker build -f patches-v0280/Dockerfile.v0280-nvfp4kv -t vllm-qwen38:v0280-nvfp4kv patches-v0280
 
 # 4a. two cards, the served configuration
+bash scripts/serve-v031-splitkv-daily.sh
+# 4a'. the same configuration on vLLM v0.29.0rc2, the rollback
 bash scripts/serve-r231-nvidia-daily.sh
 # 4b. two cards, the route as served 2026-09-06 to 09-09: RedHatAI checkpoint, 13.98 GB pin
 bash scripts/serve-r207-mtp-daily.sh
@@ -237,6 +238,12 @@ MODEL_DIR=/srv/qwen5090/models/qwen3.8-27b-redhat-nvfp4 PORT=8020 NAME=vllm-27b 
   - Validate a decode-path change with [scripts/decode_fidelity.py](scripts/decode_fidelity.py) against the bf16 decode reference ([docs/FIDELITY.md](docs/FIDELITY.md)).
 - **A FlashInfer bump can change deep-context decode 5x without touching short prompts** (2026-09-03, [R168](bench/results/r168-029-program.md)).
   - Measure decode at 30K context after every library change ([scripts/r168-deep-decode.sh](scripts/r168-deep-decode.sh)).
+- **FlashInfer 0.7 turns split-KV off for an NVFP4 KV cache on SM12x** (2026-10-16, [r27](bench/results/r27-v031-splitkv.md)).
+  - The MTP verify attention took 1,377 µs per decode step instead of 380, and decode at 8 streams ran 4.6 to 10.2 % slower than the v0.29 launcher.
+  - Patch 0136 turns it back on; its override has to accept the guard's 0.7 signature `(kv_data_type, device)`.
+- **FlashInfer 0.6.16 can free a cuDNN FP8 GEMM plan that a captured CUDA graph still replays** (2026-10-16, [r27](bench/results/r27-v031-splitkv.md)).
+  - Its per-shape plan cache holds 2,048 entries; each new eager prefill length adds about three, and after about 680 distinct lengths the next replay of an evicted plan faults (Xid 13 on both cards).
+  - Pinning the plans built during graph capture removed the fault in a 900-prefill reproduction; FlashInfer 0.7 does not pick cuDNN for `bmm_fp8` on SM12x.
 - **A request costs more of the pool than its token count.**
   - The linear-attention state is paid per sequence, so the state dtype, not the attention block, sets the per-request floor ([docs/DESIGN.md](docs/DESIGN.md#what-a-request-costs-in-the-pool), [scripts/kv_capacity_probe.py](scripts/kv_capacity_probe.py)).
 - **On two cards, the decode-step cost that grows with concurrency is the custom all-reduce** ([R183](bench/results/r183-decode-profile-levers.md), [scripts/prof_decode_split.py](scripts/prof_decode_split.py)).
@@ -265,7 +272,8 @@ The full list is in [docs/GOTCHAS.md](docs/GOTCHAS.md); the configurations tried
 | path | contents |
 |---|---|
 | [scripts/](scripts/) | Launchers (`serve-*.sh`), image builds (`build-v0290rc*.sh`), host setup, measurement probes (`decode_ss.py`, `decode_fidelity.py`, `fidelity_compare.py`, `kv_capacity_probe.py`, `needle_gate.sh`) and one driver per results directory (`r1xx-*.sh`). |
-| [patches-v0290/](patches-v0290/) | The served patch chain on vLLM v0.29.0rc2, its Dockerfiles, verification scripts and design notes. [patches-v0280/](patches-v0280/README-sm120-nvfp4.md) is the v0.28.0 generation, one README per hunk, which the rollback and the one-card shapes run. |
+| [patches-v0310/](patches-v0310/) | The served patch chain on vLLM v0.31.0, its Dockerfiles, build helpers and port status. |
+| [patches-v0290/](patches-v0290/) | The rollback's patch chain on vLLM v0.29.0rc2, its Dockerfiles, verification scripts and design notes. [patches-v0280/](patches-v0280/README-sm120-nvfp4.md) is the v0.28.0 generation, one README per hunk, which the rollback and the one-card shapes run. |
 | [bench/RESULTS.md](bench/RESULTS.md) | Every measurement, newest first, with the SWE-Bench reproduction package in [bench/](bench/README.md). |
 | [docs/CONFIG.md](docs/CONFIG.md) | Every flag of the served and the rollback configuration, why it is set, and what breaks without it. |
 | [docs/FIDELITY.md](docs/FIDELITY.md) | The bf16 rulers: checkpoints, KV dtypes, state precision, draft length. |
@@ -291,6 +299,7 @@ MIT ([LICENSE](LICENSE)) for the original work: documentation, scripts, probes a
   - Ledgero for [vLLM PR #54163](https://github.com/vllm-project/vllm/pull/54163), prefix-cache reuse under DFlash drafters (0134).
   - waizuichougou for [vLLM PR #53981](https://github.com/vllm-project/vllm/pull/53981), the embedding-table UVA offload (0135).
   - The v0.29 rebase of the chain, the disk-tier eviction patch (0137), the opt-in `pcie_ipc` all-reduce layer (0138) and the per-layer GEMM allowlist (0139) were produced with OpenAI's codex from local source dumps; every build and measurement ran on the host.
+  - The v0.31.0 rebase of the chain ([patches-v0310/](patches-v0310/)) was produced with OpenAI's codex, and the FlashInfer 0.7 split-KV and cuDNN plan-eviction diagnoses with Anthropic's Claude, from local source dumps; every build and measurement ran on the host.
 - Models:
   - [NVIDIA](https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4) for the served weights; [RedHatAI](https://huggingface.co/RedHatAI/Qwen3.8-27B-NVFP4) for the rollback weights; [unsloth](https://huggingface.co/unsloth) and [kelnei](https://huggingface.co/kelnei) for the two checkpoints that tie RedHatAI's on fidelity.
   - [sakamakismile](https://huggingface.co/sakamakismile/Qwen3.8-27B-MTP-NVFP4) and [gittensor](https://huggingface.co/gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090-LMHead4) for the earlier served checkpoints.
@@ -306,8 +315,8 @@ MIT ([LICENSE](LICENSE)) for the original work: documentation, scripts, probes a
   - [syvai/Qwen3.8-27B-DFlash2-W4A16](https://huggingface.co/syvai/Qwen3.8-27B-DFlash2-W4A16), the drafter served until 2026-09-06; [incoai/Qwen3.8-27B-DFlash2](https://huggingface.co/incoai/Qwen3.8-27B-DFlash2), the original bf16 drafter.
   - [gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090-LMHead4](https://huggingface.co/gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090-LMHead4) and [sakamakismile/Qwen3.8-27B-MTP-NVFP4](https://huggingface.co/sakamakismile/Qwen3.8-27B-MTP-NVFP4), the checkpoints served before RedHatAI's.
 - Software:
-  - [vLLM](https://github.com/vllm-project/vllm) and its [releases](https://github.com/vllm-project/vllm/releases); the patch chains here are [patches-v0290/](patches-v0290/) and [patches-v0280/](patches-v0280/README-sm120-nvfp4.md).
-  - [FlashInfer](https://github.com/flashinfer-ai/flashinfer), pinned at 0.6.16.post3 in the served image.
+  - [vLLM](https://github.com/vllm-project/vllm) and its [releases](https://github.com/vllm-project/vllm/releases); the patch chains here are [patches-v0310/](patches-v0310/), [patches-v0290/](patches-v0290/) and [patches-v0280/](patches-v0280/README-sm120-nvfp4.md).
+  - [FlashInfer](https://github.com/flashinfer-ai/flashinfer), 0.7.0.post1 in the served image and 0.6.16.post3 in the rollback image.
   - [llm-compressor](https://github.com/vllm-project/llm-compressor), the quantizer behind the served weights.
   - [DFlash2](https://inco.ai/blog/dflash2/) and its [vLLM PR #52816](https://github.com/vllm-project/vllm/pull/52816).
   - [QuixiAI open GPU kernel modules](https://github.com/QuixiAI/open-gpu-kernel-modules), for peer-to-peer between the two cards.
@@ -328,5 +337,5 @@ MIT ([LICENSE](LICENSE)) for the original work: documentation, scripts, probes a
   - [bench/RESULTS.md](bench/RESULTS.md), every measurement newest first; [docs/HISTORY.md](docs/HISTORY.md), the lineage of the served configuration.
   - [docs/CONFIG.md](docs/CONFIG.md), every flag; [docs/DESIGN.md](docs/DESIGN.md), why it fits; [docs/FIDELITY.md](docs/FIDELITY.md), the bf16 rulers; [docs/R156-DECISION.md](docs/R156-DECISION.md), the checkpoint decision.
   - [docs/GOTCHAS.md](docs/GOTCHAS.md), failure modes; [docs/REJECTED.md](docs/REJECTED.md), what was tried and rejected.
-  - Launchers: [scripts/serve.sh](scripts/serve.sh), the served engine with the host paths as settings ([serve.env.example](serve.env.example)); [scripts/serve-r231-nvidia-daily.sh](scripts/serve-r231-nvidia-daily.sh), the served one; [scripts/serve-r207-mtp-daily.sh](scripts/serve-r207-mtp-daily.sh), the same route on the RedHatAI checkpoint; [scripts/serve-r168-daily.sh](scripts/serve-r168-daily.sh), the DFlash2 route of 2026-09-04; [scripts/serve-r156-daily.sh](scripts/serve-r156-daily.sh), the fp8 shape; [scripts/serve-v0280-daily.sh](scripts/serve-v0280-daily.sh), the one-card and MTP shapes; [scripts/build-served-image.sh](scripts/build-served-image.sh), the image build; [scripts/build-v0290rc2.sh](scripts/build-v0290rc2.sh), the 2026-09-03 build of its first four layers alongside the R168 diagnosis images.
+  - Launchers: [scripts/serve.sh](scripts/serve.sh), the served engine with the host paths as settings ([serve.env.example](serve.env.example)); [scripts/serve-v031-splitkv-daily.sh](scripts/serve-v031-splitkv-daily.sh), the served one; [scripts/serve-r231-nvidia-daily.sh](scripts/serve-r231-nvidia-daily.sh), the same configuration on vLLM v0.29.0rc2; [scripts/serve-r207-mtp-daily.sh](scripts/serve-r207-mtp-daily.sh), the same route on the RedHatAI checkpoint; [scripts/serve-r168-daily.sh](scripts/serve-r168-daily.sh), the DFlash2 route of 2026-09-04; [scripts/serve-r156-daily.sh](scripts/serve-r156-daily.sh), the fp8 shape; [scripts/serve-v0280-daily.sh](scripts/serve-v0280-daily.sh), the one-card and MTP shapes; [scripts/build-served-image.sh](scripts/build-served-image.sh), the build of the v0.29 image; [scripts/build-v0290rc2.sh](scripts/build-v0290rc2.sh), the 2026-09-03 build of its first four layers alongside the R168 diagnosis images.
   - [THIRD_PARTY.md](THIRD_PARTY.md), provenance of every patch and idea; [LICENSE](LICENSE).

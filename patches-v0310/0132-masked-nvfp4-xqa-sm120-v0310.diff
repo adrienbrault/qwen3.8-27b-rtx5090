@@ -1,0 +1,155 @@
+diff --git a/vllm/envs.py b/vllm/envs.py
+--- a/vllm/envs.py
++++ b/vllm/envs.py
+@@ -223,6 +223,7 @@
+     VLLM_FLASHINFER_AUTOTUNE_SKIP_OPS: list[str] | None = None
+     VLLM_FLASHINFER_ALLREDUCE_BACKEND: Literal["auto", "trtllm", "mnnvl"] = "auto"
+     VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE: int = 394 * 1024 * 1024
++    VLLM_FLASHINFER_XQA_USE_ISOLATED_STREAM: bool = False
+     VLLM_XGRAMMAR_CACHE_MB: int = 0
+     VLLM_REGEX_COMPILATION_TIMEOUT_S: int = 5
+     VLLM_MSGPACK_ZERO_COPY_THRESHOLD: int = 256
+@@ -1782,6 +1783,9 @@
+     "VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE": lambda: int(
+         os.getenv("VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE", str(394 * 1024 * 1024))
+     ),
++    "VLLM_FLASHINFER_XQA_USE_ISOLATED_STREAM": lambda: bool(
++        int(os.getenv("VLLM_FLASHINFER_XQA_USE_ISOLATED_STREAM", "0"))
++    ),
+     # Control the maximum number of tokens per expert supported by the
+     # NVFP4 MoE CUTLASS Kernel. This value is used to create a buffer for
+     # the blockscale tensor of activations NVFP4 Quantization.
+diff --git a/vllm/v1/attention/backends/flashinfer.py b/vllm/v1/attention/backends/flashinfer.py
+--- a/vllm/v1/attention/backends/flashinfer.py
++++ b/vllm/v1/attention/backends/flashinfer.py
+@@ -2,6 +2,8 @@
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ """Attention layer with FlashInfer."""
+ 
++from collections.abc import Iterator
++from contextlib import contextmanager
+ from dataclasses import dataclass, replace
+ from enum import Enum
+ from functools import cache, partial
+@@ -115,6 +117,38 @@
+     return trtllm_workspace_buffer
+ 
+ 
++_xqa_isolated_stream: torch.cuda.Stream | None = None
++
++
++def _get_xqa_isolated_stream() -> torch.cuda.Stream:
++    """Return the process-stable stream used for NVFP4 XQA decode."""
++    global _xqa_isolated_stream
++    if _xqa_isolated_stream is None:
++        if torch.cuda.is_current_stream_capturing():
++            raise RuntimeError(
++                "VLLM_FLASHINFER_XQA_USE_ISOLATED_STREAM requires an eager "
++                "XQA warmup before CUDA graph capture."
++            )
++        _xqa_isolated_stream = torch.cuda.Stream()
++    return _xqa_isolated_stream
++
++
++@contextmanager
++def _xqa_isolated_stream_scope(enabled: bool) -> Iterator[None]:
++    """Run a kernel on the isolated XQA stream with capture-safe ordering."""
++    if not (envs.VLLM_FLASHINFER_XQA_USE_ISOLATED_STREAM and enabled):
++        yield
++        return
++    stream = _get_xqa_isolated_stream()
++    current = torch.cuda.current_stream()
++    stream.wait_stream(current)
++    try:
++        with torch.cuda.stream(stream):
++            yield
++    finally:
++        current.wait_stream(stream)
++
++
+ @cache
+ def _sm12x_nvfp4_xqa_enabled() -> bool:
+     """Whether SM12x NVFP4 single-token decode should use XQA."""
+@@ -997,7 +1031,7 @@
+             self.flashinfer_trtllm_api_decode_kernel = None
+         self.use_xqa = (
+             self.flashinfer_trtllm_api_decode_kernel == FlashInferDecodeKernel.XQA
+-            and not self.is_kvcache_nvfp4
++            and (not self.is_kvcache_nvfp4 or self.use_xqa_nvfp4_verify)
+         )
+         self.use_trtllm_gen_varlen_decode = self._uses_trtllm_gen_varlen_decode(
+             vllm_config, self.flashinfer_trtllm_api_decode_kernel, self.use_dcp
+@@ -2560,8 +2594,8 @@
+         if decode_with_xqa:
+             assert not use_dcp
+             # NVFP4KV-SM120: the opt-in XQA path (VLLM_SM12X_NVFP4_XQA) runs
+-            # NVFP4 KV through the paged trtllm-API call below, not the
+-            # dedicated XQA API.
++            # NVFP4 KV through the paged trtllm-API call below; masked verify
++            # batches (0132) take the dedicated XQA API instead.
+             assert not self.is_kvcache_nvfp4 or self.use_fa2_nvfp4_kv
+             assert self.o_sf_scale is None
+             assert output.dtype != FP4_DTYPE
+@@ -2913,29 +2947,44 @@
+                     )
+                     decode_query = canonicalize_singleton_dim_strides(decode_query)
+ 
+-                if decode_with_xqa and not self.is_kvcache_nvfp4:
++                if decode_with_xqa and (
++                    not self.is_kvcache_nvfp4
++                    or attn_metadata.decode.mask is not None
++                ):
+                     bmm1_scale = self.get_xqa_bmm1_scale(
+                         layer, attn_metadata.q_data_type_decode
+                     )
+                     q_len_per_req: int | None = attn_metadata.decode.q_len_per_req
+ 
+-                    flashinfer_xqa_batch_decode_with_kv_cache(
+-                        query=decode_query,
+-                        kv_cache=kv_cache_tuple,
+-                        workspace_buffer=workspace_buffer,
+-                        block_tables=block_tables_decode,
+-                        seq_lens=seq_lens_decode,
+-                        max_seq_len=attn_metadata.decode.max_seq_len,
+-                        bmm1_scale=bmm1_scale,
+-                        bmm2_scale=self.bmm2_scale,
+-                        window_left=self.window_left,
+-                        out=output_padded[:decode_query_tokens],
+-                        sinks=self.sinks,
+-                        kv_layout=get_flashinfer_layout_string(kv_cache_layout),
+-                        q_len_per_req=q_len_per_req,
+-                        mask=attn_metadata.decode.mask,
+-                        q_cu_seq_lens=attn_metadata.decode.q_cu_seq_lens,
+-                    )
++                    with _xqa_isolated_stream_scope(self.is_kvcache_nvfp4):
++                        flashinfer_xqa_batch_decode_with_kv_cache(
++                            query=decode_query,
++                            kv_cache=(
++                                nvfp4_kv_data
++                                if self.is_kvcache_nvfp4
++                                else kv_cache_tuple
++                            ),
++                            workspace_buffer=workspace_buffer,
++                            block_tables=block_tables_decode,
++                            seq_lens=seq_lens_decode,
++                            max_seq_len=attn_metadata.decode.max_seq_len,
++                            bmm1_scale=bmm1_scale,
++                            bmm2_scale=self.bmm2_scale,
++                            window_left=self.window_left,
++                            out=output_padded[:decode_query_tokens],
++                            sinks=self.sinks,
++                            kv_layout=get_flashinfer_layout_string(
++                                kv_cache_layout
++                            ),
++                            q_len_per_req=q_len_per_req,
++                            mask=attn_metadata.decode.mask,
++                            kv_cache_sf=(
++                                nvfp4_kv_block_scales
++                                if self.is_kvcache_nvfp4
++                                else None
++                            ),
++                            q_cu_seq_lens=attn_metadata.decode.q_cu_seq_lens,
++                        )
+                     return output_padded
+ 
+                 assert decode_with_trtllm_gen or (
