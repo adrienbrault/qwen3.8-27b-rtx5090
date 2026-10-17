@@ -16,6 +16,8 @@ The served launcher is [scripts/serve-v031-l1a-daily.sh](../scripts/serve-v031-l
 
 The layer itself defaults off. The host launcher's daily branch enables it for the L1a image; experiment boots of an `*-L1a-ubplan*` image default on and may pass `DRAFT_UB_PLAN=0` for A_S behavior on that image. Other images default off, and `DRAFT_UB_PLAN=1` on an image without that tag fails before boot. With the knob off, any ACTIVE line fails the host launcher's boot check. Rollback is [scripts/serve-v031-splitkv-daily.sh](../scripts/serve-v031-splitkv-daily.sh).
 
+The served 16-sequence shape was measured with [r27-l1a-curves](../bench/results/r27-l1a-curves.md) and [r27-l1a-std-bench](../bench/results/r27-l1a-std-bench.md) on 2026-10-17 (results `2026-10-17-r27-l1a-curves`, `2026-10-17-r27-l1a-std-bench-0930`). The separate [r27-l1a-seq64](../bench/results/r27-l1a-seq64.md) experiment on the same date (results `2026-10-17-r27-l1a-seq64-curves-1226`, [driver](../scripts/r27-l1a-seq64-curves.sh)) sets `EXP=1 SEQS=64 KV_BYTES=14860000000 PCIE_IPC=1 BSS=1`, caps `max_cudagraph_capture_size` at 320, uses loopback port 8029 and empties the separate evaluation disk tier before each boot. It measured the same 1,391,795-token pool; the served sequence limit remains 16.
+
 ## 2026-10-16 to 2026-10-17: A_S on vLLM v0.31.0 and FlashInfer 0.7.0.post1 ([scripts/serve-v031-splitkv-daily.sh](../scripts/serve-v031-splitkv-daily.sh))
 
 The A_S launcher is the v0.29 launcher of the section below ([scripts/serve-r231-nvidia-daily.sh](../scripts/serve-r231-nvidia-daily.sh)) with these deltas, all keyed on the image tag (`vllm-qwen38:v0310*`), so a v0.29 image passed as `CAND_IMG` to an experiment boot keeps the v0.29 argv ([r27](../bench/results/r27-v031-splitkv.md)):

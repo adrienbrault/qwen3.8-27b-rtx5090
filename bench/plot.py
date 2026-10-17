@@ -33,8 +33,7 @@ R27AS = RESULTS / "2026-10-16-r27-as-curves"
 R27C = RESULTS / "2026-10-17-r27-l1a-curves"
 R27_CONC = (1, 2, 4, 6, 8, 12, 16)
 R27_DEPTH = (30000, 60000, 120000, 200000)
-# R793 (2026-09-28): `vllm bench serve` v0.30.0 on ShareGPT V3 and Spec-Bench against the same served launcher, a fresh
-# boot per cell, passes A and B; drawn dashed over R675's decode curve.
+# Historical v0.29 rounds and their accepted per-cell re-runs remain available for comparisons in the write-ups.
 R793 = RESULTS / "2026-09-28-r793-27b-std-bench-1608"
 # R793's ShareGPT pair at 6 streams differed by 3.17 % (833.9 / 807.9 tok/s), above the round's 3 % rule. The rule for its
 # re-run, fixed before the re-run was read: take the re-run's A/B mean if its spread is <= 3 % and the mean is within 3 %
@@ -56,6 +55,11 @@ R794_OVERRIDE = {("sharegpt", 16): (R794B, "r794b-27b-c16")}
 R794_UNIT = "r794-27b-seq64"
 R794_DEC_CONC = (1, 2, 4, 8, 16, 24, 32, 48, 64)
 R794_STD_CONC = (1, 4, 8, 16, 32, 48, 64)
+# R793/R794 protocols re-measured on L1a, 2026-10-17. No historical cell overrides apply to either new round.
+L1A_STD = RESULTS / "2026-10-17-r27-l1a-std-bench-0930"
+L1A_STD_UNIT = "r27-l1a-std-bench"
+L1A_SEQ64 = RESULTS / "2026-10-17-r27-l1a-seq64-curves-1226"
+L1A_SEQ64_UNIT = "r27-l1a-seq64-curves"
 DEC_RUNS = 3
 
 CODE, PROSE, PREFILL = "#0969da", "#cf222e", "#8250df"
@@ -119,9 +123,9 @@ def decode_ss_exact(path, concs, runs=DEC_RUNS):
     return out
 
 
-def std_bench(base=R793, unit=STD_UNIT, concs=STD_CONC, override=STD_OVERRIDE):
-    """A round's cells per (dataset, conc), each the mean of passes A and B; R793's defaults take ShareGPT at 6 streams
-    from R793b (STD_OVERRIDE). Output tok/s is `vllm bench serve`'s output_throughput: all completion tokens over the run's wall
+def std_bench(base=L1A_STD, unit=L1A_STD_UNIT, concs=STD_CONC, override=None):
+    """A round's cells per (dataset, conc), each the mean of passes A and B. Historical comparisons may explicitly pass
+    R793/R794 and their accepted overrides; the L1a defaults have none. Output tok/s is `vllm bench serve`'s output_throughput: all completion tokens over the run's wall
     time, prefill, time to first token and request turnover included. Per stream is 1 / median over requests of
     TPOT = (latency - TTFT) / (output tokens - 1), which includes the steps a request waits while other requests'
     prefill chunks run. The Flash-Next repository's figure uses the same two definitions. A missing cell file, a file
@@ -129,7 +133,7 @@ def std_bench(base=R793, unit=STD_UNIT, concs=STD_CONC, override=STD_OVERRIDE):
     cells, src = {}, {}
     for key, _, _ in STD_DATASETS:
         for c in concs:
-            cbase, cunit = override.get((key, c), (base, unit))
+            cbase, cunit = (override or {}).get((key, c), (base, unit))
             vals = []
             for ps in STD_PASSES:
                 f = cbase / f"{ps}-{key}-c{c}.json"
@@ -196,14 +200,15 @@ def place_labels(ax, series, first, xunit=1.0):
                     break
 
 
-R793_NOTE = ("Solid: decode_ss.py, all streams decoding, 1,024 forced tokens, one code and one prose prompt, 2026-09-23 "
-             "(R675; memory clock offset not recorded).\n"
+L1A_NOTE = ("Solid: decode_ss.py, all streams decoding, 1,024 forced tokens, one code and one prose prompt, three runs per point "
+            "(r27-l1a-curves; memory clock offset not recorded).\n"
              "Dashed: vllm bench serve, closed loop, ShareGPT reference-reply lengths / 256 tokens, mean of passes A and B, "
-             "memory clock offset +4500, 2026-09-28 (R793; ShareGPT at 6 streams from the R793b re-run).")
+            "memory clock offset +4500 (r27-l1a-std-bench).\n"
+            "Both: served v0.31.0 L1a launcher, 16 sequences, stock power, 2026-10-17.")
 
 
-def std_figure(rates, std, name, caption, rounds=("R675", "R793"),
-               title="Decode alone against the standard benchmark, served configuration", note=R793_NOTE, xpos=None, first=2):
+def std_figure(rates, std, name, caption, rounds=("L1a", "L1a"),
+               title="Decode alone against the standard benchmark, served L1a configuration", note=L1A_NOTE, xpos=None, first=2):
     """Two panels, not twin axes (the aggregate and per-stream lines cross): a round's standard-benchmark cells dashed
     over decode_ss solid. `rounds` names the solid and dashed rounds in the legend and the console output. `xpos` maps a
     concurrency to its x position (None: the concurrency itself, ticks at the dashed round's levels); with it every
@@ -266,31 +271,28 @@ def std_figure(rates, std, name, caption, rounds=("R675", "R793"),
 
 
 def figure_decode_scaling():
-    """The served figure: decode alone on the served v0.31.0 L1a launcher (r27-l1a-curves). R793's standard-benchmark lines
-    were measured on the v0.29.0rc2 launcher, so they stay out of this figure until R793 is re-run on the served one."""
+    """The served 16-sequence L1a figure: decode alone and R793's standard-benchmark protocol, both on 2026-10-17."""
     rates = {k: decode_ss_exact(R27C / f"decode-{k}.jsonl", R27_CONC) for k in ("code", "prose")}
-    std_figure(rates, None, "decode-scaling-16.svg",
-               "Decode rate against concurrency on the served L1a 16-sequence boot (r27-l1a-curves), sum over streams and per stream",
-               rounds=("L1a", ""), title="Decode alone, served L1a configuration",
-               note="decode_ss.py, all streams decoding, 1,024 forced tokens, one code and one prose prompt, three runs per "
-                    "point (median), stock power, 2026-10-17, served v0.31.0 L1a launcher (r27-l1a-curves).")
+    std_figure(rates, std_bench(), "decode-scaling-16.svg",
+               "L1a at 16 sequences: decode alone (r27-l1a-curves, solid) and vllm bench serve on ShareGPT V3 and Spec-Bench "
+               "(r27-l1a-std-bench, dashed), decode aggregate / wall-clock output tok/s and per stream")
 
 
 def figure_decode_scaling_64():
-    """R794 measured both lines on the served launcher booted with the sequence limit at 64, a configuration other than
+    """R794's protocol re-measured on L1a with the sequence limit at 64, a configuration other than
     the served 16 sequences, so it is its own figure: decode_ss on one boot, vllm bench serve with a fresh boot per cell.
     The x axis is log2: nine concurrencies from 1 to 64 would crowd the left of a linear axis."""
-    rates = {k: decode_ss_exact(R794 / f"decode-{k}.jsonl", R794_DEC_CONC) for k in ("code", "prose")}
-    std = std_bench(R794, R794_UNIT, R794_STD_CONC, R794_OVERRIDE)
+    rates = {k: decode_ss_exact(L1A_SEQ64 / f"decode-{k}.jsonl", R794_DEC_CONC) for k in ("code", "prose")}
+    std = std_bench(L1A_SEQ64, L1A_SEQ64_UNIT, R794_STD_CONC)
     std_figure(rates, std, "decode-scaling-64.svg",
-               "Decode rate against concurrency on the 64-sequence boot: decode alone (R794, solid) and vllm bench serve "
-               "on ShareGPT V3 and Spec-Bench (R794, dashed), sum over streams and per stream",
-               rounds=("R794", "R794"), title="Decode alone against the standard benchmark, 64-sequence boot",
+               "L1a at 64 sequences (r27-l1a-seq64): decode alone (solid) and vllm bench serve on ShareGPT V3 and Spec-Bench "
+               "(dashed), decode aggregate / wall-clock output tok/s and per stream",
+               rounds=("L1a seq-64", "L1a seq-64"), title="Decode alone against the standard benchmark, L1a 64-sequence boot",
                note=("Solid: decode_ss.py, all streams decoding, 1,024 forced tokens, one code and one prose prompt, one boot. "
                      "Dashed: vllm bench serve, closed loop, ShareGPT reference-reply lengths / 256 tokens,\n"
-                     "mean of passes A and B, a fresh boot per cell. Both: the served launcher with the sequence limit at 64 "
-                     f"(14.86 GB pin, graph capture capped at 320), memory clock offset +4500, {R794.name[:10]} (R794;\n"
-                     "ShareGPT at 16 streams from the R794b re-run). Streams on a log scale."),
+                     "mean of passes A and B, a fresh boot per cell. Both: L1a with the sequence limit at 64, 14.86 GB pin, "
+                     "graph capture capped at 320, stock power,\n"
+                     "memory clock offset +4500, 2026-10-17 (r27-l1a-seq64). Streams on a log scale."),
                xpos=math.log2, first=math.log2(4))
 
 

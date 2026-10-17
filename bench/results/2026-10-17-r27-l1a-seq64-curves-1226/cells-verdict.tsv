@@ -1,0 +1,15 @@
+dataset	conc	out_tps_A	out_tps_B	spread_pct	spread_gated	verdict	reasons
+sharegpt	1	224.48	224.15	0.14	no	PUBLISHABLE	
+sharegpt	4	769.22	769.88	0.09	yes	PUBLISHABLE	
+sharegpt	8	1253.90	1235.53	1.48	yes	PUBLISHABLE	
+sharegpt	16	1795.91	1808.15	0.68	yes	PUBLISHABLE	
+sharegpt	32	2243.20	2237.09	0.27	yes	PUBLISHABLE	
+sharegpt	48	2408.04	2413.75	0.24	yes	PUBLISHABLE	
+sharegpt	64	2499.40	2515.90	0.66	yes	PUBLISHABLE	
+specbench	1	248.32	248.96	0.26	no	PUBLISHABLE	
+specbench	4	853.59	855.52	0.23	yes	PUBLISHABLE	
+specbench	8	1385.16	1394.75	0.69	yes	PUBLISHABLE	
+specbench	16	2065.24	2058.60	0.32	yes	PUBLISHABLE	
+specbench	32	2627.25	2628.84	0.06	yes	PUBLISHABLE	
+specbench	48	2883.70	2870.81	0.45	yes	PUBLISHABLE	
+specbench	64	2993.74	2989.66	0.14	yes	PUBLISHABLE	

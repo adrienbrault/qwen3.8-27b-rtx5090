@@ -6,14 +6,16 @@ Every number here was measured on one machine on the date given, and each links 
 
 ## Numbers
 
-Decode on [scripts/serve-v031-l1a-daily.sh](scripts/serve-v031-l1a-daily.sh) (image `vllm-qwen38:v0310-r27c-A_S-L1a-ubplan`), one boot at stock power limits, measured 2026-10-17 07:12 to 07:30 UTC ([r27-l1a-curves](bench/results/r27-l1a-curves.md), results `2026-10-17-r27-l1a-curves`, driver [scripts/r27-l1a-curves.sh](scripts/r27-l1a-curves.sh)): [scripts/decode_ss.py](scripts/decode_ss.py), greedy, one code and one prose prompt, 1,024 forced tokens per stream, all streams starting together, three runs per shape. Rates are tokens per second per stream over the samples where every stream was decoding; the aggregate is the sum over the streams running together. Method: [How the numbers are measured](#how-the-numbers-are-measured).
+Measurements on [scripts/serve-v031-l1a-daily.sh](scripts/serve-v031-l1a-daily.sh), image `vllm-qwen38:v0310-r27c-A_S-L1a-ubplan`, at stock power limits on 2026-10-17: decode and prefill 07:12 to 07:30 UTC ([r27-l1a-curves](bench/results/r27-l1a-curves.md), results `2026-10-17-r27-l1a-curves`, [driver](scripts/r27-l1a-curves.sh)); standard benchmark 09:31 to 12:09 UTC ([r27-l1a-std-bench](bench/results/r27-l1a-std-bench.md), results `2026-10-17-r27-l1a-std-bench-0930`, [driver](scripts/r27-l1a-std-bench.sh)). [decode_ss.py](scripts/decode_ss.py) measures greedy, synchronized code and prose streams with 1,024 forced tokens, three runs per shape on one boot; `vllm bench serve` v0.30.0 with the request shim measures closed-loop ShareGPT V3 and Spec-Bench requests, two passes with a fresh boot per cell. Decode rate is tokens per second per stream while every stream is decoding, and decode aggregate is the sum over those concurrent streams; standard-benchmark output tok/s is a wall-clock rate including prefill and request turnover. Method: [How the numbers are measured](#how-the-numbers-are-measured).
 
-![Decode alone on the served configuration, sum over streams and per stream](docs/img/decode-scaling-16.svg)
+![L1a decode alone and standard benchmark, decode aggregate and wall-clock output tok/s at left, per stream at right](docs/img/decode-scaling-16.svg)
 
-The solid blue and red lines show code and prose decode alone; the left panel sums the concurrent streams and the right panel shows the per-stream rate. The dashed standard-benchmark lines appear in the figures under [Other configurations](#the-v0290rc2-launcher-at-64-sequences).
+The solid blue and red lines show code and prose decode alone, with decode aggregate at left and per-stream rate at right. Dashed green and brown lines show ShareGPT V3 and Spec-Bench: wall-clock output tok/s at left and the mean of each pass's 1000 / TPOT p50 at right.
 
 - The aggregate rises at every step to the served limit of 16 sequences: 2,677.5 t/s of code and 2,228.5 of prose at 16 streams, 167.3 and 139.3 per stream. One stream decodes 241.7 t/s of code and 190.4 of prose ([r27-l1a-curves](bench/results/r27-l1a-curves.md)).
 - The rates depend on how many draft tokens the MTP head gets accepted, which depends on the text: 0.634 to 0.679 of the draft tokens on code and 0.460 to 0.503 on prose across the concurrency sweep ([r27-l1a-curves](bench/results/r27-l1a-curves.md)).
+- At 16 streams the standard benchmark reads 1,702.0 / 1,970.8 wall-clock output tok/s and 120.3 / 133.2 per stream for ShareGPT V3 / Spec-Bench; time to first token p50 is 112.5 / 116.5 ms, the mean of the two pass medians ([r27-l1a-std-bench](bench/results/r27-l1a-std-bench.md)).
+- The L1a measurements with the sequence limit raised to 64 are under [Other configurations](#l1a-at-64-sequences).
 
 ![Cold prefill rate and decode rate at depth against prompt length](docs/img/prefill.svg)
 
@@ -25,6 +27,8 @@ Cold prefill on the same boot runs at 9,567 t/s at 6.7K prompt tokens and 3,993 
 | KV pool on the GPUs | 1,391,795 tokens, NVFP4, pinned at 14.86 GB per card, 16 sequences | 2026-10-17, [r27-l1a-curves](bench/results/r27-l1a-curves.md) |
 | free VRAM after the launcher's pre-warm | 3,613 MiB per card | 2026-10-17, [r27-l1a-curves](bench/results/r27-l1a-curves.md) |
 | time to first token, cold prompt | 0.70 / 2.93 / 17.3 / 50.1 s at 6.7K / 25K / 100K / 200K prompt tokens | 2026-10-17, [r27-l1a-curves](bench/results/r27-l1a-curves.md) |
+| `vllm bench serve` v0.30.0, 16 streams | 1,702.0 / 1,970.8 output tok/s, wall clock; 120.3 / 133.2 per stream (mean of each pass's 1000 / TPOT p50), ShareGPT V3 / Spec-Bench | 2026-10-17, [r27-l1a-std-bench](bench/results/r27-l1a-std-bench.md), results `2026-10-17-r27-l1a-std-bench-0930` |
+| time to first token, standard benchmark, 16 streams | p50 112.5 / 116.5 ms; p99 501.7 / 285.4 ms, ShareGPT V3 / Spec-Bench, means of the two pass quantiles | 2026-10-17, [r27-l1a-std-bench](bench/results/r27-l1a-std-bench.md), results `2026-10-17-r27-l1a-std-bench-0930` |
 | KV tiers behind the pool | 16 GiB host RAM, then 300 GB of disk with LRU eviction, kept across restarts | 2026-10-17, [r27-l1a-curves](bench/results/r27-l1a-curves.md) |
 | fidelity vs the [bf16 model](https://huggingface.co/Qwen/Qwen3.8-27B), dense text, 555,549 positions | top-1 90.63 to 90.71 %, perplexity +1.830 to +1.901 % | 2026-10-17, [r27 L1a](bench/results/r27-l1a.md), results `2026-10-17-r27-audition-screen-022747-4123606` |
 
@@ -66,17 +70,17 @@ Also passing (2026-10-17, [r27 L1a](bench/results/r27-l1a.md), results `2026-10-
 
 - **Decode** ([r27-l1a-curves](bench/results/r27-l1a-curves.md), [scripts/r27-l1a-curves.sh](scripts/r27-l1a-curves.sh); the same instruments as R675): `decode_ss.py` starts all streams together on one code or one prose prompt, forces 1,024 tokens per stream at temperature 0, and takes the rate over the samples where every stream was decoding, median of three runs. Acceptance is accepted draft tokens over draft tokens from the server's counters. At depth, `--ctx N` puts N/1.3 filler words in front of the prompt; the probe does not record the prompt's token count, so the figure plots those points against N, two runs per point.
 - **Prefill** ([r27-l1a-curves](bench/results/r27-l1a-curves.md)): `kv_capacity_probe.py --conc 1 --tokens 1`, one request at a time with one output token, three prompts per length, each with a fresh seed so that neither the GPU prefix cache nor the CPU and disk tiers hold it.
-- **Power and clocks**: r27-l1a-curves, r27-as-curves and R793 ran at the stock 600 / 575 W limits. R793 ran at memory clock offset +4500 and core offset 0, read back at boot and after each cell; r27-l1a-curves, r27-as-curves and R675 did not record the offset ([r27-l1a-curves](bench/results/r27-l1a-curves.md), [R793](bench/results/r793-27b-std-bench.md#against-the-decode-curve-r675)).
+- **Power and clocks**: r27-l1a-curves, r27-l1a-std-bench and r27-l1a-seq64 ran at the stock 600 / 575 W limits on 2026-10-17 (results `2026-10-17-r27-l1a-curves`, `2026-10-17-r27-l1a-std-bench-0930`, `2026-10-17-r27-l1a-seq64-curves-1226`). The [standard benchmark](bench/results/r27-l1a-std-bench.md) and [seq-64 round](bench/results/r27-l1a-seq64.md) recorded memory clock offset +4500 and core offset 0 at boot and after each cell; [r27-l1a-curves](bench/results/r27-l1a-curves.md) did not record the offset.
 
 ### Standard benchmark (vllm bench serve)
 
-Measured on 2026-09-28 against the previous launcher, [scripts/serve-r231-nvidia-daily.sh](scripts/serve-r231-nvidia-daily.sh) (the same configuration on vLLM v0.29.0rc2); the numbers are under [Other configurations](#measured-on-earlier-configurations-of-the-served-route).
+Measured on 2026-10-17 09:31 to 12:09 UTC against the served [scripts/serve-v031-l1a-daily.sh](scripts/serve-v031-l1a-daily.sh), results `2026-10-17-r27-l1a-std-bench-0930` ([write-up](bench/results/r27-l1a-std-bench.md)).
 
-- **Client** ([R793](bench/results/r793-27b-std-bench.md), [scripts/r793-27b-std-bench.sh](scripts/r793-27b-std-bench.sh)): `vllm bench serve` v0.30.0 through the request shim of the Flash-Next repository, closed loop at 1, 2, 4, 6, 8, 12 and 16 concurrent requests, greedy, streamed, thinking on.
+- **Client** ([r27-l1a-std-bench](bench/results/r27-l1a-std-bench.md), [scripts/r27-l1a-std-bench.sh](scripts/r27-l1a-std-bench.sh)): `vllm bench serve` v0.30.0 through the request shim of the Flash-Next repository, closed loop at 1, 2, 4, 6, 8, 12 and 16 concurrent requests, greedy, streamed, thinking on.
 - **Samples**: ShareGPT V3, 400 conversations, seed 7310, each output forced with `min_tokens` to the reference reply's length (mean 210 tokens); Spec-Bench, all 480 questions, each output forced to 256 tokens. The outputs are truncated reasoning, not answers.
-- **Cells**: a fresh boot per cell, pass A over all 14 cells and then pass B, a cell being the mean of the two. Every cell had 0 failed requests and 0 cached prompt tokens, and the passes agree within 1.04 %. ShareGPT at 6 streams comes from a re-run of that pair on the same day ([R793b](bench/results/r793-27b-std-bench.md#sharegpt-at-6-streams-comes-from-a-re-run-of-that-pair)).
+- **Cells**: a fresh boot per cell, pass A over all 14 cells and then pass B, a cell being the mean of the two. Every cell had 0 failed requests, 0 preemptions and 0 cached prompt tokens; the maximum A/B output-rate spread is 2.08 % at ShareGPT c1 ([r27-l1a-std-bench](bench/results/r27-l1a-std-bench.md)).
 - **Metrics**: output tok/s is completion tokens over the time from the first request's start to the last completion, with prefill, time to first token and turnover between requests included. The per-stream rate is 1000 / TPOT p50, where TPOT includes the steps a request waits while other requests' prefill chunks run.
-- **Against the decode curve**: the two lines differ in output length, prompts, interleaved prefill, day and memory clock offset, so the gap between them is not a measure of what prefill costs decode ([R793](bench/results/r793-27b-std-bench.md#against-the-decode-curve-r675)).
+- **Against the decode curve**: the two lines differ in output length, prompts, interleaved prefill, request turnover and boot, and the decode-only round did not record its memory clock offset; the gap is not a measure of what prefill costs decode ([r27-l1a-std-bench](bench/results/r27-l1a-std-bench.md#the-difference-spans-the-engine-upgrade-and-the-l1a-layer)).
 
 ## Hardware
 
@@ -159,19 +163,21 @@ The first three columns were measured on 2026-08-31 on the [gittensor](https://h
 
 DFlash2 accepts few draft tokens per step, so its decode is bound by weight bandwidth, which the second card doubles. MTP accepts more per step and amortizes the weight reads, so on MTP the second card adds KV space more than speed. Tool-eval does not separate the three shapes; the bf16 rulers separate them by KV dtype ([docs/FIDELITY.md](docs/FIDELITY.md)).
 
-### The v0.29.0rc2 launcher at 64 sequences
+### L1a at 64 sequences
 
-The previous launcher ([scripts/serve-r231-nvidia-daily.sh](scripts/serve-r231-nvidia-daily.sh), vLLM v0.29.0rc2) with the sequence limit at 64 and graph capture capped at 320 decodes 4,807 t/s of code and 3,961 of prose at 64 streams, and `vllm bench serve` reads 2,010 (ShareGPT V3) and 2,571 (Spec-Bench) output tok/s there, with no request preempted ([R794](bench/results/r794-27b-seq64.md), 2026-09-28).
+The L1a launcher ([scripts/serve-v031-l1a-daily.sh](scripts/serve-v031-l1a-daily.sh), vLLM v0.31.0) with the sequence limit at 64 and graph capture capped at 320 decodes 4,727.2 t/s of code and 3,914.3 of prose at 64 streams, 73.9 and 61.2 per stream. `vllm bench serve` reads 2,507.7 / 2,991.7 wall-clock output tok/s and 44.9 / 51.6 per stream for ShareGPT V3 / Spec-Bench, with no request preempted ([r27-l1a-seq64](bench/results/r27-l1a-seq64.md), 2026-10-17 12:27 to 15:04 UTC, results `2026-10-17-r27-l1a-seq64-curves-1226`, [driver](scripts/r27-l1a-seq64-curves.sh)).
 
-![Decode alone (solid) and vllm bench serve on ShareGPT V3 and Spec-Bench (dashed) on the 64-sequence boot, sum over streams and per stream](docs/img/decode-scaling-64.svg)
+![L1a at 64 sequences: decode alone (solid) and vllm bench serve on ShareGPT V3 and Spec-Bench (dashed), decode aggregate and wall-clock output tok/s at left, per stream at right](docs/img/decode-scaling-64.svg)
 
 | | value | configuration | source |
 |---|---|---|---|
-| concurrent requests at 64 sequences | 64 running, 0 preemptions over the decode sweep and 30 benchmark cells; KV-cache gauge peak 81.0 % | the v0.29.0rc2 launcher at 64 sequences, 14.86 GB pin | 2026-09-28, [R794](bench/results/r794-27b-seq64.md) |
+| concurrent requests at 64 sequences | 64 running, 0 preemptions over the decode sweep and 28 benchmark cells; KV-cache gauge peak 81.0 % | L1a at 64 sequences, 14.86 GB pin, pool 1,391,795 | 2026-10-17, [r27-l1a-seq64](bench/results/r27-l1a-seq64.md), results `2026-10-17-r27-l1a-seq64-curves-1226` |
+
+On 2026-09-28, the v0.29.0rc2 launcher at 64 sequences and the same pin decoded 4,807.4 / 3,961.0 aggregate t/s of code / prose, and `vllm bench serve` read 2,009.8 / 2,570.8 wall-clock output tok/s for ShareGPT V3 / Spec-Bench ([R794](bench/results/r794-27b-seq64.md), results `2026-09-28-r794-27b-seq64-2018`, with ShareGPT c16 from `2026-09-28-r794b-27b-c16-2312`). The [L1a write-up](bench/results/r27-l1a-seq64.md) places both dated arms and their deltas beside each other; the change spans v0.29 → v0.31 A_S → L1a.
 
 ### Measured on earlier configurations of the served route
 
-These rows were measured on earlier configurations of the served route and have not been repeated on the served configuration. Each names its configuration.
+These rows preserve measurements on earlier configurations of the served route. Each names its configuration.
 
 | | value | configuration | source |
 |---|---|---|---|

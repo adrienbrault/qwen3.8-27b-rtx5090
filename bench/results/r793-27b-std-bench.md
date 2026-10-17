@@ -2,6 +2,8 @@
 
 2026-09-28 16:09 to 19:04 UTC, results `2026-09-28-r793-27b-std-bench-1608` (raw records in [`2026-09-28-r793-27b-std-bench-1608/`](2026-09-28-r793-27b-std-bench-1608/)); ShareGPT at 6 streams from the re-run on 2026-09-28 19:05 to 19:16 UTC, results `2026-09-28-r793b-27b-c6-1905` (raw records in [`2026-09-28-r793b-27b-c6-1905/`](2026-09-28-r793b-27b-c6-1905/)); driver [`scripts/r793-27b-std-bench.sh`](../../scripts/r793-27b-std-bench.sh); dashed lines of `docs/img/decode-scaling-16.svg` drawn by [`bench/plot.py`](../plot.py). The raw records are the client's per-cell JSONs without `generated_texts` and `itls`, plus `summary.txt`, `boots.tsv`, `runs.tsv`, `foreign.tsv` and `audit.txt`.
 
+The R793 records supplied the earlier standard-benchmark figure. Since 2026-10-17, `decode-scaling-16.svg` uses the L1a re-measurement, results `2026-10-17-r27-l1a-std-bench-0930`; [r27-l1a-std-bench](r27-l1a-std-bench.md) places these published R793/R793b values beside the L1a values and their deltas. The measurements below remain those of the dated v0.29.0rc2 configuration.
+
 ## Conditions
 
 - **Configuration:** the served launcher (R231/R234: nvidia/Qwen3.8-27B-NVFP4, NVFP4 KV at the 14.86 GB pin, MTP at 3 draft tokens, `pcie_ipc` all-reduce, batch-sharded sampling, 16 sequences). Image `vllm-qwen38:v0290rc2-nvfp4kv-revival-prs-fi0616-pcieipc-bsshash-mtppcie-mtpcache-eagleshift`, port 8020.
@@ -69,7 +71,7 @@ The fresh boot empties the GPU cache and the CPU tier but not the disk tier, whi
 
 ## Against the decode curve (R675)
 
-The figure draws these lines dashed over R675's decode curve (2026-09-23, results `2026-09-23-r675-27b-curves`). R675 is `decode_ss.py`: all streams start together, 1,024 forced tokens, one code and one prose prompt, the rate taken over the samples where every stream was decoding.
+The earlier figure drew these lines dashed over R675's decode curve (2026-09-23, results `2026-09-23-r675-27b-curves`). R675 is `decode_ss.py`: all streams start together, 1,024 forced tokens, one code and one prose prompt, the rate taken over the samples where every stream was decoding.
 
 - **Measurements:**
   - At 16 streams the dashed lines read 1,330 / 1,628 output tok/s and 97 / 111 per stream, against R675's 2,442 / 2,086 decode aggregate and 153 / 130 per stream (ShareGPT / Spec-Bench, code / prose).
