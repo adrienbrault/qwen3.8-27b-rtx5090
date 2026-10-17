@@ -1,0 +1,45 @@
+# A_S_L1a = A_S + r27 lever L1a (bench/results/r27-l1a.md): the MTP drafter's q_len=1 FlashInfer builds
+# plan from the CPU upper bound instead of the blocking seq_lens.cpu() D2H (flashinfer.py build), with an event that
+# orders consecutive draft plans on the same wrapper. Python-only layer; OFF unless VLLM_SM12X_DRAFT_UB_PLAN=1
+# (unset/0 = A_S behaviour). Build context = patches-v0310/ (L1a-draft-ub-plan.diff only).
+# Build on flan: docker build --network=none --pull=false -t vllm-qwen38:v0310-r27c-A_S-L1a-ubplan -f patches-v0310/Dockerfile.A_S-L1a-ubplan patches-v0310
+FROM vllm-qwen38:v0310-r27c-A_S-splitkv
+COPY L1a-draft-ub-plan.diff /tmp/r27-L1a.diff
+RUN set -eu; \
+    SITE="$(CUDA_VISIBLE_DEVICES="" python3 -c 'import vllm, pathlib; print(pathlib.Path(vllm.__file__).parent.parent)')"; \
+    test "$SITE" = /usr/local/lib/python3.12/dist-packages; \
+    FI="$SITE/vllm/v1/attention/backends/flashinfer.py"; \
+    SP="$SITE/vllm/v1/worker/gpu/spec_decode/autoregressive/speculator.py"; \
+    echo "a81d0d6340b9f10f032ea45b50d6b311186458542265adece656e05d22a07042  /tmp/r27-L1a.diff" | sha256sum -c -; \
+    printf '%s  %s\n' \
+      3cde4e61f5a822a0ff8c85da98047816f9bac818b5dda39864d366683ab81759 "$FI" \
+      8abe7b047d7659b2429c3fe3678a0582047890027968f5250afe7bfab6028b81 "$SP" | sha256sum -c -; \
+    patch -d "$SITE" -p1 --fuzz=0 --no-backup-if-mismatch --batch < /tmp/r27-L1a.diff; \
+    printf '%s  %s\n' \
+      5ef5aad3fb9defe0b3fbf06b2c348323739dc498838b94667997d54adae68de3 "$FI" \
+      ea4d36a510defd44688fb2bd404dfa3cecc1b080a29ba3c846e676e3c3fb2d48 "$SP" | sha256sum -c -; \
+    grep -c '_sm12x_draft_ub_plan_seq_lens(' "$FI" | grep -qx 2; \
+    grep -c 'SM12X draft UB plan USED' "$FI" | grep -qx 1; \
+    grep -c 'SM12X draft UB plan ACTIVE' "$SP" | grep -qx 1; \
+    grep -c '_sm12x_wait_draft_plan(self)' "$SP" | grep -qx 1; \
+    find "$SITE/vllm/v1/attention/backends/__pycache__" "$SITE/vllm/v1/worker/gpu/spec_decode/autoregressive/__pycache__" \
+      \( -name 'flashinfer.*.pyc' -o -name 'speculator.*.pyc' \) -delete 2>/dev/null || true; \
+    rm -f /tmp/r27-L1a.diff; \
+    env -u VLLM_SM12X_DRAFT_UB_PLAN CUDA_VISIBLE_DEVICES="" python3 - "$FI" "$SP" <<'PY'
+import py_compile, sys, types
+for path in sys.argv[1:]:
+    py_compile.compile(path, doraise=True)
+try:
+    import vllm.v1.attention.backends.flashinfer as fi
+    import vllm.v1.worker.gpu.spec_decode.autoregressive.speculator as sp
+except Exception as exc:  # noqa: BLE001 - GPU-free build: sha pins + greps + py_compile above are the gate
+    print("r27 L1a: WARNING module import not possible at build time (%s: %s); "
+          "sha pins, greps and py_compile passed; import is checked at boot" % (type(exc).__name__, exc))
+    sys.exit(0)
+assert sp._sm12x_tag_draft_ub_plan([[types.SimpleNamespace(metadata_builders=[])]]) == 0
+untagged = types.SimpleNamespace(use_dcp=False)
+assert fi._sm12x_draft_ub_plan_seq_lens(untagged, None, False) is None
+for name in ("_sm12x_wait_draft_plan", "_sm12x_record_draft_plan"):
+    assert callable(getattr(sp, name)), name
+print("r27 L1a layer imported; env-off helpers inert")
+PY

@@ -1,0 +1,149 @@
+--- a/vllm/v1/attention/backends/flashinfer.py
++++ b/vllm/v1/attention/backends/flashinfer.py
+@@ -245,6 +245,35 @@
+     import os
+ 
+     return os.environ.get("VLLM_SM12X_XQA_VERIFY", "0") == "1"
++
++
++# r27 L1a (VLLM_SM12X_DRAFT_UB_PLAN=1): the MTP speculator tags its own draft
++# FlashInfer builders (speculator.py `_sm12x_tag_draft_ub_plan`). For those
++# builders only, a pure q_len=1 draft-decode build plans from the CPU upper
++# bound instead of the blocking `seq_lens.cpu()` D2H. KV writes stay exact
++# (slot mappings come from GPU positions); the drafter may attend to a few
++# stale positions past its true length on requests with rejections, which can
++# move acceptance but not the target's output distribution. Untagged builders
++# (every builder when the env is unset) take the unchanged path.
++def _sm12x_draft_ub_plan_seq_lens(
++    builder, common_attn_metadata, use_cascade: bool
++) -> "torch.Tensor | None":
++    if not getattr(builder, "_sm12x_draft_ub_plan", False):
++        return None
++    seq_lens_cpu_upper_bound = common_attn_metadata.seq_lens_cpu_upper_bound
++    if (
++        seq_lens_cpu_upper_bound is None
++        or use_cascade
++        or builder.use_dcp
++        or common_attn_metadata.max_query_len != 1
++    ):
++        return None
++    logger.warning_once(
++        "SM12X draft UB plan USED: draft-decode FlashInfer plan from "
++        "seq_lens_cpu_upper_bound (no seq_lens D2H)",
++        scope="process",
++    )
++    return seq_lens_cpu_upper_bound
+ 
+ 
+ def _pack_draft_block_bool_mask(
+@@ -1780,7 +1809,12 @@
+         # (block_tables, seq_lens) directly.
+         needs_seq_lens_cpu = self.use_dcp or use_cascade or not all_uses_trtllm
+         if needs_seq_lens_cpu:
+-            if (
++            draft_ub_seq_lens_cpu = _sm12x_draft_ub_plan_seq_lens(
++                self, common_attn_metadata, use_cascade
++            )
++            if draft_ub_seq_lens_cpu is not None:
++                seq_lens_cpu = draft_ub_seq_lens_cpu
++            elif (
+                 self._num_speculative_tokens == 0
+                 and common_attn_metadata.seq_lens_cpu_upper_bound is not None
+             ):
+--- a/vllm/v1/worker/gpu/spec_decode/autoregressive/speculator.py
++++ b/vllm/v1/worker/gpu/spec_decode/autoregressive/speculator.py
+@@ -29,6 +29,67 @@
+ logger = init_logger(__name__)
+ 
+ 
++def _sm12x_tag_draft_ub_plan(attn_groups: list[list[AttentionGroup]]) -> int:
++    """r27 L1a: tag this speculator's own FlashInfer draft builders.
++
++    Opt-in with VLLM_SM12X_DRAFT_UB_PLAN=1; a no-op (nothing tagged, nothing
++    logged) otherwise. See `_sm12x_draft_ub_plan_seq_lens` in flashinfer.py.
++    """
++    import os
++
++    if os.environ.get("VLLM_SM12X_DRAFT_UB_PLAN", "0") != "1":
++        return 0
++    tagged = 0
++    for groups in attn_groups:
++        for group in groups:
++            for builder in group.metadata_builders:
++                if type(builder).__name__ == "FlashInferMetadataBuilder":
++                    builder._sm12x_draft_ub_plan = True
++                    tagged += 1
++    if tagged:
++        logger.warning_once(
++            "SM12X draft UB plan ACTIVE: VLLM_SM12X_DRAFT_UB_PLAN=1, %d draft "
++            "FlashInfer builder(s) plan q_len=1 draft decode from "
++            "seq_lens_cpu_upper_bound (no seq_lens D2H)",
++            tagged,
++            scope="process",
++        )
++    else:
++        logger.warning_once(
++            "SM12X draft UB plan INACTIVE: VLLM_SM12X_DRAFT_UB_PLAN=1 but no "
++            "FlashInfer draft builder was found",
++            scope="process",
++        )
++    return tagged
++
++
++def _sm12x_wait_draft_plan(speculator) -> None:
++    """r27 L1a: before re-planning the same FlashInfer draft wrapper, wait until
++    the previous draft plan's host->device staging copies have executed.
++
++    FlashInfer's plan() stages its schedule in a per-wrapper page-locked buffer
++    and copies it with cudaMemcpyAsync (fi070 scheduler.cuh:504); without the
++    seq_lens D2H nothing else orders a second plan after the first copy. This
++    waits on an event recorded right after the previous draft build (not on the
++    end of the stream), so the CPU plans step k+1 while step k's graph runs.
++    """
++    event = speculator._sm12x_draft_plan_event
++    if event is not None and not torch.cuda.is_current_stream_capturing():
++        from vllm.utils.gpu_sync_debug import gpu_sync_allowed
++
++        with gpu_sync_allowed():
++            event.synchronize()
++        speculator._sm12x_draft_plan_event = None
++
++
++def _sm12x_record_draft_plan() -> "torch.cuda.Event | None":
++    if torch.cuda.is_current_stream_capturing():
++        return None
++    event = torch.cuda.Event()
++    event.record()
++    return event
++
++
+ class AutoRegressiveSpeculator(DraftModelSpeculator):
+     def __init__(self, vllm_config: VllmConfig, device: torch.device):
+         super().__init__(vllm_config, device)
+@@ -95,6 +156,8 @@
+             target_input_buffers,
+             target_attn_groups,
+         )
++        self._sm12x_draft_ub_plan = _sm12x_tag_draft_ub_plan(self.attn_groups) > 0
++        self._sm12x_draft_plan_event = None
+         self._configure_fused_multi_step_decode()
+ 
+     def _configure_fused_multi_step_decode(self) -> None:
+@@ -559,6 +622,8 @@
+                 slot_mappings_by_layer = build_slot_mappings_by_layer(
+                     slot_mappings, self.kv_cache_config
+                 )
++                if getattr(self, "_sm12x_draft_ub_plan", False):
++                    _sm12x_wait_draft_plan(self)
+                 attn_metadata = self._build_uniform_attn_metadata(
+                     num_reqs=num_reqs,
+                     batch_desc=batch_desc,
+@@ -566,6 +631,8 @@
+                     seq_lens_cpu_upper_bound=seq_lens_cpu_upper_bound,
+                     step=step,
+                 )
++                if getattr(self, "_sm12x_draft_ub_plan", False):
++                    self._sm12x_draft_plan_event = _sm12x_record_draft_plan()
+ 
+             self.current_draft_step.fill_(step)
+ 

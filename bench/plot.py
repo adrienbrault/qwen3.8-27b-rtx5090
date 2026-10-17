@@ -27,9 +27,12 @@ ROOT = Path(__file__).resolve().parent.parent
 RESULTS = ROOT / "bench" / "results"
 OUT = ROOT / "docs" / "img"
 R675 = RESULTS / "2026-09-23-r675-27b-curves"
-# r27-as-curves (2026-10-16): R675's instruments, shapes and runs re-measured on the served v0.31.0 launcher (A_S). The
-# decode-scaling-16 and prefill.svg read it.
-R27C = RESULTS / "2026-10-16-r27-as-curves"
+# R675's instruments, shapes and runs re-measured on v0.31.0: A_S on 2026-10-16, L1a on 2026-10-17. Keep A_S available
+# for comparisons; the served decode-scaling-16 and prefill.svg (including depth) read L1a only.
+R27AS = RESULTS / "2026-10-16-r27-as-curves"
+R27C = RESULTS / "2026-10-17-r27-l1a-curves"
+R27_CONC = (1, 2, 4, 6, 8, 12, 16)
+R27_DEPTH = (30000, 60000, 120000, 200000)
 # R793 (2026-09-28): `vllm bench serve` v0.30.0 on ShareGPT V3 and Spec-Bench against the same served launcher, a fresh
 # boot per cell, passes A and B; drawn dashed over R675's decode curve.
 R793 = RESULTS / "2026-09-28-r793-27b-std-bench-1608"
@@ -263,14 +266,14 @@ def std_figure(rates, std, name, caption, rounds=("R675", "R793"),
 
 
 def figure_decode_scaling():
-    """The served figure: decode alone on the served v0.31.0 launcher (r27-as-curves). R793's standard-benchmark lines
+    """The served figure: decode alone on the served v0.31.0 L1a launcher (r27-l1a-curves). R793's standard-benchmark lines
     were measured on the v0.29.0rc2 launcher, so they stay out of this figure until R793 is re-run on the served one."""
-    rates = {k: decode_ss(R27C / f"decode-{k}.jsonl") for k in ("code", "prose")}
+    rates = {k: decode_ss_exact(R27C / f"decode-{k}.jsonl", R27_CONC) for k in ("code", "prose")}
     std_figure(rates, None, "decode-scaling-16.svg",
-               "Decode rate against concurrency on the served 16-sequence boot (r27-as-curves), sum over streams and per stream",
-               rounds=("r27-as-curves", ""), title="Decode alone, served configuration",
+               "Decode rate against concurrency on the served L1a 16-sequence boot (r27-l1a-curves), sum over streams and per stream",
+               rounds=("L1a", ""), title="Decode alone, served L1a configuration",
                note="decode_ss.py, all streams decoding, 1,024 forced tokens, one code and one prose prompt, three runs per "
-                    "point (median), stock power, 2026-10-16, served v0.31.0 launcher (r27-as-curves).")
+                    "point (median), stock power, 2026-10-17, served v0.31.0 L1a launcher (r27-l1a-curves).")
 
 
 def figure_decode_scaling_64():
@@ -310,15 +313,12 @@ def depth_decode():
     on their own axis: the filler budget, not measured prompt tokens."""
     out = collections.defaultdict(list)
     for kind in ("code", "prose"):
-        for line in open(R27C / f"decode-{kind}.jsonl"):
-            s = json.loads(line)["summary"]
-            if s["c"] == 1:
-                out[kind].append((0, s["ss_per_stream_tps_median"]))
-    for p in sorted(R27C.glob("decode-*-c1-*k.jsonl")):
-        kind = p.name.split("-")[1]
-        for line in open(p):
-            s = json.loads(line)["summary"]
-            out[kind].append((s["ctx"], s["ss_per_stream_tps_median"]))
+        baseline = decode_ss_exact(R27C / f"decode-{kind}.jsonl", R27_CONC)
+        out[kind].append((0, baseline[1][1]))
+        for ctx in R27_DEPTH:
+            # Open every expected depth file explicitly: a missing point must fail, not disappear from the curve.
+            point = decode_ss_exact(R27C / f"decode-{kind}-c1-{ctx // 1000}k.jsonl", (1,), runs=2)
+            out[kind].append((ctx, point[1][1]))
     return {k: sorted(v) for k, v in out.items()}
 
 
@@ -327,9 +327,9 @@ def figure_prefill():
     depth = depth_decode()
 
     fig, (ax, ax2) = plt.subplots(1, 2, figsize=(10.4, 4.2))
-    ax.plot(toks, rate, marker="o", color=PREFILL, linewidth=2, label="prefill rate")
+    ax.plot(toks, rate, marker="o", color=PREFILL, linewidth=2, label="prefill rate (L1a)")
     annotate(ax, toks, rate, PREFILL)
-    ax.set_title("Cold prefill rate, one request")
+    ax.set_title("Cold prefill rate, one request (L1a)")
     ax.set_xlabel("prompt tokens (server count)")
     ax.set_ylabel("prompt tokens per second")
     ax.set_ylim(0, max(rate) * 1.3)
@@ -339,9 +339,9 @@ def figure_prefill():
     for kind, color, dy in (("code", CODE, 7), ("prose", PROSE, -14)):
         xs = [t for t, _ in depth.get(kind, [])]
         ys = [v for _, v in depth.get(kind, [])]
-        ax2.plot(xs, ys, marker="s", markersize=4, color=color, linewidth=1.8, label=kind)
+        ax2.plot(xs, ys, marker="s", markersize=4, color=color, linewidth=1.8, label=f"{kind} (L1a)")
         annotate(ax2, xs, ys, color, dy=dy)
-    ax2.set_title("Decode at depth, one stream")
+    ax2.set_title("Decode at depth, one stream (L1a)")
     ax2.set_xlabel("filler context (decode_ss --ctx)")
     ax2.set_ylabel("tokens per second")
     ax2.set_ylim(0, max(v for d in depth.values() for _, v in d) * 1.3)
@@ -350,9 +350,11 @@ def figure_prefill():
     ax2.grid(axis="y", color="#eaeef2")
     ax2.set_axisbelow(True)
     ax2.legend(frameon=False, fontsize=9, loc="lower left")
+    fig.text(0.5, -0.02, "2026-10-17, served v0.31.0 L1a launcher, stock power (r27-l1a-curves).",
+             ha="center", va="top", fontsize=7.5, color="#57606a")
     print("prefill:", [round(v) for v in rate], "t/s at", [round(t) for t in toks], "tokens")
     print("decode at depth:", {k: [(round(t), round(v)) for t, v in d] for k, d in depth.items()})
-    save(fig, "prefill.svg", "Cold prefill rate against prompt length, and decode rate at depth")
+    save(fig, "prefill.svg", "L1a: cold prefill rate against prompt length, and decode rate at depth (r27-l1a-curves)")
 
 
 if __name__ == "__main__":

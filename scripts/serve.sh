@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Serves the measured configuration on any host with two RTX 5090 cards: the engine of scripts/serve-v031-splitkv-daily.sh
+# Serves the configuration on any host with two RTX 5090 cards: the engine of scripts/serve-v031-l1a-daily.sh
 # (image, vLLM flags, container env, MTP ns3, NVFP4 KV pinned at 14.86 GB per card, 16 sequences) without the serving
 # host's /srv/qwen5090 layout. Settings: serve.env in the repo root, or SERVE_ENV=<file>; environment variables override the
 # file; serve.env.example lists every setting and its default.
@@ -11,7 +11,7 @@
 # boot-time tier eviction by tier-evict.sh). The disk KV tier is off unless KV_TIER_DIR is set.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-SERVED_LAUNCHER=$ROOT/scripts/serve-v031-splitkv-daily.sh
+SERVED_LAUNCHER=$ROOT/scripts/serve-v031-l1a-daily.sh
 die(){ echo "serve.sh: FAILED: $*" >&2; exit 1; }
 
 # Settings: remember what the environment sets (set-but-empty counts, so KV_TIER_DIR= turns off a tier the file enables),
@@ -96,6 +96,7 @@ RUN=("${DK[@]}" run -d --name "$NAME" --restart unless-stopped --oom-score-adj -
   -e PYTHONHASHSEED=0                                     # stable prefix-cache and tier hashes across boots
   -e NCCL_P2P_LEVEL=SYS -e VLLM_SM12X_NVFP4_XQA=0 -e VLLM_SM12X_DFLASH_GRAPHS=1
   -e VLLM_SM12X_NVFP4_PREFILL_SPLIT_KV=1                 # 0136: undo FlashInfer 0.7's split-KV-off guard for NVFP4 KV on SM12x (r27)
+  -e VLLM_SM12X_DRAFT_UB_PLAN=1                         # L1a: plan q_len=1 draft decode from the CPU sequence-length upper bound
   -e VLLM_SM12X_PCIE_IPC_AR=1 -e VLLM_SM12X_PCIE_IPC_MTP=1   # pcie_ipc all-reduce (0138), MTP drafter admitted on it (0148)
   -e VLLM_USE_V2_MODEL_RUNNER=1                           # the runner the r27 screen and qualify runs booted
   -v "$CACHE_DIR/torch_compile_qwen38_v0280nv":/root/.cache/vllm/torch_compile_cache   # subdir names match the serving host
@@ -200,11 +201,13 @@ NEED=("linear-V-scale store overlay ACTIVE"             # 0102: without it NVFP4
       "Offloader set to UVAOffloader" "Total CPU offloaded parameters: 1.18"
       "PCIe IPC all-reduce enabled" "Using ['PCIE_IPC', 'CUSTOM', 'PYNCCL'] all-reduce backends"
       "SM12X PCIe IPC: MTP drafter admitted" "Batch-sharded sampling enabled"
-      "re-enabled FlashInfer split-KV")                   # 0136 on (r27); 0158's replay boundary is upstream in v0.31 and logs nothing
+      "re-enabled FlashInfer split-KV"                    # 0136 on (r27); 0158's replay boundary is upstream in v0.31 and logs nothing
+      "SM12X draft UB plan ACTIVE: VLLM_SM12X_DRAFT_UB_PLAN=1"
+      "SM12X draft UB plan USED")                        # L1a: enabled and used by the draft-decode planner
 [ -z "$KV_TIER_DIR" ] || NEED+=("OffloadingConnector")
 bad=0
 for l in "${NEED[@]}"; do grep -qaF -- "$l" <<< "$LOG" || { echo "boot log lacks: $l" >&2; bad=1; }; done
-for l in "decode_backend=xqa"; do
+for l in "decode_backend=xqa" "SM12X draft UB plan INACTIVE"; do
   if grep -qaF -- "$l" <<< "$LOG"; then echo "boot log shows: $l" >&2; bad=1; fi
 done
 VERS=$("${DK[@]}" exec "$NAME" python3 -c 'import vllm, flashinfer; print(vllm.__version__, flashinfer.__version__)' 2>/dev/null || true)

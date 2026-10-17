@@ -1,12 +1,24 @@
 # Configuration of the served engine
 
-Every flag of the two-card configuration, why it is set, and what happens without it. The served launcher is [`scripts/serve-r168-daily.sh`](../scripts/serve-r168-daily.sh) (first section below); the v0.28 launchers it wraps are [`scripts/serve-r156-daily.sh`](../scripts/serve-r156-daily.sh) (sets the two-card values and calls the generic launcher) and [`scripts/serve-v0280-daily.sh`](../scripts/serve-v0280-daily.sh) (the generic launcher, whose defaults are the one-card configuration). Inline comments in the scripts are the reference when the two disagree. Earlier generations are in [HISTORY.md](HISTORY.md) and [archive/](archive/).
+Every flag of the two-card configuration, why it is set, and what happens without it. The served launcher is [`scripts/serve-v031-l1a-daily.sh`](../scripts/serve-v031-l1a-daily.sh) (first section below), which calls the generic [`scripts/serve-v0280-daily.sh`](../scripts/serve-v0280-daily.sh) with the served values. The earlier two-card fp8 launcher is [`scripts/serve-r156-daily.sh`](../scripts/serve-r156-daily.sh). Inline comments in the scripts are the reference when the two disagree. Earlier generations are in [HISTORY.md](HISTORY.md) and [archive/](archive/).
 
-To run the served configuration on another host, [`scripts/serve.sh`](../scripts/serve.sh) passes the `docker run` arguments of [`scripts/serve-v031-splitkv-daily.sh`](../scripts/serve-v031-splitkv-daily.sh) with the model and cache paths, bind address, GPUs, disk tier and power cap as settings ([`serve.env.example`](../serve.env.example)); the disk tier and the power cap are off unless set.
+To run the served configuration on another host, [`scripts/serve.sh`](../scripts/serve.sh) passes the `docker run` arguments of [`scripts/serve-v031-l1a-daily.sh`](../scripts/serve-v031-l1a-daily.sh) with the model and cache paths, bind address, GPUs, disk tier and power cap as settings ([`serve.env.example`](../serve.env.example)); the disk tier and the power cap are off unless set.
 
-## Since 2026-10-16: vLLM v0.31.0 and FlashInfer 0.7.0.post1 ([scripts/serve-v031-splitkv-daily.sh](../scripts/serve-v031-splitkv-daily.sh))
+## Since 2026-10-17: L1a plans pure draft decode from the CPU upper bound
 
-The served launcher is the v0.29 launcher of the section below ([scripts/serve-r231-nvidia-daily.sh](../scripts/serve-r231-nvidia-daily.sh)) with these deltas, all keyed on the image tag (`vllm-qwen38:v0310*`), so a v0.29 image passed as `CAND_IMG` to an experiment boot keeps the v0.29 argv ([r27](../bench/results/r27-v031-splitkv.md)):
+The served launcher is [scripts/serve-v031-l1a-daily.sh](../scripts/serve-v031-l1a-daily.sh), the A_S launcher of the next section with one Python image layer and one environment pair added. The vLLM arguments, checkpoint, KV pin, sequence limit, draft length, KV and state dtypes and tiers are unchanged. Qualify passed on 2026-10-17 (results `2026-10-16-r27-audition-qualify-231459-865333`); the order-balanced screen measured the paired decode and fidelity results in [r27-l1a](../bench/results/r27-l1a.md) (results `2026-10-17-r27-audition-screen-022747-4123606`).
+
+| flag / env | value | why |
+|---|---|---|
+| image | `vllm-qwen38:v0310-r27c-A_S-L1a-ubplan` | A_S plus [Dockerfile.A_S-L1a-ubplan](../patches-v0310/Dockerfile.A_S-L1a-ubplan), which applies the hash-pinned [L1a-draft-ub-plan.diff](../patches-v0310/L1a-draft-ub-plan.diff) to the FlashInfer metadata builder and autoregressive speculator |
+| `VLLM_SM12X_DRAFT_UB_PLAN=1` | L1a on | the speculator tags its own FlashInfer builders; pure draft decode uses `seq_lens_cpu_upper_bound` instead of a blocking `seq_lens.cpu()` copy when the bound is present, cascade attention is off and decode context parallelism is off. Target builders and other build shapes keep the A_S path. CUDA events order consecutive plans' host-buffer staging copies |
+| boot-log admission | require ACTIVE and USED; reject INACTIVE | the boot fails without `SM12X draft UB plan ACTIVE: VLLM_SM12X_DRAFT_UB_PLAN=1` or `SM12X draft UB plan USED`, or with any `SM12X draft UB plan INACTIVE` line; [scripts/serve.sh](../scripts/serve.sh) enforces the same checks |
+
+The layer itself defaults off. The host launcher's daily branch enables it for the L1a image; experiment boots of an `*-L1a-ubplan*` image default on and may pass `DRAFT_UB_PLAN=0` for A_S behavior on that image. Other images default off, and `DRAFT_UB_PLAN=1` on an image without that tag fails before boot. With the knob off, any ACTIVE line fails the host launcher's boot check. Rollback is [scripts/serve-v031-splitkv-daily.sh](../scripts/serve-v031-splitkv-daily.sh).
+
+## 2026-10-16 to 2026-10-17: A_S on vLLM v0.31.0 and FlashInfer 0.7.0.post1 ([scripts/serve-v031-splitkv-daily.sh](../scripts/serve-v031-splitkv-daily.sh))
+
+The A_S launcher is the v0.29 launcher of the section below ([scripts/serve-r231-nvidia-daily.sh](../scripts/serve-r231-nvidia-daily.sh)) with these deltas, all keyed on the image tag (`vllm-qwen38:v0310*`), so a v0.29 image passed as `CAND_IMG` to an experiment boot keeps the v0.29 argv ([r27](../bench/results/r27-v031-splitkv.md)):
 
 | flag / env | value | why |
 |---|---|---|
