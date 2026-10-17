@@ -1,0 +1,75 @@
+README.md
+  s_1440ea5ea7cddd::t_a42ee78627c9dc 9,13,15-16,20,24-29,31,35,37,52,54,67-69,100-103,113,174,178-179,194,210-211,221-222,224,346
+THIRD_PARTY.md
+  s_1440ea5ea7cddd::t_4f0b05e8ec24c8 114-117
+bench/RESULTS.md
+  s_1440ea5ea7cddd::t_a27ea7c4ffc0e1 7,9,19-20
+bench/plot.py
+  s_1440ea5ea7cddd::t_1f2a10bd455039 30-35,269,271,273-274,276,316-321,330,332,342,344,353-354,357
+bench/results/2026-10-17-r27-l1a-curves/audit.log
+  s_1440ea5ea7cddd::t_52c8b2e5d780d6 1-51
+bench/results/2026-10-17-r27-l1a-curves/decode-code-c1-120k.jsonl
+  s_1440ea5ea7cddd::t_bcaf1a67b0bd7e 1
+bench/results/2026-10-17-r27-l1a-curves/decode-code-c1-200k.jsonl
+  s_1440ea5ea7cddd::t_6c34d0bddbc0e3 1
+bench/results/2026-10-17-r27-l1a-curves/decode-code-c1-30k.jsonl
+  s_1440ea5ea7cddd::t_7f435d5a2eb044 1
+bench/results/2026-10-17-r27-l1a-curves/decode-code-c1-60k.jsonl
+  s_1440ea5ea7cddd::t_b2f3cf04696dfd 1
+bench/results/2026-10-17-r27-l1a-curves/decode-code.jsonl
+  s_1440ea5ea7cddd::t_6a34e235f5e5a0 1-7
+bench/results/2026-10-17-r27-l1a-curves/decode-prose-c1-120k.jsonl
+  s_1440ea5ea7cddd::t_36d1ddab98c375 1
+bench/results/2026-10-17-r27-l1a-curves/decode-prose-c1-200k.jsonl
+  s_1440ea5ea7cddd::t_d9d526ac2a264e 1
+bench/results/2026-10-17-r27-l1a-curves/decode-prose-c1-30k.jsonl
+  s_1440ea5ea7cddd::t_a29607a9f814f4 1
+bench/results/2026-10-17-r27-l1a-curves/decode-prose-c1-60k.jsonl
+  s_1440ea5ea7cddd::t_bdba7e7b93e1ee 1
+bench/results/2026-10-17-r27-l1a-curves/decode-prose.jsonl
+  s_1440ea5ea7cddd::t_5325f3b11e45c0 1-7
+bench/results/2026-10-17-r27-l1a-curves/prefill.jsonl
+  s_1440ea5ea7cddd::t_4847068dfa6b55 1-18
+bench/results/r27-l1a-curves.md
+  s_1440ea5ea7cddd::t_3c7ba1fa6ce493 1-101
+bench/results/r27-l1a.md
+  s_1440ea5ea7cddd::t_4928c220ee370c 1-60
+docs/CONFIG.md
+  s_1440ea5ea7cddd::t_5c61a479468905 3,5,7,9-21
+docs/HISTORY.md
+  s_1440ea5ea7cddd::t_ba27fdaa55208a 9-11,34-41
+docs/img/decode-scaling-16.svg
+  s_1440ea5ea7cddd::t_e3aada13176c24 4-5,10-11,27-28,35-38,46,51,55,61,65,71,75,81,85,91,95,101,105,111,115,119,125-127,131,136,140,145-147,151,155,160-162,166,170,175-177,181,185,190-192,196,200,205-207,211,215,220-222,226,230,234,238-245,247,259-266,270-277,279,291-298,302-303,307-308,312,315,318,321,324,327,330,333,337-339,342,346,349-351,354,358,364-367,375,379,385,389,395,399,405,409,415,419,425,429,435,439,443,449-451,455,459,464-466,470,474,479-481,485,489,494-496,500,504,509-511,515,519,524-526,530,534,539-541,545,549,552-568,571-579,581,588-606,608,615-622,626-627,631-632,636,639,642,645,648,651,654-657,660-663,666,669-670,672-675,678,681-682,687-690,694-695,697-698
+docs/img/prefill.svg
+  s_1440ea5ea7cddd::t_484c21b0e1a1de 4-5,10-11,26-27,46,51,61,65,71,75,81,85,91,95,101,117,121,126,135-137,141,145,150-152,156,160,165-167,171,175,180-182,186,190,195-197,201,205,210-212,216,220,229-234,236,248-254,268,271,274,277,280,283,286,302,312,322,332,342,358,362,371-373,377,381,386-388,392,396,401-403,407,411,416-418,422,426,431-433,437,441,444-459,463-469,471,478-492,494,501-506,520,523,526,529,532,535,538,541,544,547-550,553,559,562-563,565,571,574-575,579-581,584,587
+patches-v0310/Dockerfile.A_S-L1a-ubplan
+  s_1440ea5ea7cddd::t_1cf1172fe80d39 1-45
+patches-v0310/L1a-draft-ub-plan.diff
+  s_1440ea5ea7cddd::t_e61df7ba5cd10f 1-149
+patches-v0310/README.md
+  s_1440ea5ea7cddd::t_c563e63a556046 3,7,9,35-45,48
+scripts/r27-l1a-curves.sh
+  s_1440ea5ea7cddd::t_f66fee1ddbf4ac 1-74
+scripts/serve-v031-l1a-daily.sh
+  s_1440ea5ea7cddd::t_431ce7838a6a59 1-373
+scripts/serve.sh
+  s_1440ea5ea7cddd::t_a4c6ccf0d7fa4c 2,14,99,204-206,210
+serve.env.example
+  s_1440ea5ea7cddd::t_af7a979e1ba889 10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cfb296abb260a65b432bb17bb58b06be35c8d24a",
+  "prompts": {},
+  "sessions": {
+    "s_1440ea5ea7cddd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_1440ea5ea7cddd",
+        "model": "unknown"
+      },
+      "human_author": "Adrien Brault <adrien.brault@gmail.com>"
+    }
+  }
+}
