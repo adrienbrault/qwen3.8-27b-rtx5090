@@ -1,0 +1,26 @@
+MISMATCH [other overlay files] vllm-sm12x/build/.ninja_deps expected=87b394dbeb1249421f169bde17dd14947eba7a8272285be82174b7239985e3f6 actual=6004d0884ff479a1b430a7d498762f8a51ce89558ecc7c5764762b99a064c79f
+MISMATCH [other overlay files] vllm-sm12x/build/.ninja_log expected=9ec07ac10e3763cc1e9d7956add5aa79ee01c6aec954c503051b39c8dbde01a9 actual=b5e217c7ddee36948a444e51190f4eaf91c188e44027a3ee34b30c6e60988a7b
+MATCH [shared objects] vllm-sm12x/build/vllm_sm12x_nvfp4kv.so
+MATCH [shared objects] vllm/_C_stable_libtorch.abi3.so
+MATCH [shared objects] vllm/_deepselect_C.abi3.so
+MATCH [shared objects] vllm/_flashkda_C.abi3.so
+MATCH [shared objects] vllm/_flashmla_C.abi3.so
+MATCH [shared objects] vllm/_flashmla_extension_C.abi3.so
+MATCH [shared objects] vllm/_moe_C_stable_libtorch.abi3.so
+MATCH [shared objects] vllm/_qutlass_C.abi3.so
+MATCH [shared objects] vllm/_rust_tool_parser.abi3.so
+MATCH [shared objects] vllm/cumem_allocator.abi3.so
+MATCH [shared objects] vllm/fs_io_C.abi3.so
+MATCH [shared objects] vllm/spinloop.abi3.so
+MATCH [shared objects] vllm/third_party/deep_gemm/_C.cpython-310-x86_64-linux-gnu.so
+MATCH [shared objects] vllm/third_party/deep_gemm/_C.cpython-311-x86_64-linux-gnu.so
+MATCH [shared objects] vllm/third_party/deep_gemm/_C.cpython-312-x86_64-linux-gnu.so
+MATCH [shared objects] vllm/third_party/deep_gemm/_C.cpython-313-x86_64-linux-gnu.so
+MATCH [shared objects] vllm/third_party/deep_gemm/_C.cpython-314-x86_64-linux-gnu.so
+MATCH [shared objects] vllm/vllm_flash_attn/_vllm_fa2_C.abi3.so
+MATCH [shared objects] vllm/vllm_flash_attn/_vllm_fa3_C.abi3.so
+inventory: expected=7138 actual=7138 missing=0 extra=0
+sources: matches=7112 mismatches=0
+shared objects: matches=19 mismatches=0
+other overlay files: matches=5 mismatches=2
+CONTENT PASS (compiled and other overlay byte differences are informational)

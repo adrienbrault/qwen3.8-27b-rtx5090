@@ -1,0 +1,2 @@
+ab560a014ef058cd0818fae75cbba889dcac57b1d025f94760995bf2728c4e34  built-l1a-manifest.txt (rebuilt, kept on the serving host)
+8423a61a2f8e8f1acab6a9bfc82a4373afce3108f3c7bfa37292cb98b8dd0cdd  served-l1a-manifest.txt (patches-v0310/)

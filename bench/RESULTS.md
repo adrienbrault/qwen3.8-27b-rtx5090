@@ -16,6 +16,7 @@ Hardware since 2026-08-31: two RTX 5090 32 GB (`sm_120`), Ryzen 7 9800X3D, 64 GB
 
 ## Index
 
+- [r27 L1a build verify: a clean-clone build of the served v0.31 image in an empty Docker daemon matches it — 7,138-file inventory, every source and shared object identical; published as ghcr.io/adrienbrault/qwen3.8-27b-rtx5090:v0310-r27c-A_S-L1a-ubplan (2026-10-19 02:43 to 03:05 UTC, results `2026-10-19-r27-l1a-build-verify`)](results/r27-l1a-build-verify.md)
 - [r27-l1a-seq64: L1a at 64 sequences decodes 4,727.2 / 3,914.3 aggregate t/s of code / prose and serves 2,507.7 / 2,991.7 wall-clock output tok/s on ShareGPT V3 / Spec-Bench; 14/14 cells PUBLISHABLE, maximum A/B spread 1.48 %, R794 comparisons beside each metric (2026-10-17 12:27 to 15:04 UTC, results `2026-10-17-r27-l1a-seq64-curves-1226`)](results/r27-l1a-seq64.md)
 - [r27-l1a-std-bench: the served L1a configuration reads 1,702.0 / 1,970.8 wall-clock output tok/s and 120.3 / 133.2 per stream on ShareGPT V3 / Spec-Bench at 16 streams; PUBLISHABLE, maximum A/B spread 2.08 %, R793 comparisons beside each metric (2026-10-17 09:31 to 12:09 UTC, results `2026-10-17-r27-l1a-std-bench-0930`)](results/r27-l1a-std-bench.md)
 - [r27-l1a-curves: L1a decode, depth, cold prefill, TTFT and acceptance beside A_S; 241.7 / 190.4 t/s code / prose at one stream, 2,677.5 / 2,228.5 aggregate at 16, cold prefill 9,567 t/s at 6.7K and 3,993 at 200K prompt tokens (2026-10-17 07:12 to 07:30 UTC, results `2026-10-17-r27-l1a-curves`)](results/r27-l1a-curves.md)

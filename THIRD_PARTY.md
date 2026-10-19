@@ -41,6 +41,8 @@ Upstream: https://github.com/LMCache/LMCache — [Apache-2.0](https://github.com
 - `vllm/vllm-openai:nightly` (pinned by digest in `patches/Dockerfile`, earlier generations) — Apache-2.0. This repo ships no vLLM binaries; the Dockerfiles pull the official image and patch it locally.
 - `lmcache/vllm-openai:*` (historical, docs only) — Apache-2.0.
 
+The v0.31 build script resolves vLLM source from [the upstream v0.31.0 tag metadata](https://api.github.com/repos/vllm-project/vllm/git/ref/tags/v0.31.0) and builds `arctic-inference==0.1.1` from [its PyPI sdist](https://pypi.org/project/arctic-inference/0.1.1/), whose release metadata lists a `LICENSE` file. Its throwaway wheel container installs build tools pinned from PyPI JSON metadata in [scripts/arctic-build-requirements.txt](scripts/arctic-build-requirements.txt): CMake, Ninja, nanobind, setuptools, wheel, protobuf, grpcio and grpcio-tools. The pins and verification status are recorded in [patches-v0310/README.md](patches-v0310/README.md#build-context); upstream archives, tool wheels and the built Arctic wheel are not redistributed in this repository.
+
 ## Models (not redistributed here)
 
 - [`RedHatAI/Qwen3.8-27B-NVFP4`](https://huggingface.co/RedHatAI/Qwen3.8-27B-NVFP4) — **the current daily's weights (since 2026-09-02)**: llm-compressor NVFP4 with 303 modules kept at 8-bit and an FP8 `lm_head`; served with its own chat template. Qwen3.8 base license. Chosen by the R156 fidelity ladder (bench/RESULTS.md); [`unsloth/Qwen3.8-27B-NVFP4`](https://huggingface.co/unsloth/Qwen3.8-27B-NVFP4) and [`kelnei/Qwen3.8-27B-NVFP4`](https://huggingface.co/kelnei/Qwen3.8-27B-NVFP4) tie it on fidelity (same recipe family) and were the other two candidates.

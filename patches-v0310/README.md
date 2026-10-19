@@ -6,42 +6,50 @@ The served image since 2026-10-17, `vllm-qwen38:v0310-r27c-A_S-L1a-ubplan` (sha2
 2. `vllm-qwen38:v0310-r27c-A_S-splitkv` from [Dockerfile.A_S-splitkv](Dockerfile.A_S-splitkv): one Python edit that makes patch 0136's split-KV override accept FlashInfer 0.7's `(kv_data_type, device)` guard signature. It asserts the hash of the file it edits, so it applies only to an image built from the 0136 diff as it was before that change.
 3. `vllm-qwen38:v0310-r27c-A_S-L1a-ubplan` from [Dockerfile.A_S-L1a-ubplan](Dockerfile.A_S-L1a-ubplan): the A_S image plus [L1a-draft-ub-plan.diff](L1a-draft-ub-plan.diff), a Python layer that lets the MTP drafter plan pure draft decode from the CPU sequence-length upper bound and orders consecutive plans' staging copies with CUDA events. It is inactive unless `VLLM_SM12X_DRAFT_UB_PLAN=1` ([r27-l1a](../bench/results/r27-l1a.md), 2026-10-17, results `2026-10-16-r27-audition-qualify-231459-865333`, `2026-10-17-r27-audition-screen-022747-4123606`).
 
-The [0136 diff](0136-opt-in-nvfp4-prefill-split-kv-v0310.diff) in this directory already carries the signature change (with a comment in place of the layer's inline comment). For A_S behavior an image built from this directory therefore needs only the first build; the second build would refuse it at its hash check. The L1a build also pins the exact served A_S source, so the public chain's different comment does not satisfy its hash check. The served L1a image uses the original A_S base (sha256:2a081946bc9c0b6694cb246391a91ba19995d7dd55245afabdb282f97cf1808e, built 2026-10-16 04:27 UTC); its source pins are retained.
+The [0136 diff](0136-opt-in-nvfp4-prefill-split-kv-v0310.diff) in this directory already carries the signature change with a different comment. [scripts/build-v031-image.sh](../scripts/build-v031-image.sh) restores the original single-argument lambda and removes that comment only in its temporary context, then runs the three builds above. The second build makes the served inline-comment edit, satisfying the third build's source hashes. The checkout's 0136 diff and all Dockerfile hash assertions are retained. The served L1a image uses the original A_S base (sha256:2a081946bc9c0b6694cb246391a91ba19995d7dd55245afabdb282f97cf1808e, built 2026-10-16 04:27 UTC).
 
 [PORT-STATUS.md](PORT-STATUS.md) lists every patch of the v0.29 chain and what it became on v0.31.0: regenerated, dropped, or found upstream (0152, 0155, 0156 and 0158 are upstream in v0.31.0). [assert_sources.py](assert_sources.py) checks the pristine source hashes in [pristine-hashes.json](pristine-hashes.json) before anything is applied.
 
 ## Build context
 
-`Dockerfile.v0310` copies from a build context laid out as follows; the paths are the Dockerfile's.
+Run the script from a clean checkout. It assembles the following context in a temporary directory and removes it on exit; the paths are the Dockerfile's. Downloads occur during preparation; each Docker build runs with `DOCKER_BUILDKIT=0 --network=none --pull=false`. The staged A_S and L1a recipes render their Python heredoc bodies as equivalent `python3 -c` arguments for the legacy builder.
+
+```bash
+bash scripts/build-v031-image.sh
+```
 
 | context path | contents |
 |---|---|
 | `out/A/patches-v0310/` | this directory's `series`, the `*.diff` files, `overlay/` and `pcie_ipc_ar21/` |
 | `out/A/apply_layer.py`, `guard_flashinfer_workspace.py`, `assert_sources.py`, `pristine-hashes.json` | the files of the same names here |
 | `out/audit_fi_r27c.py`, `out/test_cpu.py` | the files of the same names here |
-| `vllm-v0.31.0/csrc/`, `vllm-v0.31.0/cmake/patches/` | from the vLLM v0.31.0 source tag |
-| `assets/wheels/` | an `arctic_inference-0.1.1` wheel built in the base image (the package ships only an sdist) |
-| `assets/debs/` | `.deb` files for `patch`, `g++` and `ninja-build`, needed only if the base image lacks them |
+| `vllm-v0.31.0/csrc/`, `vllm-v0.31.0/cmake/patches/` | from the pinned vLLM source archive below |
+| `assets/wheels/` | an `arctic_inference-0.1.1` wheel built in a throwaway container from the pinned vLLM base after installing hashed PyPI build tools; `pip wheel` disables index access, dependency resolution and build isolation |
+| `assets/debs/` | empty if the base has `patch`, `g++` and `ninja`; otherwise `.deb` files and dependencies downloaded from the base's apt repositories |
 
-```bash
-docker build --network=none --pull=false --build-arg VLLM_BASE=vllm/vllm-openai:v0.31.0 \
-  --build-arg CUDA_TOOLCHAIN=nvidia/cuda:13.0.3-devel-ubuntu24.04 \
-  -f <context>/out/A/Dockerfile.v0310 -t vllm-qwen38:v0310-r27c-A-nvfp4kv-mtp <context>
-docker build --network=none --pull=false -t vllm-qwen38:v0310-r27c-A_S-splitkv -f Dockerfile.A_S-splitkv .
-```
+The base pins supplied with the served-image build inputs are registry digests: `vllm/vllm-openai@sha256:c1c9f6fd5c109ba7f0546a59f5b2f15fb87f64c77782e90a27b648b42a8e67c3` and `nvidia/cuda@sha256:b7ae301dea2c162444795462ce17a05f6a516e5a75944b57af5b88540a1a2266`. When the exact reference is absent from local `RepoDigests`, the script pulls that reference with `--platform linux/amd64`, then requires `RepoDigests` to contain it. The script resolves that digest reference's local `.Id`, verifies `linux/amd64` and uses the resolved ID for the first Dockerfile's base arguments and preparation containers. The local ID can equal the registry digest with the containerd image store and differ with the classic image store, where it identifies the image config. Existing base tags are never retagged or replaced.
 
-The serving host ran these builds from that context with the legacy builder (`DOCKER_BUILDKIT=0`). A build from a clean clone of this repository has not been run for this chain; the v0.29 chain's was reproduced on 2026-09-26 ([R738](../bench/results/r738-build-verify.md)).
+The source pin is commit `db9527a46873454610df6dbedf79a36d6bf1a7f6`, resolved from [GitHub's v0.31.0 tag metadata](https://api.github.com/repos/vllm-project/vllm/git/ref/tags/v0.31.0) on 2026-10-19. The script fetches [the archive for that commit](https://codeload.github.com/vllm-project/vllm/tar.gz/db9527a46873454610df6dbedf79a36d6bf1a7f6) and requires its SHA-256 to equal `e20baf18e40f88446f745999379db04c8f88c173dc7afde5dc6b869c06299ad0` before extraction. The operator verified that hash on 2026-10-19 and confirmed that `csrc/` and `cmake/patches/` match a Git clone of tag `v0.31.0`. This is the default `VLLM_SOURCE_SHA256`; an explicit override must still match the downloaded archive.
 
-## L1a requires the served A_S source hashes
+The Arctic sdist pin is `36857e2fbe3ead34821a04be98dfab95086050c1e38199c8fdfe308234fdcf63`, published in [PyPI's release metadata](https://pypi.org/pypi/arctic-inference/0.1.1/json), read on 2026-10-19. The script downloads it from PyPI's file host and verifies it before wheel preparation.
 
-With the exact A_S image already local, run the third build from the repository root; its context is the public `patches-v0310/` directory:
+Wheel preparation runs in a throwaway `--rm` container from the resolved pinned vLLM base. [scripts/arctic-build-requirements.txt](../scripts/arctic-build-requirements.txt) pins CMake, Ninja, nanobind, setuptools, wheel, protobuf, grpcio-tools and grpcio, with wheel SHA-256 values from the linked PyPI JSON metadata read on 2026-10-19. The install uses `--require-hashes --only-binary=:all: --no-deps --force-reinstall` and the sole index `https://pypi.org/simple`; its downloads use PyPI and `files.pythonhosted.org`. The subsequent `pip wheel --no-index --no-deps --no-build-isolation` uses those tools and the base's installed torch. The sdist's `setup.py` imports torch, invokes CMake for the nanobind suffix-decoding extension and runs `grpc_tools.protoc` during `build_py`, so protobuf and grpcio-tools are needed at build time. Build isolation would request the sdist's older torch pin. The optional precompiled CUDA ops are disabled, matching the suffix-only native contents of the served wheel. Only the resulting Arctic wheel is copied into the build context; the added build tools remain in the discarded container and are not installed into the final image.
 
-```bash
-docker build --network=none --pull=false -t vllm-qwen38:v0310-r27c-A_S-L1a-ubplan \
-  -f patches-v0310/Dockerfile.A_S-L1a-ubplan patches-v0310
-```
+The rebuilt Arctic suffix-decoding `.so` may differ byte-wise from the served wheel's native file. The supplied manifest does not inventory the Arctic package; it reports compiled differences separately for the inventoried vLLM, FlashInfer and overlay files, as described below.
 
-The recipe copies only `L1a-draft-ub-plan.diff`, verifies the diff and both input-file hashes, applies with `patch --fuzz=0`, verifies both output hashes, checks the helper and admission-log strings, and compiles the edited Python files. It also tries a GPU-free import and env-off helper check. An import failure prints a warning and continues; the hash checks, grep assertions and Python compilation are mandatory, and the ACTIVE boot line checks the import on the serving route. This round mirrors the supplied recipe and measured image; it does not rebuild the image or relax the source pins.
+`DRY_RUN=1` stages and checks the local COPY inputs and prints the preparation, build and verification commands without invoking Docker or the network; external assets are planned. `OVERLAY_JOBS` defaults to the Dockerfile's recorded value of `4`. `NO_CACHE=1` disables Docker build-cache reuse. `DOCKER="sudo docker"` selects a Docker command. Every invocation runs the complete build chain, including when the output tags already exist. `LOG_DIR` defaults to `build-logs/v0310`; it contains the build logs, regenerated manifest, content comparison and optional identity log. `CHECK=1` loads the compiled vLLM, overlay and PCIe IPC ops and checks versions, markers and L1a source strings using the NVIDIA container runtime, without GPU computation.
+
+The serving host ran these builds from that context with the legacy builder (`DOCKER_BUILDKIT=0`). A build of this chain from a clean clone, in an empty Docker daemon, matched the served image on 2026-10-19 ([r27-l1a-build-verify](../bench/results/r27-l1a-build-verify.md)); the v0.29 chain's was reproduced on 2026-09-26 ([R738](../bench/results/r738-build-verify.md)).
+
+## L1a source and inventory verification
+
+The script runs the L1a build after A_S, retaining the recipe's diff and source hash checks. The recipe verifies both output hashes, checks the helper and admission-log strings, and compiles the edited Python files. It also tries a GPU-free import and env-off helper check. An import failure prints a warning and continues; the hash checks, grep assertions and Python compilation are mandatory, and the ACTIVE boot line checks the import on the serving route.
+
+[served-l1a-manifest.txt](served-l1a-manifest.txt) is the supplied serving-host inventory for the L1a image named above. It contains SHA-256 sums of regular `*.py`, `*.so`, `*.cu`, `*.cuh` and `*.json` files under `/usr/local/lib/python3.12/dist-packages/vllm` and `/usr/local/lib/python3.12/dist-packages/flashinfer`, plus every regular file under `/opt/vllm-sm12x`; its labels are relative package paths and `vllm-sm12x/` paths. [scripts/v031_manifest.py](../scripts/v031_manifest.py) regenerates the same inventory in a network-disabled container without importing either package. The script pins the supplied manifest's own SHA-256 and compares by path and content, without comparing the output image ID.
+
+Every `.py`, `.json`, `.cu` and `.cuh` hash must match. Missing or extra files of any kind fail verification, including compiled outputs. Shared-object matches and mismatches are reported separately; their byte differences and those of the other overlay artifacts are informational because compilation outputs, Ninja logs and build metadata can differ between builds. A required content mismatch or a failed optional identity check makes the build script exit nonzero. The comparison can also run independently with `python3 scripts/v031_manifest.py compare patches-v0310/served-l1a-manifest.txt <built-manifest>`.
+
+Offline checks run with `python3 -m unittest discover -s scripts/tests -p test_build_v031.py`. They use fake Docker and download commands, synthetic archive pins, staged-context checks and synthetic manifests; they do not establish that the Docker build has succeeded.
 
 ## Running it
 

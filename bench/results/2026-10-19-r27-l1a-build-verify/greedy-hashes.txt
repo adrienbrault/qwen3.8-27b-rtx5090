@@ -1,0 +1,7 @@
+# greedy chat completions, temperature 0, seed 0, max_tokens 768, thinking off; sha256[:16] of [content, reasoning_content]
+# prompt A1(served) B(clean-room) A2(served)
+p1 9be1a436432b9ea9 9be1a436432b9ea9 9be1a436432b9ea9
+p2 4e4bf4462ef19278 33a037accaec7743 5ae9067211365052
+p3 bbd59197280eeb25 bbd59197280eeb25 bbd59197280eeb25
+p4 fb7c729cd1647ecd 7b9f78f552cfdcb5 bd3233c982a23722
+p5 1da6aaef43bf289c 1da6aaef43bf289c 1da6aaef43bf289c

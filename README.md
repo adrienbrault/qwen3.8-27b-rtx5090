@@ -95,16 +95,18 @@ The one-card configuration ran on this host before the second card was added. It
 
 ## Quick start
 
-Requirements: x86_64 Linux, two RTX 5090, Docker with the NVIDIA container runtime (the launcher passes `--runtime nvidia`) and the buildx plugin. The container is capped at 52 GB of host RAM (`--memory`). Every measurement in this repo was taken on the host described under [Hardware](#hardware). That host runs the peer-to-peer kernel modules, and this repo records no boot of the served configuration without them.
+Requirements: x86_64 Linux, two RTX 5090, Docker with the NVIDIA container runtime (the launcher passes `--runtime nvidia`), Bash, Python, curl and tar. The container is capped at 52 GB of host RAM (`--memory`). Every measurement in this repo was taken on the host described under [Hardware](#hardware). That host runs the peer-to-peer kernel modules, and this repo records no boot of the served configuration without them.
 
 ```bash
 # 1. the served weights
 huggingface-cli download nvidia/Qwen3.8-27B-NVFP4 --local-dir $HOME/models/qwen3.8-27b-nvidia-nvfp4
 
 # 2. the served image: vLLM v0.31.0 + patches-v0310 + FlashInfer 0.7.0.post1, tagged vllm-qwen38:v0310-r27c-A_S-L1a-ubplan.
-#    Three docker builds, described in patches-v0310/README.md: Dockerfile.v0310, Dockerfile.A_S-splitkv, then
-#    Dockerfile.A_S-L1a-ubplan; the GPU is not used. There is no one-command build script and no published copy of this image yet. scripts/build-served-image.sh
-#    and ghcr.io/adrienbrault/qwen3.8-27b-rtx5090 give the earlier v0.29 image, serve-r231-nvidia-daily.sh.
+#    Either pull the published copy (built from this repository by scripts/build-v031-image.sh, 2026-10-19) and tag it:
+docker pull ghcr.io/adrienbrault/qwen3.8-27b-rtx5090:v0310-r27c-A_S-L1a-ubplan@sha256:40b61ed95254de5201cb69a8a02de9da0569fc4ed759cd843d25b9b7b3d73f2c
+docker tag ghcr.io/adrienbrault/qwen3.8-27b-rtx5090:v0310-r27c-A_S-L1a-ubplan@sha256:40b61ed95254de5201cb69a8a02de9da0569fc4ed759cd843d25b9b7b3d73f2c vllm-qwen38:v0310-r27c-A_S-L1a-ubplan
+#    or build it; the base registry digests and the source tarball hash are pinned, patches-v0310/README.md records them.
+bash scripts/build-v031-image.sh
 
 # 3. settings: MODEL_DIR is the only required one; serve.env.example lists the others with their defaults
 cp serve.env.example serve.env
@@ -113,6 +115,8 @@ sed -i "s|^MODEL_DIR=|MODEL_DIR=$HOME/models/qwen3.8-27b-nvidia-nvfp4|" serve.en
 # 4. start: waits for /health, checks the boot log, prints the endpoint
 bash scripts/serve.sh
 ```
+
+[scripts/build-v031-image.sh](scripts/build-v031-image.sh) stages its context from this checkout, verifies the base registry digests through Docker's `RepoDigests`, resolves their local image IDs, builds the chain without a GPU and compares the result with the supplied [served manifest](patches-v0310/served-l1a-manifest.txt). Digest pulls leave existing base tags unchanged; the resolved IDs support both the classic and containerd image stores. Arctic wheel preparation installs hashed PyPI tools in a throwaway container; those added tools do not enter the final image. `DRY_RUN=1` prints the commands; `CHECK=1` adds an identity check using the NVIDIA container runtime. A clean-clone build in an empty Docker daemon matched the served image on 2026-10-19: every source and every shared object in the 7,138-file inventory is identical ([r27-l1a-build-verify](bench/results/r27-l1a-build-verify.md)). The source archive hash verified by the operator on 2026-10-19 is the default `VLLM_SOURCE_SHA256`; [patches-v0310/README.md](patches-v0310/README.md#build-context) records the pins and verification rules. That rebuilt image is the published `ghcr.io/adrienbrault/qwen3.8-27b-rtx5090:v0310-r27c-A_S-L1a-ubplan`; `scripts/build-served-image.sh` builds the earlier v0.29 image.
 
 [scripts/serve.sh](scripts/serve.sh) runs the served engine: the image tag, vLLM flags, container environment and container limits of [scripts/serve-v031-l1a-daily.sh](scripts/serve-v031-l1a-daily.sh), with the serving host's paths replaced by settings. `bash scripts/serve.sh --print` prints the `docker run` command without running anything; `--stop` stops and removes the container. Environment variables override `serve.env`. Where its defaults differ from the serving host:
 

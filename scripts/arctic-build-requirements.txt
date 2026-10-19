@@ -1,0 +1,48 @@
+# Arctic inference wheel build tools for the pinned vLLM base (CPython 3.12, Linux x86_64).
+# Versions and wheel SHA-256 values read from PyPI JSON metadata on 2026-10-19.
+# setup.py imports base torch; build_py runs grpc_tools.protoc before the CMake/nanobind extension.
+# grpcio-tools 1.71.0 requires protobuf >=5.26.1,<6.0dev, grpcio >=1.71.0 and setuptools.
+# Install only in the throwaway wheel container; retain the base torch with no build isolation.
+# Binary-only, hash-required installation cannot build an sdist or resolve extra dependencies.
+
+# https://pypi.org/pypi/cmake/3.31.10/json
+# cmake-3.31.10-py3-none-manylinux_2_12_x86_64.manylinux2010_x86_64.whl
+# cmake-3.31.10-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+cmake==3.31.10 \
+    --hash=sha256:3c17bb24dba15f8ecc3fd706afe04264410ef88796f4115c119327c961d5dc57 \
+    --hash=sha256:2f766bb46367e5e0559fa33184653754bce044583a06014dcaebf8e6dff8a1f1
+
+# https://pypi.org/pypi/ninja/1.13.0/json
+# ninja-1.13.0-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
+ninja==1.13.0 \
+    --hash=sha256:fb46acf6b93b8dd0322adc3a4945452a4e774b75b91293bafcc7b7f8e6517dfa
+
+# https://pypi.org/pypi/nanobind/2.9.2/json
+# nanobind-2.9.2-py3-none-any.whl
+nanobind==2.9.2 \
+    --hash=sha256:c37957ffd5eac7eda349cff3622ecd32e5ee1244ecc912c99b5bc8188bafd16e
+
+# https://pypi.org/pypi/setuptools/84.0.0/json
+# setuptools-84.0.0-py3-none-any.whl
+setuptools==84.0.0 \
+    --hash=sha256:51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670
+
+# https://pypi.org/pypi/wheel/0.45.1/json
+# wheel-0.45.1-py3-none-any.whl
+wheel==0.45.1 \
+    --hash=sha256:708e7481cc80179af0e556bbf0cc00b8444c7321e2700b8d8580231d13017248
+
+# https://pypi.org/pypi/protobuf/5.29.5/json
+# protobuf-5.29.5-cp38-abi3-manylinux2014_x86_64.whl
+protobuf==5.29.5 \
+    --hash=sha256:63848923da3325e1bf7e9003d680ce6e14b07e55d0473253a690c3a8b8fd6e61
+
+# https://pypi.org/pypi/grpcio-tools/1.71.0/json
+# grpcio_tools-1.71.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+grpcio-tools==1.71.0 \
+    --hash=sha256:541a756276c8a55dec991f6c0106ae20c8c8f5ce8d0bdbfcb01e2338d1a8192b
+
+# https://pypi.org/pypi/grpcio/1.71.0/json
+# grpcio-1.71.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+grpcio==1.71.0 \
+    --hash=sha256:d5170929109450a2c031cfe87d6716f2fae39695ad5335d9106ae88cc32dc84c
