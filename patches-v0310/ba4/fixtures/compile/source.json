@@ -1,0 +1,26 @@
+{
+  "origin": "retained A-image out/work-A/vllm; complete unmodified sources",
+  "files": {
+    "wrapper.py": "969961dca41c78385212e985cfc0c57ef067f4a2d7490c73c658c600a1b95cac",
+    "decorators.py": "ebbb909015f31c9d71cddef6718dc77459e05e3c70f49383f6b639595272c8a7",
+    "piecewise_backend.py": "188d926208a147c2786a496a10577edd832576455c36130e7f1ba375634e0806",
+    "range_utils.py": "55541a60fdbce39941cfec4e193dbd01cf80ed2b5016eac3e0bcb168a76568c4",
+    "installed_runtime.py": "7950cd42afbdee7ab11602bb2774eff1323624fb898fe3554c6727320c2c68e4",
+    "input_quant_fp8.py": "7ab6276f1e2d9adf248fc28bcd41031374942db7e5e88dbb15e4f90a34330202",
+    "fp8_scaled_mm.py": "d43d9aa7b3bff81f2ca9495c95995c7070c9e5bb2eed4531211c7f20d2e27c2f",
+    "fp8_flashinfer.py": "8ee5dd1883336d909e62b35c76e1f0f9a159a25533cc2d4c9b50c0aab0b5c21b",
+    "flashinfer_utils.py": "b0e6abff28095c4ebf26e7fa1c85923401fd47240877d53aa74ec72f9402ecf0",
+    "backends.py": "16af622b799f22f30eaa1c78f7ccca9d54c7c72785ad89e90c87e859bf8ef876",
+    "partition_rules.py": "e9acbed01296caf75ac47224d394b6b260733b4a994c9d6177c0a5930247a10f",
+    "compilation_config.py": "9e005aee4e8d74b23636312e9c9be796d8fc3b43ce483937cf3795fcbcaf18e5",
+    "caching.py": "ef757035a68f44a24932bb7a8e3864dc96877813250568909775828974ee3df2"
+  },
+  "installed_runtime_origin": "f6ef14d6f5e43c9e49ab028787f478fd6bfeace1 installed BA4 runtime",
+  "A_image_paths": {
+    "input_quant_fp8.py": "model_executor/layers/quantization/input_quant_fp8.py",
+    "fp8_scaled_mm.py": "model_executor/kernels/linear/scaled_mm/ScaledMMLinearKernel.py",
+    "fp8_flashinfer.py": "model_executor/kernels/linear/scaled_mm/flashinfer.py",
+    "flashinfer_utils.py": "utils/flashinfer.py"
+  },
+  "splitter_origin": "retained A-image out/work-A/vllm: complete unmodified backends.py, partition_rules.py, config/compilation.py"
+}

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Serves the configuration on any host with two RTX 5090 cards: the engine of scripts/serve-v031-l1a-daily.sh
+# Serves the configuration on any host with two RTX 5090 cards: the engine of scripts/serve-v031-ba4-daily.sh
 # (image, vLLM flags, container env, MTP ns3, NVFP4 KV pinned at 14.86 GB per card, 16 sequences) without the serving
 # host's /srv/qwen5090 layout. Settings: serve.env in the repo root, or SERVE_ENV=<file>; environment variables override the
 # file; serve.env.example lists every setting and its default.
@@ -8,16 +8,18 @@
 #   bash scripts/serve.sh --stop    stop and remove the container
 # Left out on purpose: the serving host's experiment ports, rollback launchers, clock offsets, the llama-benchy autotune
 # pre-warm with its free-VRAM floor, and its host maintenance (orphaned /dev/shm segment sweep, host-RAM gate before boot,
-# boot-time tier eviction by tier-evict.sh). The disk KV tier is off unless KV_TIER_DIR is set.
+# boot-time tier eviction by tier-evict.sh). The disk KV tier is off unless KV_TIER_DIR is set. The BA4 GEMM layer is off
+# unless BA4_INPUTS names a directory of admission reports for these GPUs, weights and image (bench/results/r27-ba4.md);
+# off, the BA4 image computes as the L1a image does.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-SERVED_LAUNCHER=$ROOT/scripts/serve-v031-l1a-daily.sh
+SERVED_LAUNCHER=$ROOT/scripts/serve-v031-ba4-daily.sh
 die(){ echo "serve.sh: FAILED: $*" >&2; exit 1; }
 
 # Settings: remember what the environment sets (set-but-empty counts, so KV_TIER_DIR= turns off a tier the file enables),
 # source the file, then put the environment values back on top.
 KNOBS=(MODEL_DIR CACHE_DIR PORT BIND GPUS NAME IMAGE SERVED_NAME SERVED_ALIAS KV_TIER_DIR KV_TIER_CAP_GB POWER_LIMIT_W
-       DOCKER HEALTH_TIMEOUT)
+       DOCKER HEALTH_TIMEOUT BA4_INPUTS)
 declare -A FROM_ENV=()
 for k in "${KNOBS[@]}"; do if [ -n "${!k+x}" ]; then FROM_ENV[$k]=${!k}; fi; done
 ENV_FILE=${SERVE_ENV:-$ROOT/serve.env}
@@ -42,6 +44,7 @@ SERVED_ALIAS=${SERVED_ALIAS-qwen3.6-27b} # space-separated extra model names; em
 KV_TIER_DIR=${KV_TIER_DIR:-}
 KV_TIER_CAP_GB=${KV_TIER_CAP_GB:-300}
 POWER_LIMIT_W=${POWER_LIMIT_W:-}
+BA4_INPUTS=${BA4_INPUTS:-}               # empty: BA4 off; a directory: ba4-rank0.json, ba4-rank1.json and binding.json
 DOCKER=${DOCKER:-docker}                 # "sudo docker" where the user is not in the docker group
 HEALTH_TIMEOUT=${HEALTH_TIMEOUT:-1500}   # seconds (the serving host waits 25 minutes); a first boot compiles kernels
 read -r -a DK <<< "$DOCKER"
@@ -73,7 +76,21 @@ if [ "$MODE" = run ]; then               # --print creates nothing, so these dir
 fi
 abs(){ if [ -d "$1" ]; then (cd "$1" && pwd); else echo "$1"; fi; }
 MODEL_DIR=$(abs "$MODEL_DIR"); CACHE_DIR=$(abs "$CACHE_DIR"); [ -z "$KV_TIER_DIR" ] || KV_TIER_DIR=$(abs "$KV_TIER_DIR")
-for v in MODEL_DIR CACHE_DIR KV_TIER_DIR; do case "${!v}" in ''|/*) ;; *) die "$v=${!v} must be an absolute path";; esac; done
+[ -z "$BA4_INPUTS" ] || BA4_INPUTS=$(abs "$BA4_INPUTS")
+for v in MODEL_DIR CACHE_DIR KV_TIER_DIR BA4_INPUTS; do case "${!v}" in ''|/*) ;; *) die "$v=${!v} must be an absolute path";; esac; done
+
+# BA4 (off by default). On, each rank admits the Triton M=4 GEMM for the 48 in_proj_ba layers from the reports mounted at
+# /ba4-results, as the served launcher does; a report that does not match the device, code or weights logs
+# "SM12X BA4 INACTIVE" for that layer, which then runs the original GEMM. The served launcher warns on that, it does not fail.
+BA4_RUN=()
+if [ -n "$BA4_INPUTS" ]; then
+  case "$IMAGE" in *-BA4-*) ;; *) die "BA4_INPUTS is set but IMAGE=$IMAGE is not a BA4 image";; esac
+  for f in ba4-rank0.json ba4-rank1.json binding.json; do
+    [ "$MODE" = print ] || [ -f "$BA4_INPUTS/$f" ] || die "BA4_INPUTS=$BA4_INPUTS has no $f"
+  done
+  BA4_RUN=(-e VLLM_SM12X_BA_M4=1 -e "VLLM_SM12X_BA_M4_RESULT=/ba4-results/ba4-rank{rank}.json"
+           -e VLLM_SM12X_BA_M4_BINDING=/ba4-results/binding.json -v "$BA4_INPUTS":/ba4-results:ro)
+fi
 
 # The disk tier (off by default). The JSON is the served launcher's: a 16 GiB pinned CPU tier that every disk hit is promoted
 # through (R172), a filesystem tier at /l2, and patch 0137's LRU eviction with the served cap, scope and floor. Off means no
@@ -99,6 +116,7 @@ RUN=("${DK[@]}" run -d --name "$NAME" --restart unless-stopped --oom-score-adj -
   -e VLLM_SM12X_DRAFT_UB_PLAN=1                         # L1a: plan q_len=1 draft decode from the CPU sequence-length upper bound
   -e VLLM_SM12X_PCIE_IPC_AR=1 -e VLLM_SM12X_PCIE_IPC_MTP=1   # pcie_ipc all-reduce (0138), MTP drafter admitted on it (0148)
   -e VLLM_USE_V2_MODEL_RUNNER=1                           # the runner the r27 screen and qualify runs booted
+  "${BA4_RUN[@]}"                                         # BA4: env and the read-only reports mount, when BA4_INPUTS is set
   -v "$CACHE_DIR/torch_compile_qwen38_v0280nv":/root/.cache/vllm/torch_compile_cache   # subdir names match the serving host
   -v "$CACHE_DIR/triton":/root/.triton/cache -v "$CACHE_DIR/inductor":/root/.cache/inductor
   -v "$CACHE_DIR/flashinfer":/root/.cache/flashinfer
@@ -126,6 +144,7 @@ RUN=("${DK[@]}" run -d --name "$NAME" --restart unless-stopped --oom-score-adj -
 if [ "$MODE" = print ]; then
   printf '%q ' "${RUN[@]}"; echo
   [ -n "$KV_TIER_DIR" ] || echo "# disk KV tier off (set KV_TIER_DIR to enable)" >&2
+  [ -n "$BA4_INPUTS" ] || echo "# BA4 layer off (set BA4_INPUTS to enable)" >&2
   [ -z "$POWER_LIMIT_W" ] || echo "# after the boot checks: sudo nvidia-smi -i <each of ${GPUS}> -pl $POWER_LIMIT_W" >&2
   exit 0
 fi
@@ -217,6 +236,13 @@ case "$VERS" in "0.31.0"*" 0.7.0.post1") ;; *) echo "vllm/flashinfer are '$VERS'
 "${DK[@]}" exec "$NAME" grep -q 0158 /opt/prs-markers/upstream \
   || { echo "image lacks the upstream-source marker for 0152/0155/0156/0158" >&2; bad=1; }
 [ "$bad" = 0 ] || die "the engine answers but differs from the served configuration (lines above); it is still running (--stop removes it)"
+BA4_DESC=off
+if [ -n "$BA4_INPUTS" ]; then   # as the served launcher: 48 layers x 2 ranks, a shortfall is a warning (those layers run the original GEMM)
+  BA4_A=$(grep -aoE "SM12X BA4 ACTIVE: prefix=[^ ]+ rank=[0-9]" <<< "$LOG" | sort -u | wc -l | tr -d ' ')
+  BA4_I=$(grep -ac "SM12X BA4 INACTIVE" <<< "$LOG" || true)
+  BA4_DESC="$BA4_A/96 active"
+  [ "$BA4_A" = 96 ] && [ "$BA4_I" = 0 ] || echo "WARN: BA4 $BA4_A/96 rank-layers active, $BA4_I INACTIVE lines (those layers run the original GEMM)" >&2
+fi
 POOL=$(grep -a 'GPU KV cache size' <<< "$LOG" | tail -1 | grep -oE 'cache size: [0-9,]+' | tr -dc 0-9 || true)
 [ "$POOL" = 1391795 ] || echo "WARN: KV pool ${POOL:-?} tokens; the served boots read 1,391,795 at this pin (R234)" >&2
 if [ -n "$KV_TIER_DIR" ]; then   # a host that cannot pin 16 GiB gets fewer CPU-tier blocks, and long prompts stop being tier-served
@@ -232,4 +258,4 @@ if [ -n "$POWER_LIMIT_W" ]; then
   done
 fi
 echo "UP: http://$HOST:$PORT/v1, model $SERVED_NAME${SERVED_ALIAS:+ (alias $SERVED_ALIAS)}, KV pool ${POOL:-?} tokens," \
-     "disk tier ${KV_TIER_DIR:-off}${POWER_LIMIT_W:+, power limit $POWER_LIMIT_W W}"
+     "disk tier ${KV_TIER_DIR:-off}, BA4 $BA4_DESC${POWER_LIMIT_W:+, power limit $POWER_LIMIT_W W}"

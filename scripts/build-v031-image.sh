@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# Build the image served by serve-v031-l1a-daily.sh from this checkout.
+# Build the v0.31 chain from this checkout: by default the L1a image of serve-v031-l1a-daily.sh, checked against the
+# served L1a inventory; BA4=1 adds patches-v0310/ba4 on top, the image served by serve-v031-ba4-daily.sh since 2026-10-20.
 # DRY_RUN=1 prints commands and stages/checks local COPY inputs; no Docker or network commands run.
 # CHECK=1 also loads the compiled ops with the NVIDIA container runtime, without GPU computation.
 # OVERLAY_JOBS=4 is Dockerfile.v0310's recorded default; NO_CACHE=1 bypasses Docker's build cache.
 # DOCKER="sudo docker" selects a Docker command; LOG_DIR defaults to build-logs/v0310.
+# BA4=1: after the L1a inventory check, build patches-v0310/ba4/Dockerfile (its install.py pins every input and output file)
+# and compare the BA4 image with the served L1a inventory in which only the layer's three patched vLLM files change.
 # VLLM_SOURCE_SHA256 defaults to the archive hash verified by the operator on 2026-10-19;
 # csrc/ and cmake/patches/ matched a git clone of v0.31.0 (commit below).
 # The commit was resolved from GitHub's refs/tags/v0.31.0 API; the Arctic hash/URL are from
@@ -14,6 +17,7 @@ cd "$(dirname "$0")/.."
 
 DRY_RUN=${DRY_RUN:-0}
 CHECK=${CHECK:-0}
+BA4=${BA4:-0}
 NO_CACHE=${NO_CACHE:-0}
 OVERLAY_JOBS=${OVERLAY_JOBS:-4}
 LOG_DIR=${LOG_DIR:-build-logs/v0310}
@@ -37,7 +41,9 @@ MANIFEST_TOOL=scripts/v031_manifest.py
 ARCTIC_BUILD_REQUIREMENTS=scripts/arctic-build-requirements.txt
 T=vllm-qwen38:v0310-r27c-A-nvfp4kv-mtp
 S=vllm-qwen38:v0310-r27c-A_S-splitkv
-FINAL=vllm-qwen38:v0310-r27c-A_S-L1a-ubplan
+L1A=vllm-qwen38:v0310-r27c-A_S-L1a-ubplan
+BA4_TAG=vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan
+BA4_MANIFEST=patches-v0310/ba4/manifest.json
 CTX=
 
 log() { printf '%s\n' "$*"; }
@@ -48,7 +54,7 @@ cleanup() { if [ -n "$CTX" ]; then rm -rf -- "$CTX"; fi; }
 trap cleanup EXIT
 trap 'rc=$?; printf "FAILED (exit %s): %s\n" "$rc" "$BASH_COMMAND" >&2; exit "$rc"' ERR
 
-for flag in DRY_RUN CHECK NO_CACHE; do
+for flag in DRY_RUN CHECK NO_CACHE BA4; do
   case ${!flag} in 0|1) ;; *) die "$flag must be 0 or 1";; esac
 done
 [[ "$OVERLAY_JOBS" =~ ^[1-9][0-9]*$ ]] || die "OVERLAY_JOBS must be a positive integer"
@@ -59,7 +65,13 @@ if [ "$DRY_RUN" != 1 ]; then
   command -v "${DOCKER_CMD[0]}" >/dev/null || die "Docker command is unavailable: ${DOCKER_CMD[0]}"
 fi
 EXPECT=$(sed -nE 's/^DAILY_IMG=([^ ]+).*/\1/p' scripts/serve-v031-l1a-daily.sh)
-[ "$EXPECT" = "$FINAL" ] || die "final tag differs from DAILY_IMG in serve-v031-l1a-daily.sh"
+[ "$EXPECT" = "$L1A" ] || die "L1a tag differs from DAILY_IMG in serve-v031-l1a-daily.sh"
+FINAL=$L1A
+if [ "$BA4" = 1 ]; then
+  EXPECT=$(sed -nE 's/^DAILY_IMG=([^ ]+).*/\1/p' scripts/serve-v031-ba4-daily.sh)
+  [ "$EXPECT" = "$BA4_TAG" ] || die "BA4 tag differs from DAILY_IMG in serve-v031-ba4-daily.sh"
+  FINAL=$BA4_TAG
+fi
 
 file_hash() { python3 -c 'import hashlib, pathlib, sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())' "$1"; }
 require_hash() {
@@ -103,6 +115,8 @@ for name in ("audit_fi_r27c.py", "test_cpu.py"):
     shutil.copy2(src / name, ctx / "out" / name)
 for name in ("Dockerfile.A_S-splitkv", "Dockerfile.A_S-L1a-ubplan", "L1a-draft-ub-plan.diff"):
     shutil.copy2(src / name, ctx / name)
+# BA4's own build context (its Dockerfile COPYs relative to this directory); staged even when BA4=0.
+shutil.copytree(src / "ba4", ctx / "ba4", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
 # The public recipes express Python RUN bodies as heredocs. Render the same bodies
 # as python -c arguments for the legacy builder, retaining every source/hash assertion.
 for name in ("Dockerfile.A_S-splitkv", "Dockerfile.A_S-L1a-ubplan"):
@@ -135,7 +149,7 @@ print("Local build context staged; 0136 restored to the served phase-A form")
 PY
 
 check_copy_sources() {
-  python3 - "$CTX" "$1" <<'PY'
+  python3 - "${2:-$CTX}" "$1" <<'PY'
 from pathlib import Path
 import shlex
 import sys
@@ -154,6 +168,8 @@ PY
 for df in "$CTX/out/A/Dockerfile.v0310" "$CTX/Dockerfile.A_S-splitkv" "$CTX/Dockerfile.A_S-L1a-ubplan"; do
   check_copy_sources "$df"
 done
+check_copy_sources "$CTX/ba4/Dockerfile" "$CTX/ba4"
+grep -qxF "FROM $L1A" "$CTX/ba4/Dockerfile" || die "patches-v0310/ba4/Dockerfile must build FROM $L1A"
 
 # These pins are registry digests. RepoDigests must contain the exact name@digest reference.
 # Resolve that reference's local .Id for FROM and asset runs: it can differ between image stores.
@@ -246,12 +262,12 @@ if [ "$NEED_DEBS" = 1 ]; then
   '
 fi
 
-build() {
-  local tag=$1 df=$2 logfile
-  shift 2
+build() {  # <tag> <dockerfile> <context> [build args]
+  local tag=$1 df=$2 context=$3 logfile
+  shift 3
   local cmd=("${DOCKER_CMD[@]}" build --network=none --pull=false)
   if [ "$NO_CACHE" = 1 ]; then cmd+=(--no-cache); fi
-  cmd+=("$@" -f "$df" -t "$tag" "$CTX")
+  cmd+=("$@" -f "$df" -t "$tag" "$context")
   if [ "$DRY_RUN" = 1 ]; then
     printf 'DOCKER_BUILDKIT=0 '; print_cmd "${cmd[@]}"; return
   fi
@@ -260,23 +276,62 @@ build() {
   if ! "${cmd[@]}" 2>&1 | tee "$logfile"; then die "build failed for $tag; see $logfile"; fi
 }
 if [ "$DRY_RUN" != 1 ]; then mkdir -p "$LOG_DIR"; fi
-build "$T" "$CTX/out/A/Dockerfile.v0310" --build-arg VLLM_BASE="$VLLM_ID" \
+build "$T" "$CTX/out/A/Dockerfile.v0310" "$CTX" --build-arg VLLM_BASE="$VLLM_ID" \
   --build-arg CUDA_TOOLCHAIN="$CUDA_ID" --build-arg OVERLAY_JOBS="$OVERLAY_JOBS"
-build "$S" "$CTX/Dockerfile.A_S-splitkv"
-build "$FINAL" "$CTX/Dockerfile.A_S-L1a-ubplan"
+build "$S" "$CTX/Dockerfile.A_S-splitkv" "$CTX"
+build "$L1A" "$CTX/Dockerfile.A_S-L1a-ubplan" "$CTX"
 
 ACTUAL_MANIFEST=$LOG_DIR/built-l1a-manifest.txt
 CONTENT_REPORT=$LOG_DIR/content-report.txt
 CONTENT_RC=0
 if [ "$DRY_RUN" = 1 ]; then
-  printf '%q ' "${DOCKER_CMD[@]}" run --rm -i --network=none --entrypoint python3 "$FINAL" - generate
+  printf '%q ' "${DOCKER_CMD[@]}" run --rm -i --network=none --entrypoint python3 "$L1A" - generate
   printf '< %q > %q\n' "$MANIFEST_TOOL" "$ACTUAL_MANIFEST"
   print_cmd python3 "$MANIFEST_TOOL" compare "$MANIFEST" "$ACTUAL_MANIFEST"
 else
-  "${DOCKER_CMD[@]}" image inspect "$FINAL" >/dev/null || die "final image is missing"
-  "${DOCKER_CMD[@]}" run --rm -i --network=none --entrypoint python3 "$FINAL" - generate \
+  "${DOCKER_CMD[@]}" image inspect "$L1A" >/dev/null || die "L1a image is missing"
+  "${DOCKER_CMD[@]}" run --rm -i --network=none --entrypoint python3 "$L1A" - generate \
     < "$MANIFEST_TOOL" > "$ACTUAL_MANIFEST"
   python3 "$MANIFEST_TOOL" compare "$MANIFEST" "$ACTUAL_MANIFEST" | tee "$CONTENT_REPORT" || CONTENT_RC=$?
+fi
+
+# BA4 (opt-in): built only on an L1a image whose required inventory matched. No served BA4 inventory is published, so the
+# expected one is derived: the served L1a inventory with the layer's three patched vLLM files at the output hashes its
+# manifest.json pins (install.py also checks those, the untouched context files and the new vllm_ba4 package in the build).
+BA4_EXPECTED=$LOG_DIR/expected-ba4-manifest.txt
+BA4_ACTUAL=$LOG_DIR/built-ba4-manifest.txt
+BA4_REPORT=$LOG_DIR/ba4-content-report.txt
+derive_ba4_manifest() {
+  python3 - "$MANIFEST" "$BA4_MANIFEST" <<'PY'
+import json, re, sys
+rows = [re.fullmatch(r"([0-9a-f]{64})  (.+)", line).groups() for line in open(sys.argv[1]).read().splitlines()]
+layer = json.load(open(sys.argv[2]))
+served = dict((path, digest) for digest, path in rows)
+for path, digest in list(layer["before"].items()) + list(layer["unchanged"].items()):
+    if served.get(path) != digest:
+        raise SystemExit("BA4 input %s is not the served L1a file" % path)
+changed = {path: layer["after"][path] for path in layer["before"]}
+for digest, path in rows:
+    print("%s  %s" % (changed.get(path, digest), path))
+PY
+}
+if [ "$BA4" = 1 ]; then
+  if [ "$DRY_RUN" = 1 ]; then
+    log "BA4=1: only after the L1a inventory passes, build the BA4 layer on $L1A:"
+    build "$BA4_TAG" "$CTX/ba4/Dockerfile" "$CTX/ba4"
+    printf '%q ' "${DOCKER_CMD[@]}" run --rm -i --network=none --entrypoint python3 "$BA4_TAG" - generate
+    printf '< %q > %q\n' "$MANIFEST_TOOL" "$BA4_ACTUAL"
+    derive_ba4_manifest > /dev/null
+    log "Derived BA4 inventory checked: the served L1a inventory with the three patched vLLM files at their pinned outputs."
+    print_cmd python3 "$MANIFEST_TOOL" compare "$BA4_EXPECTED" "$BA4_ACTUAL"
+  else
+    [ "$CONTENT_RC" = 0 ] || die "L1a content verification failed; the BA4 layer is not built (see $CONTENT_REPORT)"
+    build "$BA4_TAG" "$CTX/ba4/Dockerfile" "$CTX/ba4"
+    derive_ba4_manifest > "$BA4_EXPECTED"
+    "${DOCKER_CMD[@]}" run --rm -i --network=none --entrypoint python3 "$BA4_TAG" - generate \
+      < "$MANIFEST_TOOL" > "$BA4_ACTUAL"
+    python3 "$MANIFEST_TOOL" compare "$BA4_EXPECTED" "$BA4_ACTUAL" | tee "$BA4_REPORT" || CONTENT_RC=$?
+  fi
 fi
 
 IDENTITY_CODE=$(cat <<'PY'
@@ -305,6 +360,19 @@ assert "SM12X draft UB plan ACTIVE" in sp and "_sm12x_wait_draft_plan(self)" in 
 print("IDENTITY OK", vllm.__version__, torch.__version__, flashinfer.__version__)
 PY
 )
+if [ "$BA4" = 1 ]; then
+  IDENTITY_CODE=${IDENTITY_CODE%'print("IDENTITY OK"'*}$(cat <<'PY'
+import os
+os.environ.pop("VLLM_SM12X_BA_M4", None)
+import vllm.envs as envs
+import vllm_ba4, vllm_ba4.common
+assert envs.VLLM_SM12X_BA_M4 is False
+li = (site / "vllm/model_executor/layers/linear.py").read_text()
+assert "from vllm_ba4.runtime import try_apply" in li and "from vllm_ba4.runtime import prepare_layer" in li
+print("IDENTITY OK", vllm.__version__, torch.__version__, flashinfer.__version__, "BA4 layer present, off by default")
+PY
+)
+fi
 IDENTITY_RC=0
 if [ "$CHECK" = 1 ]; then
   if [ "$DRY_RUN" = 1 ]; then
@@ -325,5 +393,9 @@ else
   log "Manifest: $ACTUAL_MANIFEST; comparison: $CONTENT_REPORT; build logs: $LOG_DIR"
   [ "$CONTENT_RC" = 0 ] || die "content verification failed"
   [ "$IDENTITY_RC" = 0 ] || die "identity check failed; see $LOG_DIR/identity.log"
-  log "DONE: $FINAL matches the required served sources and inventory."
+  if [ "$BA4" = 1 ]; then
+    log "DONE: $L1A matches the served L1a inventory; $FINAL matches it with the BA4 layer's pinned outputs."
+  else
+    log "DONE: $FINAL matches the required served sources and inventory."
+  fi
 fi

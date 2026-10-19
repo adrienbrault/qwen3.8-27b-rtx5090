@@ -1,0 +1,22 @@
+{
+  "origin": "out/work-A/vllm: archived A-image source, retained by L1a; complete unmodified test-only files",
+  "files": {
+    "logger.py": "4e26afd9feab3448f2af529867b00e8bed6a22690defd81a54d2df6b5afdd010",
+    "logging_utils/formatter.py": "cc2153d8edfd59ed401f0c3f3ae985a7dd678799daad6829a2d33ac6ccb20ea5",
+    "utils/system_utils.py": "9be361854412a4d58cc9eef6b999346c606ab11d388e2644fc47fb454546255d",
+    "v1/executor/multiproc_executor.py": "11a1554380d1efa516bb481416c798798d5839f38ac3b0f379ef4b8b547f4d1b",
+    "run5-dynamo-echo.log": "c181c4ecdcf73eafd1a1249ec42c2e562830641c3a239e4f1c261a8f10c16f00"
+  },
+  "run5_dynamo_echo_origin": {
+    "0": {
+      "path": "evidence/profile-ba4-run5/rank0-ba4-matches.txt",
+      "sha256": "f9b7aa47abadb56afed001d94a3478604349bd8cd14f8ad4e7ae60ef239aaf77",
+      "echo_lines": 576
+    },
+    "1": {
+      "path": "evidence/profile-ba4-run5/rank1-ba4-matches.txt",
+      "sha256": "d94964d9bbb4fdd4fc0418533ebf937f336c441275b992678c5923086847ffee",
+      "echo_lines": 576
+    }
+  }
+}

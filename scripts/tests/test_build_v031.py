@@ -87,13 +87,18 @@ elif args[0] == "build":
         assert "VLLM_BASE=" + ids["vllm/vllm-openai:v0.31.0"] in args, args
         assert "CUDA_TOOLCHAIN=" + ids["nvidia/cuda:13.0.3-devel-ubuntu24.04"] in args, args
         shutil.copytree(args[-1], state / "context")
+    if "A_S-BA4-L1a-ubplan" in tag:
+        shutil.copytree(args[-1], state / "ba4-context")
     if os.environ.get("FAKE_BUILD_FAIL") and "A_S-splitkv" in tag:
         sys.exit(17)
     print("fake build " + tag)
 elif args[0] == "run":
     image = args[args.index("--entrypoint") + 2]
-    expected = "vllm-qwen38:v0310-r27c-A_S-L1a-ubplan" if "generate" in args or "--runtime" in args else ids["vllm/vllm-openai:v0.31.0"]
-    assert image == expected, args
+    final = ("vllm-qwen38:v0310-r27c-A_S-L1a-ubplan", "vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan")
+    if "generate" in args or "--runtime" in args:
+        assert image in final, args
+    else:
+        assert image == ids["vllm/vllm-openai:v0.31.0"], args
     if "wheel" in args:
         # The clean-room base lacks CMake; the former direct wheel call must fail.
         print("error: [Errno 2] No such file or directory: 'cmake'", file=sys.stderr)
@@ -119,6 +124,11 @@ elif args[0] == "run":
         assert "--network=none" in args
         compile(sys.stdin.read(), "manifest-stdin", "exec")
         rows = Path(os.environ["FAKE_MANIFEST"]).read_text().splitlines()
+        if image == final[1]:
+            # The BA4 image: the layer's three patched vLLM files at their pinned outputs (FAKE_BA4_CHANGE keeps one stale).
+            after = json.loads(Path(os.environ["FAKE_BA4_MANIFEST"]).read_text())["after"]
+            stale = "vllm/envs.py" if os.environ.get("FAKE_BA4_CHANGE") else None
+            rows = [after[row[66:]] + row[64:] if row[66:] in after and row[66:] != stale else row for row in rows]
         change = os.environ.get("FAKE_CONTENT_CHANGE")
         if change in (".py", ".so"):
             i = next(i for i, row in enumerate(rows) if row.endswith(change))
@@ -206,7 +216,7 @@ class BuildTests(unittest.TestCase):
         self.repo = self.base / "repo"
         (self.repo / "scripts").mkdir(parents=True)
         shutil.copytree(ROOT / "patches-v0310", self.repo / "patches-v0310")
-        for name in ("build-v031-image.sh", "serve-v031-l1a-daily.sh", "v031_manifest.py"):
+        for name in ("build-v031-image.sh", "serve-v031-l1a-daily.sh", "serve-v031-ba4-daily.sh", "v031_manifest.py"):
             shutil.copy2(ROOT / "scripts" / name, self.repo / "scripts" / name)
         shutil.copy2(ROOT / "scripts/arctic-build-requirements.txt", self.repo / "scripts/arctic-build-requirements.txt")
         self.state = self.base / "state"
@@ -238,7 +248,8 @@ class BuildTests(unittest.TestCase):
         env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
                    DOCKER="docker", DRY_RUN="0", CHECK="0", NO_CACHE="0", OVERLAY_JOBS="4",
                    LOG_DIR=str(self.base / "logs"), TMPDIR=str(self.base / "temp"),
-                   FAKE_STATE=str(self.state), FAKE_WHEEL_PIP=FAKE_WHEEL_PIP, FAKE_MANIFEST=str(self.repo / "patches-v0310/served-l1a-manifest.txt"))
+                   FAKE_STATE=str(self.state), FAKE_WHEEL_PIP=FAKE_WHEEL_PIP, FAKE_MANIFEST=str(self.repo / "patches-v0310/served-l1a-manifest.txt"),
+                   FAKE_BA4_MANIFEST=str(self.repo / "patches-v0310/ba4/manifest.json"))
         env.pop("VLLM_SOURCE_SHA256", None)
         env.update(extra)
         result = subprocess.run(["bash", str(self.repo / "scripts/build-v031-image.sh")],
@@ -425,6 +436,59 @@ class BuildTests(unittest.TestCase):
     def test_failed_identity_check_fails(self):
         output = self.run_build(expected=1, CHECK="1", FAKE_IDENTITY_FAIL="1")
         self.assertIn("identity check failed", output)
+
+    def test_default_build_stops_at_l1a(self):
+        self.run_build()
+        tags = [c["args"][c["args"].index("-t") + 1] for c in self.docker_calls() if c["args"][0] == "build"]
+        self.assertNotIn("vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan", tags)
+        self.assertFalse((self.base / "logs/built-ba4-manifest.txt").exists())
+
+    def test_ba4_builds_on_checked_l1a_with_its_own_context(self):
+        output = self.run_build(BA4="1", CHECK="1")
+        builds = [c["args"] for c in self.docker_calls() if c["args"][0] == "build"]
+        self.assertEqual([a[a.index("-t") + 1] for a in builds][2:],
+                         ["vllm-qwen38:v0310-r27c-A_S-L1a-ubplan", "vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan"])
+        self.assertTrue(builds[3][-1].endswith("/ba4"), builds[3])
+        self.assertTrue(builds[3][builds[3].index("-f") + 1].endswith("/ba4/Dockerfile"))
+        runs = [c["args"] for c in self.docker_calls() if c["args"][0] == "run" and "generate" in c["args"]]
+        self.assertEqual([a[a.index("--entrypoint") + 2] for a in runs],
+                         ["vllm-qwen38:v0310-r27c-A_S-L1a-ubplan", "vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan"])
+        identity = [c["args"] for c in self.docker_calls() if c["args"][0] == "run" and "--runtime" in c["args"]]
+        self.assertEqual(identity[0][identity[0].index("--entrypoint") + 2], "vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan")
+        self.assertIn("vllm_ba4", identity[0][-1])
+        self.assertEqual(output.count("CONTENT PASS"), 2)
+        self.assertIn("BA4 layer's pinned outputs", output)
+        ctx = self.state / "ba4-context"
+        source = ROOT / "patches-v0310/ba4"
+        staged = sorted(p.relative_to(ctx).as_posix() for p in ctx.rglob("*") if p.is_file())
+        self.assertEqual(staged, sorted(p.relative_to(source).as_posix() for p in source.rglob("*")
+                                        if p.is_file() and "__pycache__" not in p.parts))
+        for rel in staged:
+            self.assertEqual((ctx / rel).read_bytes(), (source / rel).read_bytes(), rel)
+        expected = (self.base / "logs/expected-ba4-manifest.txt").read_text()
+        layer = json.loads((source / "manifest.json").read_text())
+        for path, digest in layer["after"].items():
+            if path.startswith("vllm/"):
+                self.assertIn(digest + "  " + path + "\n", expected)
+
+    def test_ba4_inventory_mismatch_fails(self):
+        output = self.run_build(expected=1, BA4="1", FAKE_BA4_CHANGE="1")
+        self.assertIn("CONTENT FAIL", output)
+        self.assertIn("vllm/envs.py", output)
+
+    def test_ba4_not_built_when_l1a_inventory_fails(self):
+        output = self.run_build(expected=1, BA4="1", FAKE_CONTENT_CHANGE=".py")
+        self.assertIn("the BA4 layer is not built", output)
+        tags = [c["args"][c["args"].index("-t") + 1] for c in self.docker_calls() if c["args"][0] == "build"]
+        self.assertNotIn("vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan", tags)
+
+    def test_ba4_dry_run_plans_the_fourth_build(self):
+        output = self.run_build(DRY_RUN="1", BA4="1")
+        self.assertFalse(self.docker_calls())
+        builds = [row for row in output.splitlines() if row.startswith("DOCKER_BUILDKIT=0 docker build ")]
+        self.assertEqual(len(builds), 4)
+        self.assertIn("v0310-r27c-A_S-BA4-L1a-ubplan", builds[3])
+        self.assertIn("Derived BA4 inventory checked", output)
 
 
 class ManifestTests(unittest.TestCase):

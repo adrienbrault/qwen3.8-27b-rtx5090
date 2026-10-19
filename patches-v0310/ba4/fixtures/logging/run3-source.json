@@ -1,0 +1,15 @@
+{
+  "source": "evidence/profile-ba4-run3/r1-02-L1a_BA4",
+  "files": {
+    "boot.log": "275edf60cbfe59bc91ac8cf24f99b2c291e2ce25d15c6dcafa0792aac1852d29",
+    "engine-rank-0.log": "0635863a1f6e309b75d8faace7ce8dd620d1852e5395981c83f21ce9876e2a68",
+    "engine-rank-1.log": "bba6b35fc9ae70a5de2b5860b7f936a62c2dc00a75da2a7ccb11a389d45588eb",
+    "engine-rank-unattributed.log": "9b429d69ee49bf58fedfaf117a72e42bf9c4e016877c6d27f3f437a4bb385879",
+    "engine.log.gz": "c39af69d7e70b5b3f0ede6fb73fee098d66299f41f46687a0cdac6582fae4559",
+    "launch-env.nul": "ae1c9bae71143fd8d417d7cec03a1989ea7cac8ac02861586c93a362a3607c4c",
+    "lever-admission.json": "a7eb75bc8732f0f2d0ccbf7097d5c3f2f83afd31d0688bf73f119ef5e750f360",
+    "rank-log-index.json": "89660bf6787c9c91056aff94d775cae57ce5898e012b9abbe725b8afa5444544",
+    "resolved-launch.json": "03496eeeecab22b17c2d57293e06940ecc2c416393353e2baad542606ffb6325"
+  },
+  "extract": "all 96 physical SM12X BA4 records from both rank logs; no edits"
+}

@@ -1,0 +1,71 @@
+{
+  "kind": "operator_registration_recipe",
+  "registered_in_external_harness": false,
+  "arm": "L1a_BA4",
+  "base_arm": "A_S_L1a",
+  "image": "vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan",
+  "base_image": "vllm-qwen38:v0310-r27c-A_S-L1a-ubplan",
+  "base_image_id": "sha256:631a6f24ccca2f5470a3d0772d833670a16613c69bb4191663f718e473086f5e",
+  "source_hash_manifest": "manifest.json",
+  "new_container_env": {
+    "VLLM_SM12X_BA_M4": "1",
+    "VLLM_SM12X_BA_M4_RESULT": "/ba4-results/ba4-rank{rank}.json",
+    "VLLM_SM12X_BA_M4_BINDING": "/ba4-results/binding.json"
+  },
+  "inherited_container_env_required": {
+    "VLLM_SM12X_DRAFT_UB_PLAN": "1",
+    "VLLM_SM12X_NVFP4_PREFILL_SPLIT_KV": "1"
+  },
+  "new_readonly_mount": "qualified result directory:/ba4-results:ro",
+  "admission": {
+    "result": "Two v2 serving-PROFILE-backed WIN or v3 profile-qualified reports; installed benchmark/protocol/code, actual GPU/software, local weight bytes, and separate harness launch binding must match",
+    "active": "SM12X BA4 ACTIVE: prefix=<prefix> rank=<rank> pid=<pid> kernel=<selected>",
+    "used": "SM12X BA4 USED: prefix=<prefix> pid=<pid> kernel=<selected> phase=warmup_or_capture; verify replay with PROFILE",
+    "per_worker": "exactly 48 distinct captured prefixes ACTIVE and USED, same PID and selected kernel",
+    "forbidden": [
+      "SM12X BA4 INACTIVE:",
+      "Traceback",
+      "SM12X BA4 PROFILE_ONLY:",
+      "SM12X BA4 PROFILE_USED:"
+    ],
+    "checker": "python3 out/admit_ba4.py --log STOPPED.log --rank0 RESULTS/ba4-rank0.json --rank1 RESULTS/ba4-rank1.json --binding RESULTS/binding.json"
+  },
+  "profile": {
+    "selected_M4_B1_calls_per_target_replay_per_rank": 48,
+    "graph_replays_per_step": 4,
+    "PCIe_pushes_per_step": 138,
+    "MTP_bf16_calls_unchanged": 15,
+    "B1_time": "sum complete paths including split reduction, copies and all helpers"
+  },
+  "screen_order": [
+    "A_S_L1a",
+    "L1a_BA4",
+    "L1a_BA4",
+    "A_S_L1a"
+  ],
+  "screen_primary_concurrency": [
+    1,
+    2,
+    3
+  ],
+  "screen_secondary_concurrency": [
+    4,
+    8
+  ],
+  "promotion": "never automatic; target fidelity and repeatable unprofiled c1 benefit required",
+  "build": "python3 out/L1a_BA4/build.py (enforces approved parent ID; no BASE override)",
+  "profile_only_boot": {
+    "eligible_result": "complete PROVISIONAL only; cannot authorize ACTIVE",
+    "new_container_env": {
+      "VLLM_SM12X_BA_M4": "1",
+      "VLLM_SM12X_BA_M4_PROFILE_ONLY": "1",
+      "VLLM_SM12X_BA_M4_RESULT": "/ba4-provisional/provisional-rank{rank}.json"
+    },
+    "scope": "isolated bounded harness PROFILE c1, actual vLLM compilation/capture; no SCREEN",
+    "logs": [
+      "SM12X BA4 PROFILE_ONLY:",
+      "SM12X BA4 PROFILE_USED:"
+    ],
+    "qualification": "v3: two complete PROFILE pairs via ba4_profile_qualify.py; v2 retained/deferred: three A_S_L1a / L1a_BA4 / A_S_L1a PROFILE c1 triples; both ranks; >=500us complete B1 saving in each pair; ba4_qualify.py + SERVING-EVIDENCE.md"
+  }
+}
