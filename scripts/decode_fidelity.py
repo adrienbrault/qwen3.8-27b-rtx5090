@@ -23,10 +23,17 @@ def run(a):
             body = {"model": a.model, "prompt": pad + c["text"], "max_tokens": a.tokens, "temperature": 0, "logprobs": 2}
             r = urllib.request.Request(a.url + "/v1/completions", data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
             d = json.load(urllib.request.urlopen(r, timeout=1800))
-            lp = d["choices"][0]["logprobs"]
+            ch = d["choices"][0]
+            # A completion with no generated token comes back with logprobs None (TabbyAPI; R668 crashed on it at
+            # nvfp4/4,4). Record it as an empty generation, with its finish reason and text, never as a crash.
+            lp = ch.get("logprobs") or {"tokens": [], "token_logprobs": []}
             out.write(json.dumps({"id": c["id"], "bucket": c.get("bucket"), "ctx": a.ctx,
-                                  "tokens": lp["tokens"], "logprobs": lp["token_logprobs"]}) + "\n")
-            print(f"chunk {c['id']} ok ({len(lp['tokens'])} tokens)", flush=True)
+                                  "tokens": lp["tokens"], "logprobs": lp["token_logprobs"],
+                                  # top-k alternatives per position: lets a comparison tell a near-tie flip from a real
+                                  # divergence (ba4-lean, 2026-10-19). Absent on servers that do not return them.
+                                  "top": lp.get("top_logprobs"),
+                                  "finish_reason": ch.get("finish_reason"), "text": ch.get("text", "")[:200]}) + "\n")
+            print(f"chunk {c['id']} ok ({len(lp['tokens'])} tokens, finish {ch.get('finish_reason')})", flush=True)
 
 def compare(a):
     A = {(j["id"], j["ctx"]): j for j in map(json.loads, open(a.runs[0]))}
@@ -39,13 +46,15 @@ def compare(a):
         for i in range(n):
             if ta[i] != tb[i]: div = i; break
             if la[i] is not None and lb[i] is not None: dlp.append(abs(la[i] - lb[i]))
+        if div is None and len(ta) != len(tb): div = n   # one side stopped early (or generated nothing): not agreement
         tot += 1
         if div is None: agree += 1
         else: first_div.append(div)
     dlp.sort()
     med = dlp[len(dlp)//2] if dlp else None
     p99 = dlp[int(len(dlp)*0.99)] if dlp else None
-    print(json.dumps({"chunks": tot, "fully_agreeing": agree, "diverged": len(first_div),
+    missing = len(set(A) ^ set(B))   # chunks present on one side only: a crashed or partial run
+    print(json.dumps({"chunks": tot, "missing_one_side": missing, "fully_agreeing": agree, "diverged": len(first_div),
                       "first_divergence_positions": sorted(first_div)[:10],
                       "median_abs_dlogprob_on_agreed": round(med, 5) if med is not None else None,
                       "p99_abs_dlogprob_on_agreed": round(p99, 5) if p99 is not None else None}))

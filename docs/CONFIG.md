@@ -1,12 +1,26 @@
 # Configuration of the served engine
 
-Every flag of the two-card configuration, why it is set, and what happens without it. The served launcher is [`scripts/serve-v031-l1a-daily.sh`](../scripts/serve-v031-l1a-daily.sh) (first section below), which calls the generic [`scripts/serve-v0280-daily.sh`](../scripts/serve-v0280-daily.sh) with the served values. The earlier two-card fp8 launcher is [`scripts/serve-r156-daily.sh`](../scripts/serve-r156-daily.sh). Inline comments in the scripts are the reference when the two disagree. Earlier generations are in [HISTORY.md](HISTORY.md) and [archive/](archive/).
+Every flag of the two-card configuration, why it is set, and what happens without it. The served launcher is [`scripts/serve-v031-ba4-daily.sh`](../scripts/serve-v031-ba4-daily.sh) (first section below), which calls the generic [`scripts/serve-v0280-daily.sh`](../scripts/serve-v0280-daily.sh) with the served values. The earlier two-card fp8 launcher is [`scripts/serve-r156-daily.sh`](../scripts/serve-r156-daily.sh). Inline comments in the scripts are the reference when the two disagree. Earlier generations are in [HISTORY.md](HISTORY.md) and [archive/](archive/).
 
-To run the served configuration on another host, [`scripts/serve.sh`](../scripts/serve.sh) passes the `docker run` arguments of [`scripts/serve-v031-l1a-daily.sh`](../scripts/serve-v031-l1a-daily.sh) with the model and cache paths, bind address, GPUs, disk tier and power cap as settings ([`serve.env.example`](../serve.env.example)); the disk tier and the power cap are off unless set.
+To run the served configuration on another host, [`scripts/serve.sh`](../scripts/serve.sh) passes the `docker run` arguments of [`scripts/serve-v031-ba4-daily.sh`](../scripts/serve-v031-ba4-daily.sh) with the model and cache paths, bind address, GPUs, disk tier, BA4 admission reports and power cap as settings ([`serve.env.example`](../serve.env.example)); the disk tier, the BA4 layer and the power cap are off unless set.
 
-## Since 2026-10-17: L1a plans pure draft decode from the CPU upper bound
+## Since 2026-10-20: BA4 serves the M=4 `in_proj_ba` GEMM with Triton
 
-The served launcher is [scripts/serve-v031-l1a-daily.sh](../scripts/serve-v031-l1a-daily.sh), the A_S launcher of the next section with one Python image layer and one environment pair added. The vLLM arguments, checkpoint, KV pin, sequence limit, draft length, KV and state dtypes and tiers are unchanged. Qualify passed on 2026-10-17 (results `2026-10-16-r27-audition-qualify-231459-865333`); the order-balanced screen measured the paired decode and fidelity results in [r27-l1a](../bench/results/r27-l1a.md) (results `2026-10-17-r27-audition-screen-022747-4123606`).
+The served launcher is [scripts/serve-v031-ba4-daily.sh](../scripts/serve-v031-ba4-daily.sh), the L1a launcher of the next section with one image layer, three environment variables and one read-only mount added. The vLLM arguments, checkpoint, KV pin, sequence limit, draft length, KV and state dtypes and tiers are unchanged. Screens, correctness checks and the promotion boot: [r27-ba4](../bench/results/r27-ba4.md) (results `2026-10-19-r27-audition-screen-070155-3532152`, `2026-10-19-231840-ba4-lean-gate`, `2026-10-19-233300-ba4-promote`).
+
+| flag / env | value | why |
+|---|---|---|
+| image | `vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan` | L1a plus [ba4/Dockerfile](../patches-v0310/ba4/Dockerfile), whose `install.py` applies the hash-pinned [L1a_BA4.diff](../patches-v0310/ba4/L1a_BA4.diff) (the `vllm_ba4` package and edits to `linear.py`, `envs.py` and `piecewise_backend.py`) and runs the layer's CPU tests in the image |
+| `VLLM_SM12X_BA_M4=1` | BA4 on | `UnquantizedLinearMethod.apply` sends bias-free bf16 `[4, 5120] × [48, 5120]` calls of the `.linear_attn.in_proj_ba` layers to the admitted Triton kernel on SM120 at tensor parallel 2; every other call keeps the original GEMM. Unset, the layer imports nothing and allocates nothing |
+| `VLLM_SM12X_BA_M4_RESULT=/ba4-results/ba4-rank{rank}.json`, `VLLM_SM12X_BA_M4_BINDING=/ba4-results/binding.json` | the admission reports, one per rank, and the launch binding | each rank admits each layer only if its report's selected kernel, device fingerprint, code hash and weight hashes match the running process |
+| `-v /srv/qwen5090/ba4-inputs:/ba4-results:ro` | the screen's preflight reports | copied unchanged from the screen that measured the layer; the daily boot fails before starting the container if `binding.json` is missing |
+| boot-log report | `SM12X BA4 ACTIVE` count, `INACTIVE` lines | an inactive layer runs the original GEMM and does not fail the boot; the UP line names `BA4 n/96 active` and a shortfall prints a warning. [scripts/serve.sh](../scripts/serve.sh) does the same when `BA4_INPUTS` is set |
+
+The daily branch forces BA4 on for a `*-BA4-*` image. Experiment boots of such an image default on and may pass `BA4=0` for L1a behavior on it; `BA4=1` on an image without that tag fails before boot. Rollback is [scripts/serve-v031-l1a-daily.sh](../scripts/serve-v031-l1a-daily.sh).
+
+## 2026-10-17 to 2026-10-20: L1a plans pure draft decode from the CPU upper bound
+
+The L1a launcher is [scripts/serve-v031-l1a-daily.sh](../scripts/serve-v031-l1a-daily.sh), the A_S launcher of the next section with one Python image layer and one environment pair added. The vLLM arguments, checkpoint, KV pin, sequence limit, draft length, KV and state dtypes and tiers are unchanged. Qualify passed on 2026-10-17 (results `2026-10-16-r27-audition-qualify-231459-865333`); the order-balanced screen measured the paired decode and fidelity results in [r27-l1a](../bench/results/r27-l1a.md) (results `2026-10-17-r27-audition-screen-022747-4123606`).
 
 | flag / env | value | why |
 |---|---|---|
@@ -16,7 +30,7 @@ The served launcher is [scripts/serve-v031-l1a-daily.sh](../scripts/serve-v031-l
 
 The layer itself defaults off. The host launcher's daily branch enables it for the L1a image; experiment boots of an `*-L1a-ubplan*` image default on and may pass `DRAFT_UB_PLAN=0` for A_S behavior on that image. Other images default off, and `DRAFT_UB_PLAN=1` on an image without that tag fails before boot. With the knob off, any ACTIVE line fails the host launcher's boot check. Rollback is [scripts/serve-v031-splitkv-daily.sh](../scripts/serve-v031-splitkv-daily.sh).
 
-The served 16-sequence shape was measured with [r27-l1a-curves](../bench/results/r27-l1a-curves.md) and [r27-l1a-std-bench](../bench/results/r27-l1a-std-bench.md) on 2026-10-17 (results `2026-10-17-r27-l1a-curves`, `2026-10-17-r27-l1a-std-bench-0930`). The separate [r27-l1a-seq64](../bench/results/r27-l1a-seq64.md) experiment on the same date (results `2026-10-17-r27-l1a-seq64-curves-1226`, [driver](../scripts/r27-l1a-seq64-curves.sh)) sets `EXP=1 SEQS=64 KV_BYTES=14860000000 PCIE_IPC=1 BSS=1`, caps `max_cudagraph_capture_size` at 320, uses loopback port 8029 and empties the separate evaluation disk tier before each boot. It measured the same 1,391,795-token pool; the served sequence limit remains 16.
+L1a's 16-sequence shape was measured with [r27-l1a-curves](../bench/results/r27-l1a-curves.md) and [r27-l1a-std-bench](../bench/results/r27-l1a-std-bench.md) on 2026-10-17 (results `2026-10-17-r27-l1a-curves`, `2026-10-17-r27-l1a-std-bench-0930`). The separate [r27-l1a-seq64](../bench/results/r27-l1a-seq64.md) experiment on the same date (results `2026-10-17-r27-l1a-seq64-curves-1226`, [driver](../scripts/r27-l1a-seq64-curves.sh)) sets `EXP=1 SEQS=64 KV_BYTES=14860000000 PCIE_IPC=1 BSS=1`, caps `max_cudagraph_capture_size` at 320, uses loopback port 8029 and empties the separate evaluation disk tier before each boot. It measured the same 1,391,795-token pool; the sequence limit of the L1a and BA4 launchers remains 16.
 
 ## 2026-10-16 to 2026-10-17: A_S on vLLM v0.31.0 and FlashInfer 0.7.0.post1 ([scripts/serve-v031-splitkv-daily.sh](../scripts/serve-v031-splitkv-daily.sh))
 

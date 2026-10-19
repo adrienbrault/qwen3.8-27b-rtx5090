@@ -1,0 +1,616 @@
+{
+  "mode": "screen",
+  "screen_verdict": "NOISE",
+  "cells": [
+    {
+      "kind": "code",
+      "c": 1,
+      "decisive": true,
+      "control_boots": [
+        239.4,
+        247.0
+      ],
+      "candidate_boots": [
+        269.7,
+        280.0
+      ],
+      "paired_delta_pct": [
+        12.65664160401001,
+        13.36032388663968
+      ],
+      "median_paired_delta_pct": 13.008482745324844,
+      "control_relative_spread": 0.03124999999999998,
+      "candidate_relative_spread": 0.037474986356194326,
+      "relative_noise": 0.03124999999999998,
+      "decision": "WIN",
+      "direction": "positive is faster",
+      "metric": "throughput candidate/control - 1"
+    },
+    {
+      "kind": "code",
+      "c": 4,
+      "decisive": true,
+      "control_boots": [
+        910.4,
+        899.9
+      ],
+      "candidate_boots": [
+        898.3,
+        886.0
+      ],
+      "paired_delta_pct": [
+        -1.3290861159929723,
+        -1.5446160684520427
+      ],
+      "median_paired_delta_pct": -1.4368510922225075,
+      "control_relative_spread": 0.011600287245207976,
+      "candidate_relative_spread": 0.013786919240038059,
+      "relative_noise": 0.03,
+      "decision": "TIE",
+      "direction": "positive is faster",
+      "metric": "throughput candidate/control - 1"
+    },
+    {
+      "kind": "code",
+      "c": 8,
+      "decisive": true,
+      "control_boots": [
+        1715.0,
+        1610.4
+      ],
+      "candidate_boots": [
+        1620.3,
+        1561.9
+      ],
+      "paired_delta_pct": [
+        -5.52186588921283,
+        -3.0116741182315
+      ],
+      "median_paired_delta_pct": -4.266770003722165,
+      "control_relative_spread": 0.06290972514584706,
+      "candidate_relative_spread": 0.03670416692853992,
+      "relative_noise": 0.06290972514584706,
+      "decision": "NOISE",
+      "direction": "positive is faster",
+      "metric": "throughput candidate/control - 1"
+    },
+    {
+      "kind": "prose",
+      "c": 1,
+      "decisive": true,
+      "control_boots": [
+        190.4,
+        188.2
+      ],
+      "candidate_boots": [
+        209.6,
+        211.5
+      ],
+      "paired_delta_pct": [
+        10.084033613445364,
+        12.380446333687578
+      ],
+      "median_paired_delta_pct": 11.232239973566472,
+      "control_relative_spread": 0.011621764395140078,
+      "candidate_relative_spread": 0.009023984801709834,
+      "relative_noise": 0.03,
+      "decision": "WIN",
+      "direction": "positive is faster",
+      "metric": "throughput candidate/control - 1"
+    },
+    {
+      "kind": "prose",
+      "c": 4,
+      "decisive": true,
+      "control_boots": [
+        733.0,
+        752.4
+      ],
+      "candidate_boots": [
+        756.0,
+        771.4
+      ],
+      "paired_delta_pct": [
+        3.137789904502042,
+        2.5252525252525304
+      ],
+      "median_paired_delta_pct": 2.831521214877286,
+      "control_relative_spread": 0.026120910192540696,
+      "candidate_relative_spread": 0.020164986251145708,
+      "relative_noise": 0.03,
+      "decision": "NOISE",
+      "direction": "positive is faster",
+      "metric": "throughput candidate/control - 1"
+    },
+    {
+      "kind": "prose",
+      "c": 8,
+      "decisive": true,
+      "control_boots": [
+        1363.1,
+        1372.6
+      ],
+      "candidate_boots": [
+        1343.8,
+        1339.3
+      ],
+      "paired_delta_pct": [
+        -1.4158902501650639,
+        -2.4260527466122617
+      ],
+      "median_paired_delta_pct": -1.9209714983886628,
+      "control_relative_spread": 0.006945205980187887,
+      "candidate_relative_spread": 0.0033543289478588202,
+      "relative_noise": 0.03,
+      "decision": "TIE",
+      "direction": "positive is faster",
+      "metric": "throughput candidate/control - 1"
+    },
+    {
+      "kind": "prefill",
+      "ctx": 8000,
+      "decisive": true,
+      "control_boots": [
+        0.7,
+        0.7
+      ],
+      "candidate_boots": [
+        0.7,
+        0.7
+      ],
+      "paired_delta_pct": [
+        0.0,
+        0.0
+      ],
+      "median_paired_delta_pct": 0.0,
+      "control_relative_spread": 0.0,
+      "candidate_relative_spread": 0.0,
+      "relative_noise": 0.03,
+      "decision": "TIE",
+      "direction": "positive is faster",
+      "metric": "latency speedup control/candidate - 1"
+    },
+    {
+      "kind": "prefill",
+      "ctx": 30000,
+      "decisive": true,
+      "control_boots": [
+        3.0,
+        3.0
+      ],
+      "candidate_boots": [
+        3.0,
+        3.0
+      ],
+      "paired_delta_pct": [
+        0.0,
+        0.0
+      ],
+      "median_paired_delta_pct": 0.0,
+      "control_relative_spread": 0.0,
+      "candidate_relative_spread": 0.0,
+      "relative_noise": 0.03,
+      "decision": "TIE",
+      "direction": "positive is faster",
+      "metric": "latency speedup control/candidate - 1"
+    }
+  ],
+  "dense_vs_bf16": [
+    {
+      "boot": "r1-01-A_S_L1a",
+      "arm": "A_S_L1a",
+      "ladders": [
+        {
+          "ladder": 1,
+          "ppl_ref": 5.450132751656777,
+          "ppl_arm": 5.553784739564837,
+          "positions": 555549,
+          "ppl_delta_pct": 1.9018250129146264,
+          "top1_agreement": 0.9070847035995024
+        }
+      ]
+    },
+    {
+      "boot": "r1-02-L1a_BA4",
+      "arm": "L1a_BA4",
+      "ladders": [
+        {
+          "ladder": 1,
+          "ppl_ref": 5.450132751656777,
+          "ppl_arm": 5.553733842773308,
+          "positions": 555549,
+          "ppl_delta_pct": 1.900891149578654,
+          "top1_agreement": 0.9071009037906648
+        }
+      ]
+    },
+    {
+      "boot": "r1-03-L1a_BA4",
+      "arm": "L1a_BA4",
+      "ladders": [
+        {
+          "ladder": 1,
+          "ppl_ref": 5.450132751656777,
+          "ppl_arm": 5.5537242659271335,
+          "positions": 555549,
+          "ppl_delta_pct": 1.9007154319106379,
+          "top1_agreement": 0.907095503726944
+        }
+      ]
+    },
+    {
+      "boot": "r1-04-A_S_L1a",
+      "arm": "A_S_L1a",
+      "ladders": [
+        {
+          "ladder": 1,
+          "ppl_ref": 5.450132751656777,
+          "ppl_arm": 5.553893033050082,
+          "positions": 555549,
+          "ppl_delta_pct": 1.9038120009418735,
+          "top1_agreement": 0.9070829035782623
+        }
+      ]
+    }
+  ],
+  "promotion": "not decided; SCREEN is performance evidence only",
+  "acceptance_parity": {
+    "cells": [
+      {
+        "kind": "code",
+        "c": 1,
+        "control_boots": [
+          0.664,
+          0.707
+        ],
+        "ba4_boots": [
+          0.67,
+          0.728
+        ],
+        "control_min": 0.664,
+        "control_max": 0.707,
+        "control_spread": 0.04299999999999993,
+        "direction": "within_or_mixed"
+      },
+      {
+        "kind": "code",
+        "c": 4,
+        "control_boots": [
+          0.643,
+          0.673
+        ],
+        "ba4_boots": [
+          0.64,
+          0.634
+        ],
+        "control_min": 0.643,
+        "control_max": 0.673,
+        "control_spread": 0.030000000000000027,
+        "direction": "lower"
+      },
+      {
+        "kind": "code",
+        "c": 8,
+        "control_boots": [
+          0.686,
+          0.622
+        ],
+        "ba4_boots": [
+          0.646,
+          0.613
+        ],
+        "control_min": 0.622,
+        "control_max": 0.686,
+        "control_spread": 0.06400000000000006,
+        "direction": "within_or_mixed"
+      },
+      {
+        "kind": "prose",
+        "c": 1,
+        "control_boots": [
+          0.461,
+          0.452
+        ],
+        "ba4_boots": [
+          0.447,
+          0.443
+        ],
+        "control_min": 0.452,
+        "control_max": 0.461,
+        "control_spread": 0.009000000000000008,
+        "direction": "lower"
+      },
+      {
+        "kind": "prose",
+        "c": 4,
+        "control_boots": [
+          0.46,
+          0.474
+        ],
+        "ba4_boots": [
+          0.483,
+          0.494
+        ],
+        "control_min": 0.46,
+        "control_max": 0.474,
+        "control_spread": 0.013999999999999957,
+        "direction": "higher"
+      },
+      {
+        "kind": "prose",
+        "c": 8,
+        "control_boots": [
+          0.477,
+          0.48
+        ],
+        "ba4_boots": [
+          0.48,
+          0.477
+        ],
+        "control_min": 0.477,
+        "control_max": 0.48,
+        "control_spread": 0.0030000000000000027,
+        "direction": "within_or_mixed"
+      }
+    ],
+    "flagged": false,
+    "direction": null,
+    "gate": false,
+    "metric": "median accepted draft tokens / proposed draft tokens",
+    "note": "consistent acceptance shift requires inspection; QUALIFY fidelity gates still decide correctness"
+  },
+  "candidate_identity": {
+    "arm": "L1a_BA4",
+    "image_id": "sha256:1df9b4c4e1d24926104c0fe5fbddce5aba7a74c0e694e54f1747d9d91622d8d7",
+    "binding_sha256": "c601d272ef12a2ab0da6976047f927e27000378824146c90a81076365a56ed5d"
+  },
+  "plan": {
+    "schema": "r27-mode-plan-v1",
+    "mode": "screen",
+    "arms": [
+      "A_S_L1a",
+      "L1a_BA4",
+      "L1a_BA4",
+      "A_S_L1a"
+    ],
+    "cold100k": false,
+    "concurrencies": [
+      1,
+      4,
+      8
+    ],
+    "contexts": [
+      8000,
+      30000
+    ],
+    "nonce": 291015,
+    "steps": [
+      {
+        "tag": "r1-01-A_S_L1a",
+        "arm": "A_S_L1a",
+        "role": "control",
+        "budget_seconds": 795,
+        "ladders": 1
+      },
+      {
+        "tag": "r1-02-L1a_BA4",
+        "arm": "L1a_BA4",
+        "role": "candidate",
+        "budget_seconds": 795,
+        "ladders": 1
+      },
+      {
+        "tag": "r1-03-L1a_BA4",
+        "arm": "L1a_BA4",
+        "role": "candidate",
+        "budget_seconds": 795,
+        "ladders": 1
+      },
+      {
+        "tag": "r1-04-A_S_L1a",
+        "arm": "A_S_L1a",
+        "role": "control",
+        "budget_seconds": 795,
+        "ladders": 1
+      }
+    ],
+    "kernel_seconds": 0,
+    "execution_windows": [],
+    "execution_seconds_per_window": 1200,
+    "work_seconds": 3240,
+    "restore_seconds": 360,
+    "runtime_seconds": 3600,
+    "timeout_stop_seconds": 360,
+    "policy": {
+      "perf_floor": 0.03,
+      "max_repeat_spread": 0.1,
+      "pairing": "adjacent boots (1,2), (3,4), ... each hold one control and one candidate boot, in either order; same prompts and seeds; each delta is the candidate against the control of its own pair",
+      "cell_rule": "NOISE if control spread exceeds any absolute paired effect or either arm repeat spread > 10%; otherwise LOSS if every pair < -noise; WIN if every pair > noise; TIE if every pair within noise; otherwise NOISE",
+      "noise": "max(3%, same-screen repeated-control (max-min)/median), every cell including decode c1",
+      "verdict_rule": "every decode cell (c1, c4, c8) and every prefill cell decides: any LOSS -> LOSS; else any NOISE -> NOISE; else any WIN -> WIN; else TIE",
+      "dense_noise_floor": 0.0015,
+      "promotion_rule": "screen WIN/TIE on perf + qualify PASS for identical candidate image/launch/checkpoint",
+      "decisive_decode_concurrencies": [
+        1,
+        4,
+        8
+      ]
+    },
+    "promotion": "not decided by this mode",
+    "levers": {
+      "registry_sha256": "1264fd6b1c4b8fb8f4faf533f13515d775ac494454ba827065ba8af38e9c1520",
+      "arms": {
+        "L1a_BA4": {
+          "name": "L1a_BA4",
+          "base": "A_S_L1a",
+          "lever": "Reviewed BA4-packet v2: BF16 M4 in_proj_ba; serving PROFILE is the only WIN source",
+          "image": {
+            "tag": "vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan",
+            "id": null,
+            "base_id": "sha256:631a6f24ccca2f5470a3d0772d833670a16613c69bb4191663f718e473086f5e",
+            "dockerfile": "fixtures/ba4/L1a_BA4/Dockerfile",
+            "dockerfile_sha256": "ab9c30a95b5a02fe2ef355aef7764f958dcd667d509b650aadfaa0504ef128e9",
+            "layers_added": 5,
+            "files": {
+              "vllm/model_executor/layers/linear.py": {
+                "before": "7a9b90937865fa35d955ffc2017f23d3997bc4fba954e2667870b1b4854a38e0",
+                "after": "5d76f6d10bc240fb32c019d0af00751ac731e0cc8d1e4719ed50b9a283422cd2"
+              },
+              "vllm/envs.py": {
+                "before": "cd3c5bb59a8376c8dcc88c0b18417432f47f4bb7072837e5b97c35975e8d1bb3",
+                "after": "9945e45909e7129298288a07e4b41d1956f24d9f2771a9ef973954e7af20de2a"
+              },
+              "vllm/compilation/piecewise_backend.py": {
+                "before": "188d926208a147c2786a496a10577edd832576455c36130e7f1ba375634e0806",
+                "after": "d6e54e790e4068cab144b60697cc45176431c17ac9fdb11b6fa55e9888e7c386"
+              },
+              "vllm_ba4/__init__.py": {
+                "before": null,
+                "after": "62b880fea1cef6d3d0a0d71ee1478cc2d41dcf24b6eed6931a7fd63093548dc7"
+              },
+              "vllm_ba4/benchmark_source.py": {
+                "before": null,
+                "after": "0dce5343317210f40b175976078da68c5e9ed33aed76d15a354bb4e5d9fcf750"
+              },
+              "vllm_ba4/common.py": {
+                "before": null,
+                "after": "51a1fa1f9e359eff9bb2406cd916e69a997f69e64800244ef590f468dd9963da"
+              },
+              "vllm_ba4/compilation.py": {
+                "before": null,
+                "after": "a379b5f7ec82c24f8c63c432826c7505287c8e3da57569f066e7500f7104fca4"
+              },
+              "vllm_ba4/evidence.py": {
+                "before": null,
+                "after": "cfad1f2663fe1d2196862598fb9c02c73fd254784a9353cf617a184133bbea8f"
+              },
+              "vllm_ba4/kernels.py": {
+                "before": null,
+                "after": "9754f6619a5c08ee666c0caddaa6d9c3fe31e3caee01a425baf739868789a1b2"
+              },
+              "vllm_ba4/measurement.py": {
+                "before": null,
+                "after": "043e3d85c1bd2a783992aa1d36e6092d5610327829759544995876fda5437861"
+              },
+              "vllm_ba4/policy.py": {
+                "before": null,
+                "after": "a6bd32ea6871c510417a600346eda791afbd0cf694573ad80e6e42b756fe1590"
+              },
+              "vllm_ba4/runtime.py": {
+                "before": null,
+                "after": "057141a20dfa68c2285ef5660f1ed9f9b5e9614849a4a98d9756675abe5bc7b5"
+              }
+            }
+          },
+          "env_add": {
+            "VLLM_SM12X_BA_M4": "1"
+          },
+          "args_patch": {
+            "speculative_config_merge": {},
+            "pass_config_merge": {},
+            "add_args": []
+          },
+          "admission_log": {
+            "kind": "active",
+            "required": [
+              {
+                "text": "SM12X BA4 ACTIVE: prefix=",
+                "where": "each_worker",
+                "count": 48,
+                "count_rule": "exact",
+                "distinct": true,
+                "log": "boot",
+                "source": "BA4-packet/L1a_BA4/vllm_ba4/runtime.py: prepare_layer / ba4_out; USED is warmup/capture only, replay requires serving PROFILE"
+              },
+              {
+                "text": "SM12X BA4 USED: prefix=",
+                "where": "each_worker",
+                "count": 48,
+                "count_rule": "exact",
+                "distinct": true,
+                "log": "boot",
+                "source": "BA4-packet/L1a_BA4/vllm_ba4/runtime.py: prepare_layer / ba4_out; USED is warmup/capture only, replay requires serving PROFILE"
+              }
+            ],
+            "forbidden": [
+              "SM12X BA4 INACTIVE:",
+              "Traceback",
+              "SM12X BA4 PROFILE_ONLY:",
+              "SM12X BA4 PROFILE_USED:"
+            ]
+          },
+          "fp8_scope": "inherit",
+          "fp8_scope_reason": "Only the exact pinned unquantized BF16 in_proj_ba M4 delta and new helpers; no FP8 selector source changes. Inherit unchanged target/MTP FP8 policy only; BA4 provisional/WIN, actual-device, launch binding, prefix use, recurrent fidelity and serving timings are separate gates.",
+          "modes": [
+            "screen",
+            "profile"
+          ]
+        },
+        "A_S_L1a": {
+          "name": "A_S_L1a",
+          "base": "A_S",
+          "lever": "LEVERS.md 1.4 L1a: MTP draft-decode FlashInfer plan from the CPU upper bound (no per-draft-step seq_lens D2H)",
+          "image": {
+            "tag": "vllm-qwen38:v0310-r27c-A_S-L1a-ubplan",
+            "id": "sha256:631a6f24ccca2f5470a3d0772d833670a16613c69bb4191663f718e473086f5e",
+            "base_id": "sha256:2a081946bc9c0b6694cb246391a91ba19995d7dd55245afabdb282f97cf1808e",
+            "dockerfile": "fixtures/levers/A_S_L1a.Dockerfile",
+            "dockerfile_sha256": "ab3cad5029b0a28cd23b26639aff41aeb73fee2020e0ecaddb4c3fccf094728e",
+            "layers_added": 2,
+            "files": {
+              "vllm/v1/attention/backends/flashinfer.py": {
+                "before": "3cde4e61f5a822a0ff8c85da98047816f9bac818b5dda39864d366683ab81759",
+                "after": "5ef5aad3fb9defe0b3fbf06b2c348323739dc498838b94667997d54adae68de3"
+              },
+              "vllm/v1/worker/gpu/spec_decode/autoregressive/speculator.py": {
+                "before": "8abe7b047d7659b2429c3fe3678a0582047890027968f5250afe7bfab6028b81",
+                "after": "ea4d36a510defd44688fb2bd404dfa3cecc1b080a29ba3c846e676e3c3fb2d48"
+              }
+            }
+          },
+          "env_add": {
+            "VLLM_SM12X_DRAFT_UB_PLAN": "1"
+          },
+          "args_patch": {
+            "speculative_config_merge": {},
+            "pass_config_merge": {},
+            "add_args": []
+          },
+          "admission_log": {
+            "kind": "active",
+            "required": [
+              {
+                "text": "SM12X draft UB plan ACTIVE: VLLM_SM12X_DRAFT_UB_PLAN=1, ",
+                "where": "each_worker",
+                "count": 1,
+                "count_rule": "exact",
+                "distinct": false,
+                "log": "boot",
+                "source": "L1a.diff speculator.py _sm12x_tag_draft_ub_plan warning_once(scope=process): one line per worker"
+              },
+              {
+                "text": "SM12X draft UB plan USED: draft-decode FlashInfer plan from seq_lens_cpu_upper_bound (no seq_lens D2H)",
+                "where": "each_worker",
+                "count": 1,
+                "count_rule": "exact",
+                "distinct": false,
+                "log": "boot",
+                "source": "L1a.diff flashinfer.py _sm12x_draft_ub_plan_seq_lens warning_once(scope=process) at the first q_len=1 draft build. REVIEW-L1a-L4a P2-1: that first build is at CUDA-graph capture, so this proves the code path runs (capture-time), not served-step use; runtime evidence is the PROFILE signature (pageable DtoH -2/step). Capture precedes readiness, so it is checked on the boot log (before traffic) and again on the stopped log."
+              }
+            ],
+            "forbidden": [
+              "SM12X draft UB plan INACTIVE"
+            ]
+          },
+          "fp8_scope": "inherit",
+          "fp8_scope_reason": "The layer changes only the FlashInfer attention backend and the autoregressive speculator (neither is an FP8 selection source; checked against inheritance.SOURCES); the env is read only by those two files.",
+          "modes": [
+            "screen",
+            "profile",
+            "qualify"
+          ]
+        }
+      }
+    }
+  }
+}
