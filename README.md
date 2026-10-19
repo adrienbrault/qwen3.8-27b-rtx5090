@@ -36,9 +36,10 @@ Also passing (2026-10-17, [r27 L1a](bench/results/r27-l1a.md), results `2026-10-
 
 ## Served configuration
 
-- Since 2026-10-17 ([r27 L1a](bench/results/r27-l1a.md)): weights [nvidia/Qwen3.8-27B-NVFP4](https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4), image `vllm-qwen38:v0310-r27c-A_S-L1a-ubplan` (vLLM v0.31.0, [patches-v0310/](patches-v0310/), FlashInfer 0.7.0.post1), port 8020. Launcher [scripts/serve-v031-l1a-daily.sh](scripts/serve-v031-l1a-daily.sh); [scripts/serve.sh](scripts/serve.sh) starts the same engine with the host paths as settings. Rollback: [scripts/serve-v031-splitkv-daily.sh](scripts/serve-v031-splitkv-daily.sh), the A_S launcher. Each promotion is a row in [docs/HISTORY.md](docs/HISTORY.md), and every flag is explained in [docs/CONFIG.md](docs/CONFIG.md).
+- Since 2026-10-20 ([r27 BA4](bench/results/r27-ba4.md)): weights [nvidia/Qwen3.8-27B-NVFP4](https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4), image `vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan` (vLLM v0.31.0, [patches-v0310/](patches-v0310/), FlashInfer 0.7.0.post1), port 8020. Launcher [scripts/serve-v031-ba4-daily.sh](scripts/serve-v031-ba4-daily.sh); [scripts/serve.sh](scripts/serve.sh) starts the same engine with the host paths as settings. Rollback: [scripts/serve-v031-l1a-daily.sh](scripts/serve-v031-l1a-daily.sh), the L1a launcher. Each promotion is a row in [docs/HISTORY.md](docs/HISTORY.md), and every flag is explained in [docs/CONFIG.md](docs/CONFIG.md).
 - Tensor parallel 2, 16 sequences, 262,144-token window, NVFP4 KV pinned at 14.86 GB per card (`--kv-cache-memory-bytes`), linear-attention state cached in bf16.
 - The checkpoint's MTP head at 3 draft tokens (`qwen3_5_mtp`), with L1a's CPU upper-bound plan for pure draft decode (`VLLM_SM12X_DRAFT_UB_PLAN=1`).
+- The bf16 M=4 `in_proj_ba` call of the 48 GDN layers on the MTP verify step runs on a Triton GEMM (BA4, `VLLM_SM12X_BA_M4=1`), admitted per card from admission reports measured on the serving host's cards; a layer whose report does not match the device, code or weights keeps the original GEMM.
 - FlashInfer's `pcie_ipc` all-reduce as the two-card decode all-reduce (patch 0138, `VLLM_SM12X_PCIE_IPC_AR=1`; patch 0148 admits the MTP head to it) and batch-sharded sampling (`--enable-batch-sharded-sampling`, patch 0147).
 - KV tiers: 16 GiB of pinned host RAM, then a 300 GB disk tier with LRU eviction and a 40 GB free-space floor.
 - FlashInfer's split-KV path for the MTP verify attention on the NVFP4 cache (patch 0136, `VLLM_SM12X_NVFP4_PREFILL_SPLIT_KV=1`), vLLM's V2 model runner (`VLLM_USE_V2_MODEL_RUNNER=1`), and the Triton Mamba backend with FlashInfer GDN prefill (`--mamba-backend triton --gdn-prefill-backend flashinfer`).
@@ -54,8 +55,9 @@ Also passing (2026-10-17, [r27 L1a](bench/results/r27-l1a.md), results `2026-10-
   - The prefix cache and the offload tiers hit under the MTP head, including the linear-attention state blocks: 0152, 0155, 0156 and the 0158 replay boundary are upstream in v0.31.0, 0154 is carried as a patch ([THIRD_PARTY.md](THIRD_PARTY.md)).
   - [FlashInfer](https://github.com/flashinfer-ai/flashinfer) 0.7.0.post1, the version vLLM v0.31.0 pins, with patch 0136 turning back on the split-KV path that FlashInfer 0.7 turns off for an NVFP4 KV cache on SM12x ([r27](bench/results/r27-v031-splitkv.md)). FlashInfer 0.7 does not pick cuDNN for `bmm_fp8` on SM12x, so the cuDNN FP8 plan eviction that crashed 0.6.16 under CUDA graphs does not apply ([docs/GOTCHAS.md](docs/GOTCHAS.md)).
   - L1a plans pure MTP draft decode from the CPU sequence-length upper bound and orders consecutive plan copies with CUDA events (`VLLM_SM12X_DRAFT_UB_PLAN=1`); ACTIVE and USED log lines are required and INACTIVE fails the boot ([r27 L1a](bench/results/r27-l1a.md)).
+  - BA4 serves the M=4 `in_proj_ba` product with a Triton kernel that reduces in FP32 and rounds once, and returns every other shape to the original GEMM (`VLLM_SM12X_BA_M4=1`, [patches-v0310/ba4/](patches-v0310/ba4/)). Each card admits each layer from its report; the boot log counts the ACTIVE rank-layers and an INACTIVE layer does not fail the boot ([r27 BA4](bench/results/r27-ba4.md)).
   - vLLM's `--enable-batch-sharded-sampling`, with patch 0147 so the flag does not fork the compile artifact ([R193e](bench/results/r193e-pin-and-bss.md)).
-  - [patches-v0310/README.md](patches-v0310/README.md) describes the three builds behind the served image; [scripts/build-served-image.sh](scripts/build-served-image.sh) builds the earlier v0.29 image in nine layers. Each patch has a provenance line in [THIRD_PARTY.md](THIRD_PARTY.md).
+  - [patches-v0310/README.md](patches-v0310/README.md) describes the four builds behind the served image; [scripts/build-served-image.sh](scripts/build-served-image.sh) builds the earlier v0.29 image in nine layers. Each patch has a provenance line in [THIRD_PARTY.md](THIRD_PARTY.md).
 - **Speculative decoding**: the checkpoint's own MTP head, 3 draft tokens, since 2026-09-06 ([R207](bench/results/r207-promote-mtp.md)). The DFlash2 drafter served before it is in [docs/HISTORY.md](docs/HISTORY.md).
 - **KV cache**: NVFP4 KV ([docs/HISTORY.md](docs/HISTORY.md#2026-09-04-the-vllm-029-nvfp4-kv-route-and-the-bf16-gdn-state), [docs/FIDELITY.md](docs/FIDELITY.md)).
   - The sm120 port is in [patches-v0310/](patches-v0310/), provenance in [THIRD_PARTY.md](THIRD_PARTY.md).
@@ -101,27 +103,33 @@ Requirements: x86_64 Linux, two RTX 5090, Docker with the NVIDIA container runti
 # 1. the served weights
 huggingface-cli download nvidia/Qwen3.8-27B-NVFP4 --local-dir $HOME/models/qwen3.8-27b-nvidia-nvfp4
 
-# 2. the served image: vLLM v0.31.0 + patches-v0310 + FlashInfer 0.7.0.post1, tagged vllm-qwen38:v0310-r27c-A_S-L1a-ubplan.
-#    Either pull the published copy (built from this repository by scripts/build-v031-image.sh, 2026-10-19) and tag it:
+# 2. the image: vLLM v0.31.0 + patches-v0310 + FlashInfer 0.7.0.post1. The published copy is the L1a image,
+#    vllm-qwen38:v0310-r27c-A_S-L1a-ubplan, built from this repository by scripts/build-v031-image.sh on 2026-10-19. The served
+#    BA4 image adds a layer that is active only with admission reports measured on the serving host's cards and computes as
+#    the L1a image without them (bench/results/r27-ba4.md). Either pull the published copy and tag it:
 docker pull ghcr.io/adrienbrault/qwen3.8-27b-rtx5090:v0310-r27c-A_S-L1a-ubplan@sha256:40b61ed95254de5201cb69a8a02de9da0569fc4ed759cd843d25b9b7b3d73f2c
 docker tag ghcr.io/adrienbrault/qwen3.8-27b-rtx5090:v0310-r27c-A_S-L1a-ubplan@sha256:40b61ed95254de5201cb69a8a02de9da0569fc4ed759cd843d25b9b7b3d73f2c vllm-qwen38:v0310-r27c-A_S-L1a-ubplan
 #    or build it; the base registry digests and the source tarball hash are pinned, patches-v0310/README.md records them.
+#    BA4=1 also builds vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan on top.
 bash scripts/build-v031-image.sh
 
 # 3. settings: MODEL_DIR is the only required one; serve.env.example lists the others with their defaults
 cp serve.env.example serve.env
 sed -i "s|^MODEL_DIR=|MODEL_DIR=$HOME/models/qwen3.8-27b-nvidia-nvfp4|" serve.env
+#    serve.sh defaults to the served BA4 tag; with the published L1a image, name it
+echo IMAGE=vllm-qwen38:v0310-r27c-A_S-L1a-ubplan >> serve.env
 
 # 4. start: waits for /health, checks the boot log, prints the endpoint
 bash scripts/serve.sh
 ```
 
-[scripts/build-v031-image.sh](scripts/build-v031-image.sh) stages its context from this checkout, verifies the base registry digests through Docker's `RepoDigests`, resolves their local image IDs, builds the chain without a GPU and compares the result with the supplied [served manifest](patches-v0310/served-l1a-manifest.txt). Digest pulls leave existing base tags unchanged; the resolved IDs support both the classic and containerd image stores. Arctic wheel preparation installs hashed PyPI tools in a throwaway container; those added tools do not enter the final image. `DRY_RUN=1` prints the commands; `CHECK=1` adds an identity check using the NVIDIA container runtime. A clean-clone build in an empty Docker daemon matched the served image on 2026-10-19: every source and every shared object in the 7,138-file inventory is identical ([r27-l1a-build-verify](bench/results/r27-l1a-build-verify.md)). The source archive hash verified by the operator on 2026-10-19 is the default `VLLM_SOURCE_SHA256`; [patches-v0310/README.md](patches-v0310/README.md#build-context) records the pins and verification rules. That rebuilt image is the published `ghcr.io/adrienbrault/qwen3.8-27b-rtx5090:v0310-r27c-A_S-L1a-ubplan`; `scripts/build-served-image.sh` builds the earlier v0.29 image.
+[scripts/build-v031-image.sh](scripts/build-v031-image.sh) stages its context from this checkout, verifies the base registry digests through Docker's `RepoDigests`, resolves their local image IDs, builds the chain without a GPU and compares the L1a image with the supplied [served L1a manifest](patches-v0310/served-l1a-manifest.txt). `BA4=1` then builds the BA4 layer on it and compares the result with the same inventory with the layer's three edited vLLM files at their pinned output hashes; that stage has been run only against the offline tests, not as a clean-clone Docker build ([r27 BA4](bench/results/r27-ba4.md#reproducing-it)). Digest pulls leave existing base tags unchanged; the resolved IDs support both the classic and containerd image stores. Arctic wheel preparation installs hashed PyPI tools in a throwaway container; those added tools do not enter the final image. `DRY_RUN=1` prints the commands; `CHECK=1` adds an identity check using the NVIDIA container runtime. A clean-clone build in an empty Docker daemon matched the served L1a image on 2026-10-19: every source and every shared object in the 7,138-file inventory is identical ([r27-l1a-build-verify](bench/results/r27-l1a-build-verify.md)). The source archive hash verified by the operator on 2026-10-19 is the default `VLLM_SOURCE_SHA256`; [patches-v0310/README.md](patches-v0310/README.md#build-context) records the pins and verification rules. That rebuilt image is the published `ghcr.io/adrienbrault/qwen3.8-27b-rtx5090:v0310-r27c-A_S-L1a-ubplan`; `scripts/build-served-image.sh` builds the earlier v0.29 image.
 
-[scripts/serve.sh](scripts/serve.sh) runs the served engine: the image tag, vLLM flags, container environment and container limits of [scripts/serve-v031-l1a-daily.sh](scripts/serve-v031-l1a-daily.sh), with the serving host's paths replaced by settings. `bash scripts/serve.sh --print` prints the `docker run` command without running anything; `--stop` stops and removes the container. Environment variables override `serve.env`. Where its defaults differ from the serving host:
+[scripts/serve.sh](scripts/serve.sh) runs the served engine: the image tag, vLLM flags, container environment and container limits of [scripts/serve-v031-ba4-daily.sh](scripts/serve-v031-ba4-daily.sh), with the serving host's paths replaced by settings. `bash scripts/serve.sh --print` prints the `docker run` command without running anything; `--stop` stops and removes the container. Environment variables override `serve.env`. Where its defaults differ from the serving host:
 
 - The endpoint is published on `127.0.0.1` (`BIND`); the serving host publishes on `0.0.0.0`.
 - GPUs 0 and 1 are passed to the container (`GPUS`); the serving host passes all of its two.
+- No BA4 layer unless `BA4_INPUTS` names a directory of admission reports (`ba4-rank0.json`, `ba4-rank1.json`, `binding.json`) measured on the same cards, weights and image; the serving host mounts the reports of the screen that measured the layer. Without them the BA4 image computes as the L1a image does.
 - No disk KV tier (`KV_TIER_DIR`) and no power cap (`POWER_LIMIT_W`); the serving host runs both. Clock offsets and the serving host's autotune pre-warm are not part of the script.
 
 After `/health` answers, the script checks the boot-log lines, versions and patch markers the served launcher asserts for each patch and setting, and fails naming any that is missing. It leaves out the launcher's checks that need its pre-warm or its host layout, among them the free-VRAM floor after pre-warm. It prints the KV pool; the served boots read 1,391,795 tokens with the tier on (2026-10-16, [r27](bench/results/r27-v031-splitkv.md)). A boot without the tier has not been measured at this pin.
@@ -201,9 +209,9 @@ The fp32 and bf16 linear-attention states are 0.05 points of top-1 apart on dens
 
 ### The serving host's launchers
 
-The serving host runs the configurations above through the launchers below, which also carry its experiment and evaluation ports, rollback launchers, tier maintenance and power policy. The served one, `serve-v031-l1a-daily.sh`, starts the same engine as `scripts/serve.sh` with the disk tier on.
+The serving host runs the configurations above through the launchers below, which also carry its experiment and evaluation ports, rollback launchers, tier maintenance and power policy. The served one, `serve-v031-ba4-daily.sh`, starts the same engine as `scripts/serve.sh` with the disk tier and the BA4 layer on.
 
-The scripts assume the host layout used here: models under `/srv/qwen5090/models`, compile caches under `/srv/qwen5090/cache`, the disk tier at `/srv/qwen5090/native-l2`, [scripts/serve-v0280-daily.sh](scripts/serve-v0280-daily.sh) installed as `/srv/qwen5090/launch-daily-v0280.sh`, [scripts/serve-r231-nvidia-daily.sh](scripts/serve-r231-nvidia-daily.sh) as `/srv/qwen5090/launch-daily-v0290-r207.sh` and [scripts/serve-r156-daily.sh](scripts/serve-r156-daily.sh) as `/srv/qwen5090/launch-daily-redhat-fp8-0902.sh`. Adjust the paths at the top of each script for a different layout.
+The scripts assume the host layout used here: models under `/srv/qwen5090/models`, compile caches under `/srv/qwen5090/cache`, the disk tier at `/srv/qwen5090/native-l2`, the BA4 admission reports at `/srv/qwen5090/ba4-inputs`, [scripts/serve-v0280-daily.sh](scripts/serve-v0280-daily.sh) installed as `/srv/qwen5090/launch-daily-v0280.sh`, [scripts/serve-r231-nvidia-daily.sh](scripts/serve-r231-nvidia-daily.sh) as `/srv/qwen5090/launch-daily-v0290-r207.sh` and [scripts/serve-r156-daily.sh](scripts/serve-r156-daily.sh) as `/srv/qwen5090/launch-daily-redhat-fp8-0902.sh`. Adjust the paths at the top of each script for a different layout.
 
 ```bash
 # 1. the served weights; the RedHatAI weights for the rollback and the older shapes;
@@ -217,7 +225,7 @@ huggingface-cli download syvai/Qwen3.8-27B-DFlash2-W4A16 --local-dir /srv/qwen50
 #    so either raise SIZE in the script or pass TIER_CAP_GB below the image size.
 sudo bash scripts/setup-native-l2.sh
 
-# 3a. the served image: patches-v0310/README.md (three docker builds, tagged as scripts/serve-v031-l1a-daily.sh expects).
+# 3a. the served image: patches-v0310/README.md (four docker builds, BA4=1 bash scripts/build-v031-image.sh, tagged as scripts/serve-v031-ba4-daily.sh expects).
 #     The earlier v0.29 image: vLLM v0.29.0rc2 + patches-v0290 + FlashInfer 0.6.16.post3, the nine layers of scripts/build-served-image.sh,
 #     tagged as scripts/serve-r231-nvidia-daily.sh expects. Needs Docker BuildKit (buildx,
 #     docker driver); the GPU is not used. About 10 minutes once the base image is local, plus its 8.65 GB pull;
@@ -228,10 +236,12 @@ bash scripts/build-served-image.sh
 docker build -f patches-v0280/Dockerfile.v0280-nvfp4kv -t vllm-qwen38:v0280-nvfp4kv patches-v0280
 
 # 4a. two cards, the served configuration
+bash scripts/serve-v031-ba4-daily.sh
+# 4a'. L1a, the previous launcher and rollback
 bash scripts/serve-v031-l1a-daily.sh
-# 4a'. A_S, the previous launcher and rollback
+# 4a''. A_S, the launcher before it
 bash scripts/serve-v031-splitkv-daily.sh
-# 4a''. the earlier configuration on vLLM v0.29.0rc2
+# 4a'''. the earlier configuration on vLLM v0.29.0rc2
 bash scripts/serve-r231-nvidia-daily.sh
 # 4b. two cards, the route as served 2026-09-06 to 09-09: RedHatAI checkpoint, 13.98 GB pin
 bash scripts/serve-r207-mtp-daily.sh
@@ -353,5 +363,5 @@ MIT ([LICENSE](LICENSE)) for the original work: documentation, scripts, probes a
   - [bench/RESULTS.md](bench/RESULTS.md), every measurement newest first; [docs/HISTORY.md](docs/HISTORY.md), the lineage of the served configuration.
   - [docs/CONFIG.md](docs/CONFIG.md), every flag; [docs/DESIGN.md](docs/DESIGN.md), why it fits; [docs/FIDELITY.md](docs/FIDELITY.md), the bf16 rulers; [docs/R156-DECISION.md](docs/R156-DECISION.md), the checkpoint decision.
   - [docs/GOTCHAS.md](docs/GOTCHAS.md), failure modes; [docs/REJECTED.md](docs/REJECTED.md), what was tried and rejected.
-  - Launchers: [scripts/serve.sh](scripts/serve.sh), the served engine with the host paths as settings ([serve.env.example](serve.env.example)); [scripts/serve-v031-l1a-daily.sh](scripts/serve-v031-l1a-daily.sh), the served one; [scripts/serve-v031-splitkv-daily.sh](scripts/serve-v031-splitkv-daily.sh), the A_S rollback; [scripts/serve-r231-nvidia-daily.sh](scripts/serve-r231-nvidia-daily.sh), the earlier configuration on vLLM v0.29.0rc2; [scripts/serve-r207-mtp-daily.sh](scripts/serve-r207-mtp-daily.sh), the same route on the RedHatAI checkpoint; [scripts/serve-r168-daily.sh](scripts/serve-r168-daily.sh), the DFlash2 route of 2026-09-04; [scripts/serve-r156-daily.sh](scripts/serve-r156-daily.sh), the fp8 shape; [scripts/serve-v0280-daily.sh](scripts/serve-v0280-daily.sh), the one-card and MTP shapes; [scripts/build-served-image.sh](scripts/build-served-image.sh), the build of the v0.29 image; [scripts/build-v0290rc2.sh](scripts/build-v0290rc2.sh), the 2026-09-03 build of its first four layers alongside the R168 diagnosis images.
+  - Launchers: [scripts/serve.sh](scripts/serve.sh), the served engine with the host paths as settings ([serve.env.example](serve.env.example)); [scripts/serve-v031-ba4-daily.sh](scripts/serve-v031-ba4-daily.sh), the served one; [scripts/serve-v031-l1a-daily.sh](scripts/serve-v031-l1a-daily.sh), the L1a rollback; [scripts/serve-v031-splitkv-daily.sh](scripts/serve-v031-splitkv-daily.sh), the A_S launcher before it; [scripts/serve-r231-nvidia-daily.sh](scripts/serve-r231-nvidia-daily.sh), the earlier configuration on vLLM v0.29.0rc2; [scripts/serve-r207-mtp-daily.sh](scripts/serve-r207-mtp-daily.sh), the same route on the RedHatAI checkpoint; [scripts/serve-r168-daily.sh](scripts/serve-r168-daily.sh), the DFlash2 route of 2026-09-04; [scripts/serve-r156-daily.sh](scripts/serve-r156-daily.sh), the fp8 shape; [scripts/serve-v0280-daily.sh](scripts/serve-v0280-daily.sh), the one-card and MTP shapes; [scripts/build-served-image.sh](scripts/build-served-image.sh), the build of the v0.29 image; [scripts/build-v0290rc2.sh](scripts/build-v0290rc2.sh), the 2026-09-03 build of its first four layers alongside the R168 diagnosis images.
   - [THIRD_PARTY.md](THIRD_PARTY.md), provenance of every patch and idea; [LICENSE](LICENSE).
