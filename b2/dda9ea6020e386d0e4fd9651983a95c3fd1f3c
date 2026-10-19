@@ -1,0 +1,47 @@
+README.md
+  s_214ba15f2a2d7b::t_7f3ac443abea5a 98,105-109,119-120
+THIRD_PARTY.md
+  s_214ba15f2a2d7b::t_28311bd3c5ec01 44-45
+bench/RESULTS.md
+  s_214ba15f2a2d7b::t_aa81798483bb53 19
+bench/results/2026-10-19-r27-l1a-build-verify/cleanroom.sh
+  s_214ba15f2a2d7b::t_c4fa8ddd2b3b15 1-57
+bench/results/2026-10-19-r27-l1a-build-verify/content-report.txt
+  s_214ba15f2a2d7b::t_379a286c0c7f30 1-26
+bench/results/2026-10-19-r27-l1a-build-verify/functional-check.sh
+  s_214ba15f2a2d7b::t_81e6eb22242eb6 1-68
+bench/results/2026-10-19-r27-l1a-build-verify/greedy-hashes.txt
+  s_214ba15f2a2d7b::t_39546787347cbc 1-7
+bench/results/2026-10-19-r27-l1a-build-verify/manifest-sha256.txt
+  s_214ba15f2a2d7b::t_5e12b822034af0 1-2
+bench/results/r27-l1a-build-verify.md
+  s_214ba15f2a2d7b::t_b7fb92f11c97bd 1-38
+patches-v0310/README.md
+  s_214ba15f2a2d7b::t_7b04a68ebacccd 9,15-19,26-28,30,32,34,36,38-50,52
+patches-v0310/served-l1a-manifest.txt
+  s_214ba15f2a2d7b::t_5845d3dff34938 1-7138
+scripts/arctic-build-requirements.txt
+  s_214ba15f2a2d7b::t_e5cc6773ef1040 1-48
+scripts/build-v031-image.sh
+  s_214ba15f2a2d7b::t_3e9862d27adf62 1-329
+scripts/tests/test_build_v031.py
+  s_214ba15f2a2d7b::t_99c61b0f2833a4 1-493
+scripts/v031_manifest.py
+  s_214ba15f2a2d7b::t_7ffb180d9464c0 1-128
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b2dda9ea6020e386d0e4fd9651983a95c3fd1f3c",
+  "prompts": {},
+  "sessions": {
+    "s_214ba15f2a2d7b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_214ba15f2a2d7b",
+        "model": "unknown"
+      },
+      "human_author": "Adrien Brault <adrien.brault@gmail.com>"
+    }
+  }
+}
