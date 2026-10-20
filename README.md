@@ -4,7 +4,7 @@
 
 Serving configuration, vLLM patches, launch scripts and measurements for [Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B), served as [nvidia/Qwen3.8-27B-NVFP4](https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4) by [vLLM](https://github.com/vllm-project/vllm) v0.31.0 with the patch chain in [patches-v0310/](patches-v0310/) and FlashInfer 0.7.0.post1 across two RTX 5090 cards. The window is 262,144 tokens, the KV cache is NVFP4, the checkpoint's own MTP head drafts 3 tokens, and vision, reasoning, tool calls and structured output are all on. The target workload is a few concurrent coding agents with long contexts. The one-card and older shapes are under [Other configurations](#other-configurations).
 
-Every number in the text and tables was measured on one machine on the date given, and each links the write-up that names its raw results directory; the card's power figures are marked ≈ where they come from an earlier draw measurement. The index of experiments is [bench/RESULTS.md](bench/RESULTS.md), newest first.
+Every number in the text and tables was measured on one machine on the date given, and each links the write-up that names its raw results directory. None is an estimate. The index of experiments is [bench/RESULTS.md](bench/RESULTS.md), newest first.
 
 ## Numbers
 
