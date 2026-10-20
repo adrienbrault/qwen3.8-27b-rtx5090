@@ -553,5 +553,17 @@ class ManifestTests(unittest.TestCase):
             self.assertEqual(digest, hashlib.sha256(path.read_bytes()).hexdigest())
 
 
+class CheckoutTests(unittest.TestCase):
+    def test_no_build_input_is_ignored_by_git(self):
+        """A file .gitignore hides exists in this checkout but in no clone; the BA4 log fixtures were such files."""
+        if not (ROOT / ".git").exists() or shutil.which("git") is None:
+            self.skipTest("not a git checkout")
+        out = subprocess.run(["git", "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--",
+                              "patches-v0310", "scripts"], cwd=ROOT, stdout=subprocess.PIPE, check=True).stdout
+        ignored = [p for p in out.decode().split("\0")
+                   if p and "__pycache__" not in p.split("/") and not p.endswith((".pyc", ".DS_Store"))]
+        self.assertEqual(ignored, [])
+
+
 if __name__ == "__main__":
     unittest.main()

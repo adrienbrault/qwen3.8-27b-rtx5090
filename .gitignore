@@ -2,3 +2,4 @@
 __pycache__/
 /build-logs/
 /serve.env
+!patches-v0310/ba4/fixtures/**/*.log
