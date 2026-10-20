@@ -29,10 +29,10 @@ OUT = ROOT / "docs" / "img"
 R675 = RESULTS / "2026-09-23-r675-27b-curves"
 # R675's instruments, shapes and runs re-measured on v0.31.0: A_S on 2026-10-16, L1a on 2026-10-17, BA4 on 2026-10-19.
 # Keep A_S and L1a available for comparisons in the write-ups; the served decode-scaling-16 solid lines and prefill.svg
-# (including depth) read BA4 only.
+# (including depth) read the 2026-10-20 served launcher only.
 R27AS = RESULTS / "2026-10-16-r27-as-curves"
 R27L1A = RESULTS / "2026-10-17-r27-l1a-curves"
-R27C = RESULTS / "2026-10-19-r27-ba4-curves"
+R27C = RESULTS / "2026-10-20-r27-served-curves"
 R27_CONC = (1, 2, 4, 6, 8, 12, 16)
 R27_DEPTH = (30000, 60000, 120000, 200000)
 # Historical v0.29 rounds and their accepted per-cell re-runs remain available for comparisons in the write-ups.
@@ -62,9 +62,10 @@ L1A_STD = RESULTS / "2026-10-17-r27-l1a-std-bench-0930"
 L1A_STD_UNIT = "r27-l1a-std-bench"
 L1A_SEQ64 = RESULTS / "2026-10-17-r27-l1a-seq64-curves-1226"
 L1A_SEQ64_UNIT = "r27-l1a-seq64-curves"
-# R793's protocol re-measured on the served BA4 launcher, 2026-10-19 to 2026-10-20: the dashed lines of decode-scaling-16.
-BA4_STD = RESULTS / "2026-10-19-r27-ba4-std-bench-2335"
-BA4_STD_UNIT = "r27-ba4-std-bench"
+# R793's protocol on the served launcher, 2026-10-20: dashed lines of decode-scaling-16.
+# Spec-Bench has 2.19 % tier-cached prompt tokens in 13 cells; the recorded gate is NOT-PUBLISHABLE.
+SERVED_STD = RESULTS / "2026-10-20-r27-served-std-bench-1418"
+SERVED_STD_UNIT = "r27-served-std-bench"
 DEC_RUNS = 3
 
 CODE, PROSE, PREFILL = "#0969da", "#cf222e", "#8250df"
@@ -210,15 +211,14 @@ L1A_NOTE = ("Solid: decode_ss.py, all streams decoding, 1,024 forced tokens, one
              "Dashed: vllm bench serve, closed loop, ShareGPT reference-reply lengths / 256 tokens, mean of passes A and B, "
             "memory clock offset +4500 (r27-l1a-std-bench).\n"
             "Both: served v0.31.0 L1a launcher, 16 sequences, stock power, 2026-10-17.")
-BA4_NOTE = ("Solid: decode_ss.py, all streams decoding, 1,024 forced tokens, one code and one prose prompt, three runs per point, "
-            "2026-10-19 (r27-ba4-curves).\n"
-            "Dashed: vllm bench serve, closed loop, ShareGPT reference-reply lengths / 256 tokens, mean of passes A and B, "
-            "a fresh boot per cell, 2026-10-19 to 2026-10-20 (r27-ba4-std-bench).\n"
-            "Both: served v0.31.0 BA4 launcher, 16 sequences, stock power, memory clock offset +4500.")
+SERVED_NOTE = ("Solid: decode_ss.py, all streams decoding, 1,024 forced tokens, three runs per point (r27-served-curves).\n"
+               "Dashed: vllm bench serve, ShareGPT reference lengths / Spec-Bench 256 tokens, A/B means (r27-served-std-bench).\n"
+               "Spec-Bench: 2.19 % tier-cached prompt tokens in 13 cells (A c1 0 %, B c1 2.19 %); gate NOT-PUBLISHABLE.\n"
+               "2026-10-20, served BA4 + no block drop, 15.90 GB/card, 16 sequences, stock power, memory offset +4500.")
 
 
 def std_figure(rates, std, name, caption, rounds=("L1a", "L1a"),
-               title="Decode alone against the standard benchmark, served L1a configuration", note=L1A_NOTE, xpos=None, first=2):
+               title="Decode alone against the standard benchmark, served L1a configuration", note=L1A_NOTE, xpos=None, first=2, spec_note=""):
     """Two panels, not twin axes (the aggregate and per-stream lines cross): a round's standard-benchmark cells dashed
     over decode_ss solid. `rounds` names the solid and dashed rounds in the legend and the console output. `xpos` maps a
     concurrency to its x position (None: the concurrency itself, ticks at the dashed round's levels); with it every
@@ -242,7 +242,7 @@ def std_figure(rates, std, name, caption, rounds=("L1a", "L1a"),
         for a, idx, i in ((ax, 0, 0), (ax2, 1, 1)):
             ys = [cells[(key, c)][idx] for c in sconc]
             a.plot(sxs, ys, marker="s", markersize=4, color=color, linewidth=2, linestyle="--",
-                   label=f"{dname}, vllm bench serve ({rounds[1]})")
+                   label=f"{dname}{spec_note if key == 'specbench' else ''}, vllm bench serve ({rounds[1]})")
             series[i].append((sxs, ys, color, True))
     ys_agg = [y for _, ys, _, _ in series[0] for y in ys]
     ys_per = [y for _, ys, _, _ in series[1] for y in ys]
@@ -281,16 +281,15 @@ def std_figure(rates, std, name, caption, rounds=("L1a", "L1a"),
 
 
 def figure_decode_scaling():
-    """The served 16-sequence figure: decode alone on the BA4 launcher (r27-ba4-curves, 2026-10-19) solid, the standard
-    benchmark on the same launcher (r27-ba4-std-bench, 2026-10-19 to 2026-10-20) dashed."""
+    """Decode and standard-benchmark cells on the served launcher, 2026-10-20; cache conditions stay visible."""
     rates = {k: decode_ss_exact(R27C / f"decode-{k}.jsonl", R27_CONC) for k in ("code", "prose")}
-    std = std_bench(BA4_STD, BA4_STD_UNIT)
+    std = std_bench(SERVED_STD, SERVED_STD_UNIT)
     std_figure(rates, std, "decode-scaling-16.svg",
-               "16 sequences on the served BA4 launcher: decode alone (solid, r27-ba4-curves, 2026-10-19) and vllm bench serve "
-               "on ShareGPT V3 and Spec-Bench (dashed, r27-ba4-std-bench, 2026-10-19 to 2026-10-20), decode aggregate / "
-               "wall-clock output tok/s and per stream",
-               rounds=("BA4, 2026-10-19", "BA4, 2026-10-19/20"),
-               title="Decode alone and the standard benchmark, served BA4 launcher", note=BA4_NOTE)
+               "Served 2026-10-20: decode alone (solid, 2026-10-20-r27-served-curves) and vllm bench serve "
+               "(dashed, 2026-10-20-r27-served-std-bench-1418); Spec-Bench 2.19 % tier-cached prompt tokens in 13 cells "
+               "(A c1 0 %, B c1 2.19 %), gate NOT-PUBLISHABLE; aggregate / wall-clock output tok/s and per stream",
+               rounds=("2026-10-20", "2026-10-20"), spec_note=" (2.19% cached)",
+               title="Decode alone and the standard benchmark, served configuration", note=SERVED_NOTE)
 
 
 def figure_decode_scaling_64():
@@ -344,9 +343,9 @@ def figure_prefill():
     depth = depth_decode()
 
     fig, (ax, ax2) = plt.subplots(1, 2, figsize=(10.4, 4.2))
-    ax.plot(toks, rate, marker="o", color=PREFILL, linewidth=2, label="prefill rate (BA4)")
+    ax.plot(toks, rate, marker="o", color=PREFILL, linewidth=2, label="prefill rate (served)")
     annotate(ax, toks, rate, PREFILL)
-    ax.set_title("Cold prefill rate, one request (BA4)")
+    ax.set_title("Cold prefill rate, one request (served)")
     ax.set_xlabel("prompt tokens (server count)")
     ax.set_ylabel("prompt tokens per second")
     ax.set_ylim(0, max(rate) * 1.3)
@@ -356,9 +355,9 @@ def figure_prefill():
     for kind, color, dy in (("code", CODE, 7), ("prose", PROSE, -14)):
         xs = [t for t, _ in depth.get(kind, [])]
         ys = [v for _, v in depth.get(kind, [])]
-        ax2.plot(xs, ys, marker="s", markersize=4, color=color, linewidth=1.8, label=f"{kind} (BA4)")
+        ax2.plot(xs, ys, marker="s", markersize=4, color=color, linewidth=1.8, label=f"{kind} (served)")
         annotate(ax2, xs, ys, color, dy=dy)
-    ax2.set_title("Decode at depth, one stream (BA4)")
+    ax2.set_title("Decode at depth, one stream (served)")
     ax2.set_xlabel("filler context (decode_ss --ctx)")
     ax2.set_ylabel("tokens per second")
     ax2.set_ylim(0, max(v for d in depth.values() for _, v in d) * 1.3)
@@ -367,11 +366,11 @@ def figure_prefill():
     ax2.grid(axis="y", color="#eaeef2")
     ax2.set_axisbelow(True)
     ax2.legend(frameon=False, fontsize=9, loc="lower left")
-    fig.text(0.5, -0.02, "2026-10-19, served v0.31.0 BA4 launcher, stock power, memory clock offset +4500 (r27-ba4-curves).",
+    fig.text(0.5, -0.02, "2026-10-20, served BA4 + no block drop, 15.90 GB/card, stock power, memory offset +4500 (r27-served-curves).",
              ha="center", va="top", fontsize=7.5, color="#57606a")
     print("prefill:", [round(v) for v in rate], "t/s at", [round(t) for t in toks], "tokens")
     print("decode at depth:", {k: [(round(t), round(v)) for t, v in d] for k, d in depth.items()})
-    save(fig, "prefill.svg", "BA4: cold prefill rate against prompt length, and decode rate at depth (r27-ba4-curves)")
+    save(fig, "prefill.svg", "Served 2026-10-20: cold prefill and decode at depth (2026-10-20-r27-served-curves)")
 
 
 if __name__ == "__main__":
