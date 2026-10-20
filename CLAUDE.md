@@ -58,3 +58,7 @@ A patch, flag or technique taken from a PR, issue, repo or paper is credited in 
 ## Sync with the private repo
 
 The launchers here (`scripts/serve*.sh`) and the private repo's `flan/launch-*.sh` describe the same served configuration and change in the same session. Each experiment gets its own file in `bench/results/`, named after it, with the heading naming its results directory; `bench/RESULTS.md` is the index of links to them, newest first. A new result means a new file plus one index line — never prose appended to the index.
+
+## Recipe card
+
+The README's card is `docs/img/recipe-card-<first 8 hex of its SHA-256>.png`. Each refresh adds the new file under its new name, removes the old one and updates README line 3 in the same commit: GitHub's image cache keeps serving an unchanged URL for minutes after a push.
