@@ -1,12 +1,23 @@
 # Configuration of the served engine
 
-Every flag of the two-card configuration, why it is set, and what happens without it. The served launcher is [`scripts/serve-v031-ba4-daily.sh`](../scripts/serve-v031-ba4-daily.sh) (first section below), which calls the generic [`scripts/serve-v0280-daily.sh`](../scripts/serve-v0280-daily.sh) with the served values. The earlier two-card fp8 launcher is [`scripts/serve-r156-daily.sh`](../scripts/serve-r156-daily.sh). Inline comments in the scripts are the reference when the two disagree. Earlier generations are in [HISTORY.md](HISTORY.md) and [archive/](archive/).
+Every flag of the two-card configuration, why it is set, and what happens without it. The served launcher is [`scripts/serve-v031-nbd-daily.sh`](../scripts/serve-v031-nbd-daily.sh) (first section below), which calls the generic [`scripts/serve-v0280-daily.sh`](../scripts/serve-v0280-daily.sh) with the served values. The earlier two-card fp8 launcher is [`scripts/serve-r156-daily.sh`](../scripts/serve-r156-daily.sh). Inline comments in the scripts are the reference when the two disagree. Earlier generations are in [HISTORY.md](HISTORY.md) and [archive/](archive/).
 
-To run the served configuration on another host, [`scripts/serve.sh`](../scripts/serve.sh) passes the `docker run` arguments of [`scripts/serve-v031-ba4-daily.sh`](../scripts/serve-v031-ba4-daily.sh) with the model and cache paths, bind address, GPUs, disk tier, BA4 admission reports and power cap as settings ([`serve.env.example`](../serve.env.example)); the disk tier, the BA4 layer and the power cap are off unless set.
+To run the served configuration on another host, [`scripts/serve.sh`](../scripts/serve.sh) passes the `docker run` arguments of [`scripts/serve-v031-nbd-daily.sh`](../scripts/serve-v031-nbd-daily.sh) with the model and cache paths, bind address, GPUs, disk tier, BA4 admission reports and power cap as settings ([`serve.env.example`](../serve.env.example)); the disk tier, the BA4 layer and the power cap are off unless set.
 
-## Since 2026-10-20: BA4 serves the M=4 `in_proj_ba` GEMM with Triton
+## Since 2026-10-20: the MTP drafter keeps the last block of a prefix hit
 
-The served launcher is [scripts/serve-v031-ba4-daily.sh](../scripts/serve-v031-ba4-daily.sh), the L1a launcher of the next section with one image layer, three environment variables and one read-only mount added. The vLLM arguments, checkpoint, KV pin, sequence limit, draft length, KV and state dtypes and tiers are unchanged. Screens, correctness checks and the promotion boot: [r27-ba4](../bench/results/r27-ba4.md) (results `2026-10-19-r27-audition-screen-070155-3532152`, `2026-10-19-231840-ba4-lean-gate`, `2026-10-19-233300-ba4-promote`).
+The served launcher is [scripts/serve-v031-nbd-daily.sh](../scripts/serve-v031-nbd-daily.sh), the BA4 launcher of the next section with one key added to the MTP speculative config. The screens and the promotion boot: [r27-no-block-drop](../bench/results/r27-no-block-drop.md) (results `2026-10-20-051649-r27-flags-screen`, `2026-10-20-070708-r27-flags-screen`, `2026-10-20-081135-nbd-promote`).
+
+| flag / env | value | why |
+|---|---|---|
+| `--speculative-config` | `{"method":"qwen3_5_mtp","num_speculative_tokens":3,"disable_eagle_block_drop":true}` | without the key, vLLM drops the last matching full-attention block of every prefix-cache hit under an EAGLE or MTP drafter, backs the linear-attention checkpoint off one block and re-prefills a 1,472-token block. With it the hit reaches the last full block; the one draft-KV slot written with the producer's lookahead token can lower acceptance only. Measured: greedy 32K revisits equal the cold text 12/12 (1/12 without), warm TTFT 0.071 s at 32K (0.275 without), decode −0.4 to +2.3 % |
+| launcher check | the key on the container's arguments, `no-block-drop` on the UP line | the daily branch always adds it; experiment boots default to it and `NO_BLOCK_DROP=0` gives vLLM's drop for A/B arms. [scripts/serve.sh](../scripts/serve.sh) adds it unless `NO_BLOCK_DROP=0` and checks the container's arguments |
+
+Rollback is [scripts/serve-v031-ba4-daily.sh](../scripts/serve-v031-ba4-daily.sh). The decode, depth and cold-prefill curves and the standard benchmark below were measured on the BA4 launcher; they make no prefix-cache hits.
+
+## 2026-10-20: BA4 serves the M=4 `in_proj_ba` GEMM with Triton
+
+The BA4 launcher is [scripts/serve-v031-ba4-daily.sh](../scripts/serve-v031-ba4-daily.sh), the L1a launcher of the next section with one image layer, three environment variables and one read-only mount added. The vLLM arguments, checkpoint, KV pin, sequence limit, draft length, KV and state dtypes and tiers are unchanged. Screens, correctness checks and the promotion boot: [r27-ba4](../bench/results/r27-ba4.md) (results `2026-10-19-r27-audition-screen-070155-3532152`, `2026-10-19-231840-ba4-lean-gate`, `2026-10-19-233300-ba4-promote`).
 
 | flag / env | value | why |
 |---|---|---|

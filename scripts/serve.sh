@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Serves the configuration on any host with two RTX 5090 cards: the engine of scripts/serve-v031-ba4-daily.sh
-# (image, vLLM flags, container env, MTP ns3, NVFP4 KV pinned at 14.86 GB per card, 16 sequences) without the serving
+# Serves the configuration on any host with two RTX 5090 cards: the engine of scripts/serve-v031-nbd-daily.sh
+# (image, vLLM flags, container env, MTP ns3 without the trailing-block drop, NVFP4 KV pinned at 14.86 GB per card, 16 sequences) without the serving
 # host's /srv/qwen5090 layout. Settings: serve.env in the repo root, or SERVE_ENV=<file>; environment variables override the
 # file; serve.env.example lists every setting and its default.
 #   bash scripts/serve.sh           start, wait for /health, check the boot log, print the endpoint
@@ -10,16 +10,17 @@
 # pre-warm with its free-VRAM floor, and its host maintenance (orphaned /dev/shm segment sweep, host-RAM gate before boot,
 # boot-time tier eviction by tier-evict.sh). The disk KV tier is off unless KV_TIER_DIR is set. The BA4 GEMM layer is off
 # unless BA4_INPUTS names a directory of admission reports for these GPUs, weights and image (bench/results/r27-ba4.md);
-# off, the BA4 image computes as the L1a image does.
+# off, the BA4 image computes as the L1a image does. NO_BLOCK_DROP=1 (default) puts "disable_eagle_block_drop":true in the
+# MTP speculative config as the served launcher does (bench/results/r27-no-block-drop.md); NO_BLOCK_DROP=0 leaves vLLM's drop on.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-SERVED_LAUNCHER=$ROOT/scripts/serve-v031-ba4-daily.sh
+SERVED_LAUNCHER=$ROOT/scripts/serve-v031-nbd-daily.sh
 die(){ echo "serve.sh: FAILED: $*" >&2; exit 1; }
 
 # Settings: remember what the environment sets (set-but-empty counts, so KV_TIER_DIR= turns off a tier the file enables),
 # source the file, then put the environment values back on top.
 KNOBS=(MODEL_DIR CACHE_DIR PORT BIND GPUS NAME IMAGE SERVED_NAME SERVED_ALIAS KV_TIER_DIR KV_TIER_CAP_GB POWER_LIMIT_W
-       DOCKER HEALTH_TIMEOUT BA4_INPUTS)
+       DOCKER HEALTH_TIMEOUT BA4_INPUTS NO_BLOCK_DROP)
 declare -A FROM_ENV=()
 for k in "${KNOBS[@]}"; do if [ -n "${!k+x}" ]; then FROM_ENV[$k]=${!k}; fi; done
 ENV_FILE=${SERVE_ENV:-$ROOT/serve.env}
@@ -45,6 +46,7 @@ KV_TIER_DIR=${KV_TIER_DIR:-}
 KV_TIER_CAP_GB=${KV_TIER_CAP_GB:-300}
 POWER_LIMIT_W=${POWER_LIMIT_W:-}
 BA4_INPUTS=${BA4_INPUTS:-}               # empty: BA4 off; a directory: ba4-rank0.json, ba4-rank1.json and binding.json
+NO_BLOCK_DROP=${NO_BLOCK_DROP:-1}        # 1: keep the last full-attention block of a prefix hit (served); 0: vLLM's default drop
 DOCKER=${DOCKER:-docker}                 # "sudo docker" where the user is not in the docker group
 HEALTH_TIMEOUT=${HEALTH_TIMEOUT:-1500}   # seconds (the serving host waits 25 minutes); a first boot compiles kernels
 read -r -a DK <<< "$DOCKER"
@@ -82,6 +84,8 @@ for v in MODEL_DIR CACHE_DIR KV_TIER_DIR BA4_INPUTS; do case "${!v}" in ''|/*) ;
 # BA4 (off by default). On, each rank admits the Triton M=4 GEMM for the 48 in_proj_ba layers from the reports mounted at
 # /ba4-results, as the served launcher does; a report that does not match the device, code or weights logs
 # "SM12X BA4 INACTIVE" for that layer, which then runs the original GEMM. The served launcher warns on that, it does not fail.
+case "$NO_BLOCK_DROP" in 1) SPEC='{"method":"qwen3_5_mtp","num_speculative_tokens":3,"disable_eagle_block_drop":true}';;
+  0) SPEC='{"method":"qwen3_5_mtp","num_speculative_tokens":3}';; *) die "NO_BLOCK_DROP must be 0 or 1 (got $NO_BLOCK_DROP)";; esac
 BA4_RUN=()
 if [ -n "$BA4_INPUTS" ]; then
   case "$IMAGE" in *-BA4-*) ;; *) die "BA4_INPUTS is set but IMAGE=$IMAGE is not a BA4 image";; esac
@@ -128,7 +132,7 @@ RUN=("${DK[@]}" run -d --name "$NAME" --restart unless-stopped --oom-score-adj -
   --max-num-seqs 16 --max-num-batched-tokens 8192         # 8192 = 5 blocks of 1,472 per prefill chunk (R211)
   --limit-mm-per-prompt '{"image":32,"video":0}'
   --mamba-cache-mode align --enable-prefix-caching
-  --speculative-config '{"method":"qwen3_5_mtp","num_speculative_tokens":3}'
+  --speculative-config "$SPEC"                          # NO_BLOCK_DROP above
   "${TIER_ARGS[@]}"
   --tensor-parallel-size 2
   --default-chat-template-kwargs '{"preserve_thinking":true,"reasoning_effort":"medium"}'
@@ -235,6 +239,8 @@ case "$VERS" in "0.31.0"*" 0.7.0.post1") ;; *) echo "vllm/flashinfer are '$VERS'
   || { echo "image lacks a patch marker (0136/0147/0148/0154)" >&2; bad=1; }
 "${DK[@]}" exec "$NAME" grep -q 0158 /opt/prs-markers/upstream \
   || { echo "image lacks the upstream-source marker for 0152/0155/0156/0158" >&2; bad=1; }
+if [ "$NO_BLOCK_DROP" = 1 ] && ! "${DK[@]}" inspect --format '{{json .Args}}' "$NAME" | grep -qE 'disable_eagle_block_drop.{1,5}true'; then
+  echo "the container's speculative config lacks disable_eagle_block_drop" >&2; bad=1; fi
 [ "$bad" = 0 ] || die "the engine answers but differs from the served configuration (lines above); it is still running (--stop removes it)"
 BA4_DESC=off
 if [ -n "$BA4_INPUTS" ]; then   # as the served launcher: 48 layers x 2 ranks, a shortfall is a warning (those layers run the original GEMM)
@@ -258,4 +264,4 @@ if [ -n "$POWER_LIMIT_W" ]; then
   done
 fi
 echo "UP: http://$HOST:$PORT/v1, model $SERVED_NAME${SERVED_ALIAS:+ (alias $SERVED_ALIAS)}, KV pool ${POOL:-?} tokens," \
-     "disk tier ${KV_TIER_DIR:-off}, BA4 $BA4_DESC${POWER_LIMIT_W:+, power limit $POWER_LIMIT_W W}"
+     "disk tier ${KV_TIER_DIR:-off}, BA4 $BA4_DESC, block drop $([ "$NO_BLOCK_DROP" = 1 ] && echo off || echo on)${POWER_LIMIT_W:+, power limit $POWER_LIMIT_W W}"
