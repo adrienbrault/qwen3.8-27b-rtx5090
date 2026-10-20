@@ -18,6 +18,7 @@ Hardware since 2026-08-31: two RTX 5090 32 GB (`sm_120`), Ryzen 7 9800X3D, 64 GB
 
 ## Index
 
+- [r27 served quality: tool-eval 89.6 ± 1.8 over 8 trials of 69 scenarios and GSM8K 5-shot T=0 0.895 over 200 problems, against the live served daily (2026-10-20 17:25 to 17:37 UTC, results `2026-10-20-172512-r27-served-quality`, `2026-10-20-173445-r27-served-quality`)](results/r27-served-quality.md)
 - [r27 served standard benchmark: 1,649.9 wall-clock output tok/s on ShareGPT V3 and 1,925.1 on Spec-Bench at 16 streams (Spec-Bench: 2.19 % tier-cached prompt tokens in 13 cells; gate verdict NOT-PUBLISHABLE), 28 first-attempt boots and maximum A/B output spread 1.86 % (2026-10-20 14:38 to 17:20 UTC, results `2026-10-20-r27-served-std-bench-1418`)](results/r27-served-std-bench.md)
 - [r27 served curves: no block drop and 15.90 GB pin, 263.9 / 215.9 t/s code / prose at one stream, 2,648.6 / 2,239.7 aggregate at 16, cold prefill 9,557 t/s at 6.7K and 3,994 at 200K prompt tokens (2026-10-20 14:18 to 14:37 UTC, results `2026-10-20-141816-r27-served-curves`)](results/r27-served-curves.md)
 - [r27 KV pin: 15.90 GB/card promoted with a 1,490,437-token pool; text-only ladder qualifies 16.90 but concurrent decode, cold prefill and images leave 99 MiB there against 1,227 MiB at 15.90; 16.02 leaves 925 and 1,047 MiB on two boots and fails the 1,000 MiB rule (2026-10-20 12:28 to 14:10 UTC, results `2026-10-20-122821-r27-pin-ladder`, `2026-10-20-131748-r27-headroom-stress`, `2026-10-20-135353-pin-promote`, `2026-10-20-135519-r27-headroom-stress`)](results/r27-kv-pin.md)

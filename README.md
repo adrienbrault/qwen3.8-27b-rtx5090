@@ -12,7 +12,7 @@ Measured on the served launcher [scripts/serve-v031-served-daily.sh](scripts/ser
 
 ![Served 2026-10-20 decode scaling: r27-served-curves solid and r27-served-std-bench dashed; Spec-Bench has 2.19% tier-cached prompt tokens in 13 cells, A c1 0% and B c1 2.19%](docs/img/decode-scaling-16.svg)
 
-Solid lines are decode alone, blue code and red prose: decode aggregate on the left, the rate of each stream on the right. Dashed lines are `vllm bench serve` on ShareGPT V3 (green, 0 % cached) and Spec-Bench (brown, 2.19 % tier-cached prompt tokens in 13 cells; A c1 0 %, B c1 2.19 %): wall-clock output tok/s on the left, 1000 / TPOT p50 per stream on the right.
+Solid lines are decode alone, blue code and red prose: decode aggregate on the left, the rate of each stream on the right. Dashed lines are `vllm bench serve` on ShareGPT V3 (green, 0 % cached) and Spec-Bench (brown; 2.19 % of its prompt tokens came from the disk tier in 13 of 14 cells, [r27-served-std-bench](bench/results/r27-served-std-bench.md)): wall-clock output tok/s on the left, 1000 / TPOT p50 per stream on the right.
 
 - One stream decodes 263.9 t/s of code and 215.9 of prose.
 - At the 16-sequence limit the aggregate is 2,648.6 t/s of code and 2,239.7 of prose, 165.5 and 140.0 per stream.
@@ -36,7 +36,7 @@ Cold prefill runs at 9,557 t/s at 6.7K prompt tokens and 3,994 at 200K. One code
 | `vllm bench serve`, 16 streams, wall-clock output | 1,649.9 tok/s on ShareGPT V3; 1,925.1 on Spec-Bench (2.19 % tier cached) | 2026-10-20, [r27-served-std-bench](bench/results/r27-served-std-bench.md) |
 | `vllm bench serve`, 16 streams, TTFT p50 / p99 | 124.0 / 500.3 ms on ShareGPT V3; 127.2 / 285.6 ms on Spec-Bench (2.19 % tier cached) | 2026-10-20, [r27-served-std-bench](bench/results/r27-served-std-bench.md) |
 
-Also passing: tool smoke 5 of 5 (2026-10-20, [r27-kv-pin](bench/results/r27-kv-pin.md), results `2026-10-20-135353-pin-promote`).
+Also on the served configuration (2026-10-20, [r27 served quality](bench/results/r27-served-quality.md), results `2026-10-20-172512-r27-served-quality` and `2026-10-20-173445-r27-served-quality`): tool-eval 89.6 ± 1.8 over 8 trials of 69 scenarios, GSM8K 5-shot T=0 0.895 over 200 problems; tool smoke 5 of 5 ([r27-kv-pin](bench/results/r27-kv-pin.md), results `2026-10-20-135353-pin-promote`).
 
 ## Served configuration
 

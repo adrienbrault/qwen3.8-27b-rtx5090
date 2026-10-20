@@ -1,0 +1,1 @@
+SUMMARY 2026-10-20-173445-r27-served-quality [r27-served-quality] tool-eval rc=0 served tool-eval 69x4: 90.2 +- 1.0 CI [89.5, 91.0] points [123, 124, 126, 125] ['E:5/6', 'H:9/10', 'I:16/20', 'J:5/6', 'K:22/26', 'M:5/6', 'N:5/6']

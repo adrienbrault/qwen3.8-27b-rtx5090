@@ -1,0 +1,1 @@
+SUMMARY 2026-10-20-172512-r27-served-quality [r27-served-quality] tool-eval rc=0 served tool-eval 69x4: 88.8 +- 2.5 CI [86.8, 91.0] points [127, 122, 119, 123] ['C:6/8', 'E:5/6', 'H:9/10', 'I:15/20', 'J:5/6', 'K:23/26', 'M:5/6', 'N:5/6'] [r27-served-quality] gsm8k rc=0 |gsm8k|      3|flexible-extract|     5|exact_match|↑  |0.895|±  |0.0217| 
