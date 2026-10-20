@@ -8,7 +8,7 @@ Every number in the text and tables was measured on one machine on the date give
 
 ## Numbers
 
-Measured on the served launcher [scripts/serve-v031-ba4-daily.sh](scripts/serve-v031-ba4-daily.sh), image `vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan`, at stock power limits on 2026-10-19 ([r27-ba4-curves](bench/results/r27-ba4-curves.md), results `2026-10-19-233406-r27-ba4-curves`), and under the standard benchmark on 2026-10-19 and 2026-10-20 ([r27-ba4-std-bench](bench/results/r27-ba4-std-bench.md), results `2026-10-19-r27-ba4-std-bench-2335`). [decode_ss.py](scripts/decode_ss.py) runs synchronized code and prose streams sampled at temperature 0.6 with 1,024 forced tokens, three runs per shape. Decode rate is tokens per second per stream while every stream is decoding; decode aggregate is the sum over the concurrent streams. Method: [How the numbers are measured](#how-the-numbers-are-measured).
+Measured on the launcher [scripts/serve-v031-ba4-daily.sh](scripts/serve-v031-ba4-daily.sh), image `vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan`, at the cards' stock power limits of 600 / 575 W (the serving host caps both at 400 W) on 2026-10-19 ([r27-ba4-curves](bench/results/r27-ba4-curves.md), results `2026-10-19-233406-r27-ba4-curves`), and under the standard benchmark on 2026-10-19 and 2026-10-20 ([r27-ba4-std-bench](bench/results/r27-ba4-std-bench.md), results `2026-10-19-r27-ba4-std-bench-2335`). [decode_ss.py](scripts/decode_ss.py) runs synchronized code and prose streams sampled at temperature 0.6 with 1,024 forced tokens, three runs per shape. Decode rate is tokens per second per stream while every stream is decoding; decode aggregate is the sum over the concurrent streams. Method: [How the numbers are measured](#how-the-numbers-are-measured).
 
 ![Decode aggregate and per-stream rate against concurrent streams, code and prose](docs/img/decode-scaling-16.svg)
 
@@ -32,15 +32,17 @@ Cold prefill runs at 9,582 t/s at 6.7K prompt tokens and 3,996 at 200K. One code
 | KV tiers behind the pool | 16 GiB host RAM, then 300 GB of disk with LRU eviction, kept across restarts | 2026-10-19, [r27-ba4-curves](bench/results/r27-ba4-curves.md) |
 | `vllm bench serve`, 16 streams, wall-clock output | 1,589.0 tok/s on ShareGPT V3, 1,899.5 on Spec-Bench | 2026-10-19/20, [r27-ba4-std-bench](bench/results/r27-ba4-std-bench.md) |
 | `vllm bench serve`, 16 streams, time to first token p50 / p99 | 129.4 / 494.1 ms on ShareGPT V3, 131.1 / 292.0 ms on Spec-Bench | 2026-10-19/20, [r27-ba4-std-bench](bench/results/r27-ba4-std-bench.md) |
+| prefix revisit, 32K tokens | warm TTFT 0.071 s; greedy text equal to the cold run in 12 of 12 prompts | 2026-10-20, [r27 no block drop](bench/results/r27-no-block-drop.md) |
 | fidelity vs the [bf16 model](https://huggingface.co/Qwen/Qwen3.8-27B), dense text, 555,549 positions | top-1 90.71 %, perplexity +1.901 % | 2026-10-19, [r27 BA4](bench/results/r27-ba4.md) |
 
 Also passing (2026-10-19, [r27 BA4](bench/results/r27-ba4.md)): GSM8K 5-shot T=0 0.905 over 200 problems, tool-eval 91.0 ± 1.4 (69 × 4), tool smoke 5 of 5.
 
 ## Served configuration
 
-- Weights [nvidia/Qwen3.8-27B-NVFP4](https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4), image `vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan` (vLLM v0.31.0, [patches-v0310/](patches-v0310/), FlashInfer 0.7.0.post1), port 8020. Launcher [scripts/serve-v031-ba4-daily.sh](scripts/serve-v031-ba4-daily.sh); [scripts/serve.sh](scripts/serve.sh) starts the same engine with the host paths as settings. Promotions and rollbacks: [docs/HISTORY.md](docs/HISTORY.md); every flag: [docs/CONFIG.md](docs/CONFIG.md).
+- Weights [nvidia/Qwen3.8-27B-NVFP4](https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4), image `vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan` (vLLM v0.31.0, [patches-v0310/](patches-v0310/), FlashInfer 0.7.0.post1), port 8020. Launcher [scripts/serve-v031-nbd-daily.sh](scripts/serve-v031-nbd-daily.sh), rollback [scripts/serve-v031-ba4-daily.sh](scripts/serve-v031-ba4-daily.sh); [scripts/serve.sh](scripts/serve.sh) starts the same engine with the host paths as settings. Promotions and rollbacks: [docs/HISTORY.md](docs/HISTORY.md); every flag: [docs/CONFIG.md](docs/CONFIG.md).
 - Tensor parallel 2, 16 sequences, 262,144-token window, NVFP4 KV pinned at 14.86 GB per card (`--kv-cache-memory-bytes`), linear-attention state cached in bf16.
 - The checkpoint's MTP head at 3 draft tokens (`qwen3_5_mtp`), with L1a's CPU upper-bound plan for pure draft decode (`VLLM_SM12X_DRAFT_UB_PLAN=1`).
+- `"disable_eagle_block_drop":true` in the speculative config: a prefix-cache hit keeps its last full-attention block instead of re-prefilling it ([r27 no block drop](bench/results/r27-no-block-drop.md)).
 - The bf16 M=4 `in_proj_ba` call of the 48 GDN layers on the MTP verify step runs on a Triton GEMM (BA4, `VLLM_SM12X_BA_M4=1`), admitted per card from admission reports measured on the serving host's cards; a layer whose report does not match the device, code or weights keeps the original GEMM.
 - FlashInfer's `pcie_ipc` all-reduce as the two-card decode all-reduce (patch 0138, `VLLM_SM12X_PCIE_IPC_AR=1`; patch 0148 admits the MTP head to it) and batch-sharded sampling (`--enable-batch-sharded-sampling`, patch 0147).
 - KV tiers: 16 GiB of pinned host RAM, then a 300 GB disk tier with LRU eviction and a 40 GB free-space floor.
@@ -72,13 +74,14 @@ Also passing (2026-10-19, [r27 BA4](bench/results/r27-ba4.md)): GSM8K 5-shot T=0
 
 ## How the numbers are measured
 
+- **Launcher**: the decode, depth and prefill curves and the standard benchmark ran on [scripts/serve-v031-ba4-daily.sh](scripts/serve-v031-ba4-daily.sh), the served launcher without `disable_eagle_block_drop`. None of them makes a prefix-cache hit, the only request where the flag changes what is computed; its decode screen read −0.4 to +2.3 % ([r27 no block drop](bench/results/r27-no-block-drop.md)).
 - **Decode** ([r27-ba4-curves](bench/results/r27-ba4-curves.md), [scripts/r27-ba4-curves.sh](scripts/r27-ba4-curves.sh); the same instruments as R675): `decode_ss.py` starts all streams together on one code or one prose prompt, forces 1,024 tokens per stream sampled at temperature 0.6, and takes the rate over the samples where every stream was decoding, median of three runs. Acceptance is accepted draft tokens over draft tokens from the server's counters. At depth, `--ctx N` puts N/1.3 filler words in front of the prompt; the probe does not record the prompt's token count, so the figure plots those points against N, two runs per point.
 - **Prefill** ([r27-ba4-curves](bench/results/r27-ba4-curves.md)): `kv_capacity_probe.py --conc 1 --tokens 1`, one request at a time with one output token, three prompts per length, each with a fresh seed so that neither the GPU prefix cache nor the CPU and disk tiers hold it.
 - **Power and clocks**: r27-ba4-curves ran at the stock 600 / 575 W limits on 2026-10-19 (results `2026-10-19-233406-r27-ba4-curves`), and its boot log records memory clock offset +4500 and core offset 0 ([r27-ba4-curves](bench/results/r27-ba4-curves.md)). r27-ba4-std-bench ran at the same limits on 2026-10-19 and 2026-10-20 (results `2026-10-19-r27-ba4-std-bench-2335`) and recorded the same offsets at every boot and after each cell; r27-l1a-seq64, under [Other configurations](#other-configurations), did the same on 2026-10-17 on the L1a launcher (results `2026-10-17-r27-l1a-seq64-curves-1226`).
 
 ### Standard benchmark (vllm bench serve)
 
-Measured on 2026-10-19 23:54 UTC to 2026-10-20 02:37 UTC against the served launcher [scripts/serve-v031-ba4-daily.sh](scripts/serve-v031-ba4-daily.sh), results `2026-10-19-r27-ba4-std-bench-2335` ([write-up](bench/results/r27-ba4-std-bench.md)).
+Measured on 2026-10-19 23:54 UTC to 2026-10-20 02:37 UTC against the BA4 launcher [scripts/serve-v031-ba4-daily.sh](scripts/serve-v031-ba4-daily.sh), results `2026-10-19-r27-ba4-std-bench-2335` ([write-up](bench/results/r27-ba4-std-bench.md)).
 
 - **Client** ([r27-ba4-std-bench](bench/results/r27-ba4-std-bench.md), [scripts/r27-ba4-std-bench.sh](scripts/r27-ba4-std-bench.sh)): `vllm bench serve` v0.30.0 through the request shim of the Flash-Next repository, closed loop at 1, 2, 4, 6, 8, 12 and 16 concurrent requests, greedy, streamed, thinking on.
 - **Samples**: ShareGPT V3, 400 conversations, seed 7310, each output forced with `min_tokens` to the reference reply's length (mean 210 tokens); Spec-Bench, all 480 questions, each output forced to 256 tokens. The outputs are truncated reasoning, not answers.
@@ -90,7 +93,7 @@ Measured on 2026-10-19 23:54 UTC to 2026-10-20 02:37 UTC against the served laun
 
 - Host: ASRock X870 Taichi Creator, Ryzen 7 9800X3D, 64 GB DDR5-6000, Ubuntu 24.04 HWE.
 - GPUs: two RTX 5090 32 GB (`sm_120`), PCIe Gen5 x8/x8.
-  - ASUS at 600 W and HP OEM at 575 W stock. `nvidia-smi -pl` accepts nothing below 400 W on either card. A 400 W cap costs nothing measurable on decode, which draws 350 W per card at the served concurrency ceiling, and about 10 % on deep prefill, the one workload above it ([GPU power limits](bench/results/r208-gpu-power-limits.md)). Both cards run at 400 W while the served configuration is up; every measurement in this repo was taken at the stock limits.
+  - ASUS at 600 W and HP OEM at 575 W stock. `nvidia-smi -pl` accepts nothing below 400 W on either card. Both cards run at 400 W while the served configuration is up; every measurement in this repo was taken at the stock limits. At stock limits on 2026-10-19 decode drew at most 381 W on card 0 and 344 W on card 1 from 1 to 16 streams, and one stream decoding behind 60K to 200K tokens of filler drew 406 to 470 W on card 0 and up to 413 W on card 1, so the 400 W cap binds on deep-context decode ([r27-ba4-curves](bench/results/r27-ba4-curves.md#gpu-power-during-decode)); its cost there is not measured. The cap cost about 10 % on deep prefill on 2026-09-07 ([GPU power limits](bench/results/r208-gpu-power-limits.md)).
   - NVIDIA driver 610.57.04 with the [QuixiAI open kernel modules](https://github.com/QuixiAI/open-gpu-kernel-modules) for GPU peer-to-peer ([scripts/gpu-p2p-610.sh](scripts/gpu-p2p-610.sh)).
   - Memory clock offset +4500 MHz on both cards, core clock stock ([scripts/gpu-tune.sh](scripts/gpu-tune.sh)); it raised TP=2 decode by about 4 % on 2026-08-31 ([R136-R138](bench/results/r136-r138-tp2-tuning.md), [docs/DESIGN.md](docs/DESIGN.md)). Each round records whether it ran with the offset; R675 did not ([How the numbers are measured](#how-the-numbers-are-measured)).
 - Storage: one Gen5 x4 NVMe for the model weights and a 393 GB loopback image for the KV disk tier.
@@ -127,11 +130,12 @@ bash scripts/serve.sh
 
 [scripts/build-v031-image.sh](scripts/build-v031-image.sh) stages its context from this checkout, verifies the base registry digests through Docker's `RepoDigests`, resolves their local image IDs, builds the chain without a GPU and compares the L1a image with the supplied [served L1a manifest](patches-v0310/served-l1a-manifest.txt). `BA4=1` then builds the BA4 layer on it and compares the result with the same inventory with the layer's three edited vLLM files at their pinned output hashes; that stage has been run only against the offline tests, not as a clean-clone Docker build ([r27 BA4](bench/results/r27-ba4.md#reproducing-it)). Digest pulls leave existing base tags unchanged; the resolved IDs support both the classic and containerd image stores. Arctic wheel preparation installs hashed PyPI tools in a throwaway container; those added tools do not enter the final image. `DRY_RUN=1` prints the commands; `CHECK=1` adds an identity check using the NVIDIA container runtime. A clean-clone build in an empty Docker daemon matched the served L1a image on 2026-10-19: every source and every shared object in the 7,138-file inventory is identical ([r27-l1a-build-verify](bench/results/r27-l1a-build-verify.md)). The source archive hash verified by the operator on 2026-10-19 is the default `VLLM_SOURCE_SHA256`; [patches-v0310/README.md](patches-v0310/README.md#build-context) records the pins and verification rules. That rebuilt image is the published `ghcr.io/adrienbrault/qwen3.8-27b-rtx5090:v0310-r27c-A_S-L1a-ubplan`; `scripts/build-served-image.sh` builds the earlier v0.29 image.
 
-[scripts/serve.sh](scripts/serve.sh) runs the served engine: the image tag, vLLM flags, container environment and container limits of [scripts/serve-v031-ba4-daily.sh](scripts/serve-v031-ba4-daily.sh), with the serving host's paths replaced by settings. `bash scripts/serve.sh --print` prints the `docker run` command without running anything; `--stop` stops and removes the container. Environment variables override `serve.env`. Where its defaults differ from the serving host:
+[scripts/serve.sh](scripts/serve.sh) runs the served engine: the image tag, vLLM flags, container environment and container limits of [scripts/serve-v031-nbd-daily.sh](scripts/serve-v031-nbd-daily.sh), with the serving host's paths replaced by settings. `bash scripts/serve.sh --print` prints the `docker run` command without running anything; `--stop` stops and removes the container. Environment variables override `serve.env`. Where its defaults differ from the serving host:
 
 - The endpoint is published on `127.0.0.1` (`BIND`); the serving host publishes on `0.0.0.0`.
 - GPUs 0 and 1 are passed to the container (`GPUS`); the serving host passes all of its two.
 - No BA4 layer unless `BA4_INPUTS` names a directory of admission reports (`ba4-rank0.json`, `ba4-rank1.json`, `binding.json`) measured on the same cards, weights and image; the serving host mounts the reports of the screen that measured the layer. Without them the BA4 image computes as the L1a image does.
+- `NO_BLOCK_DROP=1` (the default) sets `"disable_eagle_block_drop":true` as the serving host does; `NO_BLOCK_DROP=0` leaves vLLM's trailing-block drop on.
 - No disk KV tier (`KV_TIER_DIR`) and no power cap (`POWER_LIMIT_W`); the serving host runs both. Clock offsets and the serving host's autotune pre-warm are not part of the script.
 
 After `/health` answers, the script checks the boot-log lines, versions and patch markers the served launcher asserts for each patch and setting, and fails naming any that is missing. It leaves out the launcher's checks that need its pre-warm or its host layout, among them the free-VRAM floor after pre-warm. It prints the KV pool; the served boots read 1,391,795 tokens with the tier on (2026-10-16, [r27](bench/results/r27-v031-splitkv.md)). A boot without the tier has not been measured at this pin.
@@ -211,7 +215,7 @@ The fp32 and bf16 linear-attention states are 0.05 points of top-1 apart on dens
 
 ### The serving host's launchers
 
-The serving host runs the configurations above through the launchers below, which also carry its experiment and evaluation ports, rollback launchers, tier maintenance and power policy. The served one, `serve-v031-ba4-daily.sh`, starts the same engine as `scripts/serve.sh` with the disk tier and the BA4 layer on.
+The serving host runs the configurations above through the launchers below, which also carry its experiment and evaluation ports, rollback launchers, tier maintenance and power policy. The served one, `serve-v031-nbd-daily.sh`, starts the same engine as `scripts/serve.sh` with the disk tier and the BA4 layer on.
 
 The scripts assume the host layout used here: models under `/srv/qwen5090/models`, compile caches under `/srv/qwen5090/cache`, the disk tier at `/srv/qwen5090/native-l2`, the BA4 admission reports at `/srv/qwen5090/ba4-inputs`, [scripts/serve-v0280-daily.sh](scripts/serve-v0280-daily.sh) installed as `/srv/qwen5090/launch-daily-v0280.sh`, [scripts/serve-r231-nvidia-daily.sh](scripts/serve-r231-nvidia-daily.sh) as `/srv/qwen5090/launch-daily-v0290-r207.sh` and [scripts/serve-r156-daily.sh](scripts/serve-r156-daily.sh) as `/srv/qwen5090/launch-daily-redhat-fp8-0902.sh`. Adjust the paths at the top of each script for a different layout.
 
@@ -227,7 +231,7 @@ huggingface-cli download syvai/Qwen3.8-27B-DFlash2-W4A16 --local-dir /srv/qwen50
 #    so either raise SIZE in the script or pass TIER_CAP_GB below the image size.
 sudo bash scripts/setup-native-l2.sh
 
-# 3a. the served image: patches-v0310/README.md (four docker builds, BA4=1 bash scripts/build-v031-image.sh, tagged as scripts/serve-v031-ba4-daily.sh expects).
+# 3a. the served image: patches-v0310/README.md (four docker builds, BA4=1 bash scripts/build-v031-image.sh, tagged as scripts/serve-v031-nbd-daily.sh expects).
 #     The earlier v0.29 image: vLLM v0.29.0rc2 + patches-v0290 + FlashInfer 0.6.16.post3, the nine layers of scripts/build-served-image.sh,
 #     tagged as scripts/serve-r231-nvidia-daily.sh expects. Needs Docker BuildKit (buildx,
 #     docker driver); the GPU is not used. About 10 minutes once the base image is local, plus its 8.65 GB pull;
@@ -238,10 +242,12 @@ bash scripts/build-served-image.sh
 docker build -f patches-v0280/Dockerfile.v0280-nvfp4kv -t vllm-qwen38:v0280-nvfp4kv patches-v0280
 
 # 4a. two cards, the served configuration
+bash scripts/serve-v031-nbd-daily.sh
+# 4a'. BA4, the previous launcher and rollback
 bash scripts/serve-v031-ba4-daily.sh
-# 4a'. L1a, the previous launcher and rollback
+# 4a''. L1a, the launcher before it
 bash scripts/serve-v031-l1a-daily.sh
-# 4a''. A_S, the launcher before it
+# 4a'''. A_S, the launcher before that
 bash scripts/serve-v031-splitkv-daily.sh
 # 4a'''. the earlier configuration on vLLM v0.29.0rc2
 bash scripts/serve-r231-nvidia-daily.sh
@@ -365,5 +371,5 @@ MIT ([LICENSE](LICENSE)) for the original work: documentation, scripts, probes a
   - [bench/RESULTS.md](bench/RESULTS.md), every measurement newest first; [docs/HISTORY.md](docs/HISTORY.md), the lineage of the served configuration.
   - [docs/CONFIG.md](docs/CONFIG.md), every flag; [docs/DESIGN.md](docs/DESIGN.md), why it fits; [docs/FIDELITY.md](docs/FIDELITY.md), the bf16 rulers; [docs/R156-DECISION.md](docs/R156-DECISION.md), the checkpoint decision.
   - [docs/GOTCHAS.md](docs/GOTCHAS.md), failure modes; [docs/REJECTED.md](docs/REJECTED.md), what was tried and rejected.
-  - Launchers: [scripts/serve.sh](scripts/serve.sh), the served engine with the host paths as settings ([serve.env.example](serve.env.example)); [scripts/serve-v031-ba4-daily.sh](scripts/serve-v031-ba4-daily.sh), the served one; [scripts/serve-v031-l1a-daily.sh](scripts/serve-v031-l1a-daily.sh), the L1a rollback; [scripts/serve-v031-splitkv-daily.sh](scripts/serve-v031-splitkv-daily.sh), the A_S launcher before it; [scripts/serve-r231-nvidia-daily.sh](scripts/serve-r231-nvidia-daily.sh), the earlier configuration on vLLM v0.29.0rc2; [scripts/serve-r207-mtp-daily.sh](scripts/serve-r207-mtp-daily.sh), the same route on the RedHatAI checkpoint; [scripts/serve-r168-daily.sh](scripts/serve-r168-daily.sh), the DFlash2 route of 2026-09-04; [scripts/serve-r156-daily.sh](scripts/serve-r156-daily.sh), the fp8 shape; [scripts/serve-v0280-daily.sh](scripts/serve-v0280-daily.sh), the one-card and MTP shapes; [scripts/build-served-image.sh](scripts/build-served-image.sh), the build of the v0.29 image; [scripts/build-v0290rc2.sh](scripts/build-v0290rc2.sh), the 2026-09-03 build of its first four layers alongside the R168 diagnosis images.
+  - Launchers: [scripts/serve.sh](scripts/serve.sh), the served engine with the host paths as settings ([serve.env.example](serve.env.example)); [scripts/serve-v031-nbd-daily.sh](scripts/serve-v031-nbd-daily.sh), the served one; [scripts/serve-v031-ba4-daily.sh](scripts/serve-v031-ba4-daily.sh), the BA4 rollback; [scripts/serve-v031-l1a-daily.sh](scripts/serve-v031-l1a-daily.sh), the L1a launcher before it; [scripts/serve-v031-splitkv-daily.sh](scripts/serve-v031-splitkv-daily.sh), the A_S launcher before it; [scripts/serve-r231-nvidia-daily.sh](scripts/serve-r231-nvidia-daily.sh), the earlier configuration on vLLM v0.29.0rc2; [scripts/serve-r207-mtp-daily.sh](scripts/serve-r207-mtp-daily.sh), the same route on the RedHatAI checkpoint; [scripts/serve-r168-daily.sh](scripts/serve-r168-daily.sh), the DFlash2 route of 2026-09-04; [scripts/serve-r156-daily.sh](scripts/serve-r156-daily.sh), the fp8 shape; [scripts/serve-v0280-daily.sh](scripts/serve-v0280-daily.sh), the one-card and MTP shapes; [scripts/build-served-image.sh](scripts/build-served-image.sh), the build of the v0.29 image; [scripts/build-v0290rc2.sh](scripts/build-v0290rc2.sh), the 2026-09-03 build of its first four layers alongside the R168 diagnosis images.
   - [THIRD_PARTY.md](THIRD_PARTY.md), provenance of every patch and idea; [LICENSE](LICENSE).
