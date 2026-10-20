@@ -105,3 +105,23 @@ Acceptance is accepted draft tokens divided by drafted tokens from the server co
 | 60,000 | 0.7305 | 0.7125 | −1.80 pp | 0.5005 | 0.5195 | +1.90 pp |
 | 120,000 | 0.7215 | 0.7075 | −1.40 pp | 0.5200 | 0.5170 | −0.30 pp |
 | 200,000 | 0.7850 | 0.7305 | −5.45 pp | 0.5165 | 0.5445 | +2.80 pp |
+
+## GPU power during decode
+
+[`power-summary.json`](2026-10-19-r27-ba4-curves/power-summary.json) holds the unit's NVML energy per measured phase, both cards, at stock limits of 600 / 575 W; the served launcher caps both cards at 400 W after boot. The CPU package (RAPL) drew about 100 to 115 W in every phase and is not included below; wall power was not metered. Each row is the median over the phase's runs.
+
+| shape | code GPU W (card 0 / card 1) | code J/token | prose GPU W (card 0 / card 1) | prose J/token |
+| --- | ---: | ---: | ---: | ---: |
+| 1 stream | 648 (343 / 306) | 2.416 | 669 (351 / 319) | 2.961 |
+| 2 streams | 613 (322 / 289) | 1.379 | 621 (329 / 292) | 1.646 |
+| 4 streams | 638 (337 / 301) | 0.680 | 652 (343 / 308) | 0.844 |
+| 6 streams | 644 (338 / 307) | 0.486 | 649 (340 / 309) | 0.619 |
+| 8 streams | 656 (346 / 310) | 0.393 | 658 (345 / 312) | 0.486 |
+| 12 streams | 719 (378 / 342) | 0.318 | 721 (380 / 341) | 0.390 |
+| 16 streams | 721 (379 / 341) | 0.272 | 724 (381 / 344) | 0.324 |
+| 1 stream, 30K filler | 738 (388 / 350) | 2.677 | 724 (380 / 344) | 3.356 |
+| 1 stream, 60K filler | 771 (410 / 362) | 2.973 | 762 (406 / 356) | 3.598 |
+| 1 stream, 120K filler | 830 (440 / 390) | 3.485 | 821 (436 / 385) | 4.229 |
+| 1 stream, 200K filler | 870 (459 / 411) | 3.961 | 883 (470 / 413) | 4.881 |
+
+At 60K filler and deeper, card 0 draws above the served 400 W cap, so the depth rates above are stock-limit rates; at no filler and at 1 to 16 streams both cards stay below it.
