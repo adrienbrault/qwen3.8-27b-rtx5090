@@ -1,0 +1,3308 @@
+[
+  {
+    "phase": "decode-code-c1-687e8d172ecc",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 764.0,
+    "tokens_in": 0,
+    "seconds": 2.526169776916504,
+    "tok_s": 302.434146343305,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c1-322425600dee",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 837.0,
+    "tokens_in": 0,
+    "seconds": 3.026073932647705,
+    "tok_s": 276.59601801852057,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c1-041b7bbb4533",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 877.0,
+    "tokens_in": 0,
+    "seconds": 4.033595085144043,
+    "tok_s": 217.4239063385515,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c2-e6aefaa0a090",
+    "concurrency": 2,
+    "kind": "decode",
+    "tokens_out": 1743.0,
+    "tokens_in": 0,
+    "seconds": 3.5292303562164307,
+    "tok_s": 493.8753847364647,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c2-c69b68b7e4b8",
+    "concurrency": 2,
+    "kind": "decode",
+    "tokens_out": 1701.0,
+    "tokens_in": 0,
+    "seconds": 3.534797191619873,
+    "tok_s": 481.21572689733057,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c2-fc29fc4fc5ee",
+    "concurrency": 2,
+    "kind": "decode",
+    "tokens_out": 1802.0,
+    "tokens_in": 0,
+    "seconds": 3.529548168182373,
+    "tok_s": 510.5469352265516,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c4-4c2c9e1ba252",
+    "concurrency": 4,
+    "kind": "decode",
+    "tokens_out": 3204.0,
+    "tokens_in": 0,
+    "seconds": 3.530611753463745,
+    "tok_s": 907.4914557956369,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c4-4a423f87f016",
+    "concurrency": 4,
+    "kind": "decode",
+    "tokens_out": 3210.0,
+    "tokens_in": 0,
+    "seconds": 3.5305376052856445,
+    "tok_s": 909.2099727798507,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c4-553c009c8f0d",
+    "concurrency": 4,
+    "kind": "decode",
+    "tokens_out": 2905.0,
+    "tokens_in": 0,
+    "seconds": 3.5286755561828613,
+    "tok_s": 823.2550580939435,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c6-0db616ff2259",
+    "concurrency": 6,
+    "kind": "decode",
+    "tokens_out": 5197.0,
+    "tokens_in": 0,
+    "seconds": 4.037174701690674,
+    "tok_s": 1287.2863782247566,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c6-0178fdae1cc0",
+    "concurrency": 6,
+    "kind": "decode",
+    "tokens_out": 4869.0,
+    "tokens_in": 0,
+    "seconds": 3.531385898590088,
+    "tok_s": 1378.778796716597,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c6-591acf74c060",
+    "concurrency": 6,
+    "kind": "decode",
+    "tokens_out": 4945.0,
+    "tokens_in": 0,
+    "seconds": 3.5290746688842773,
+    "tok_s": 1401.217164261183,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c8-d62dc1a3a7d3",
+    "concurrency": 8,
+    "kind": "decode",
+    "tokens_out": 6357.0,
+    "tokens_in": 0,
+    "seconds": 4.047876834869385,
+    "tok_s": 1570.4529212053274,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c8-3d404548701e",
+    "concurrency": 8,
+    "kind": "decode",
+    "tokens_out": 6148.0,
+    "tokens_in": 0,
+    "seconds": 4.036412239074707,
+    "tok_s": 1523.1348127636602,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c8-3527b1d5eeb6",
+    "concurrency": 8,
+    "kind": "decode",
+    "tokens_out": 6658.0,
+    "tokens_in": 0,
+    "seconds": 4.039163112640381,
+    "tok_s": 1648.3612605700637,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c12-bea308e293c5",
+    "concurrency": 12,
+    "kind": "decode",
+    "tokens_out": 9333.0,
+    "tokens_in": 0,
+    "seconds": 4.035972356796265,
+    "tok_s": 2312.4538958459293,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c12-52590c417910",
+    "concurrency": 12,
+    "kind": "decode",
+    "tokens_out": 10160.0,
+    "tokens_in": 0,
+    "seconds": 4.538663625717163,
+    "tok_s": 2238.5443905626735,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c12-1534c3da6a4a",
+    "concurrency": 12,
+    "kind": "decode",
+    "tokens_out": 10575.0,
+    "tokens_in": 0,
+    "seconds": 4.537057399749756,
+    "tok_s": 2330.805865621905,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c16-9f81e89990c5",
+    "concurrency": 16,
+    "kind": "decode",
+    "tokens_out": 13572.0,
+    "tokens_in": 0,
+    "seconds": 5.047403812408447,
+    "tok_s": 2688.907110351432,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c16-adfdd399f730",
+    "concurrency": 16,
+    "kind": "decode",
+    "tokens_out": 13568.0,
+    "tokens_in": 0,
+    "seconds": 5.04689621925354,
+    "tok_s": 2688.3849816921283,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c16-fb42325a3ac1",
+    "concurrency": 16,
+    "kind": "decode",
+    "tokens_out": 12126.0,
+    "tokens_in": 0,
+    "seconds": 4.539972305297852,
+    "tok_s": 2670.9414032878017,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c1-a0a3f6e9c99e",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 856.0,
+    "tokens_in": 0,
+    "seconds": 4.539681673049927,
+    "tok_s": 188.55947655574437,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c1-e9bf0f02b486",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 785.0,
+    "tokens_in": 0,
+    "seconds": 3.5305850505828857,
+    "tok_s": 222.34275304326675,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c1-08afb1cc8d11",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 895.0,
+    "tokens_in": 0,
+    "seconds": 4.036908864974976,
+    "tok_s": 221.70428660532767,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c2-04025f31f3a9",
+    "concurrency": 2,
+    "kind": "decode",
+    "tokens_out": 1803.0,
+    "tokens_in": 0,
+    "seconds": 4.539602279663086,
+    "tok_s": 397.17135751676744,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c2-4fe3639b3b1c",
+    "concurrency": 2,
+    "kind": "decode",
+    "tokens_out": 1695.0,
+    "tokens_in": 0,
+    "seconds": 4.539795398712158,
+    "tok_s": 373.3648438167136,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c2-0ebcda619c7b",
+    "concurrency": 2,
+    "kind": "decode",
+    "tokens_out": 1722.0,
+    "tokens_in": 0,
+    "seconds": 4.539699554443359,
+    "tok_s": 379.32025662679456,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c4-7378eb400c6d",
+    "concurrency": 4,
+    "kind": "decode",
+    "tokens_out": 3434.0,
+    "tokens_in": 0,
+    "seconds": 4.541406631469727,
+    "tok_s": 756.1533856501771,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c4-4976f0483da6",
+    "concurrency": 4,
+    "kind": "decode",
+    "tokens_out": 3462.0,
+    "tokens_in": 0,
+    "seconds": 4.5372231006622314,
+    "tok_s": 763.0217697460597,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c4-8e052a332db8",
+    "concurrency": 4,
+    "kind": "decode",
+    "tokens_out": 3317.0,
+    "tokens_in": 0,
+    "seconds": 4.5441601276397705,
+    "tok_s": 729.9478686555099,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c6-470395a1d639",
+    "concurrency": 6,
+    "kind": "decode",
+    "tokens_out": 4882.0,
+    "tokens_in": 0,
+    "seconds": 4.5393359661102295,
+    "tok_s": 1075.4877005024593,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c6-2b4d02a015fd",
+    "concurrency": 6,
+    "kind": "decode",
+    "tokens_out": 4841.0,
+    "tokens_in": 0,
+    "seconds": 4.541049957275391,
+    "tok_s": 1066.0530153921886,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c6-2739c71e5ad2",
+    "concurrency": 6,
+    "kind": "decode",
+    "tokens_out": 4891.0,
+    "tokens_in": 0,
+    "seconds": 4.542986154556274,
+    "tok_s": 1076.6046458439444,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c8-edd6a90382f1",
+    "concurrency": 8,
+    "kind": "decode",
+    "tokens_out": 6701.0,
+    "tokens_in": 0,
+    "seconds": 5.042711496353149,
+    "tok_s": 1328.8485777633941,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c8-6c319462a037",
+    "concurrency": 8,
+    "kind": "decode",
+    "tokens_out": 6873.0,
+    "tokens_in": 0,
+    "seconds": 5.0468175411224365,
+    "tok_s": 1361.8483220361106,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c8-c740580c4eaa",
+    "concurrency": 8,
+    "kind": "decode",
+    "tokens_out": 6760.0,
+    "tokens_in": 0,
+    "seconds": 5.043810606002808,
+    "tok_s": 1340.2565100193688,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c12-01532b831679",
+    "concurrency": 12,
+    "kind": "decode",
+    "tokens_out": 9887.0,
+    "tokens_in": 0,
+    "seconds": 5.550795555114746,
+    "tok_s": 1781.186120409296,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c12-4bd0c85918fc",
+    "concurrency": 12,
+    "kind": "decode",
+    "tokens_out": 10051.0,
+    "tokens_in": 0,
+    "seconds": 5.5526673793792725,
+    "tok_s": 1810.12103071868,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c12-e4564c231236",
+    "concurrency": 12,
+    "kind": "decode",
+    "tokens_out": 10184.0,
+    "tokens_in": 0,
+    "seconds": 5.549633741378784,
+    "tok_s": 1835.0760562930097,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c16-7b2339f3efee",
+    "concurrency": 16,
+    "kind": "decode",
+    "tokens_out": 13755.0,
+    "tokens_in": 0,
+    "seconds": 6.050693988800049,
+    "tok_s": 2273.2929520912426,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c16-ad38ac97ece3",
+    "concurrency": 16,
+    "kind": "decode",
+    "tokens_out": 13837.0,
+    "tokens_in": 0,
+    "seconds": 6.055392026901245,
+    "tok_s": 2285.070882038479,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c16-482353f786ae",
+    "concurrency": 16,
+    "kind": "decode",
+    "tokens_out": 13506.0,
+    "tokens_in": 0,
+    "seconds": 6.051767349243164,
+    "tok_s": 2231.7447483649657,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c1-9ea5db34f0c9",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 958.0,
+    "tokens_in": 0,
+    "seconds": 3.5316321849823,
+    "tok_s": 271.26267680811765,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c1-3e7ef6bcacbe",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 948.0,
+    "tokens_in": 0,
+    "seconds": 3.531517505645752,
+    "tok_s": 268.4398416500712,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c1-9459eb3ed7f7",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 834.0,
+    "tokens_in": 0,
+    "seconds": 3.5308609008789062,
+    "tok_s": 236.20301773779863,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c1-b931e06943f2",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 894.0,
+    "tokens_in": 0,
+    "seconds": 4.035242319107056,
+    "tok_s": 221.548033377542,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c1-6aaef5ccccd7",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 926.0,
+    "tokens_in": 0,
+    "seconds": 3.5328688621520996,
+    "tok_s": 262.10992712475417,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c1-9ae417d82936",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 894.0,
+    "tokens_in": 0,
+    "seconds": 3.5311522483825684,
+    "tok_s": 253.17514995551198,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c1-3439288842fd",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 874.0,
+    "tokens_in": 0,
+    "seconds": 4.038190841674805,
+    "tok_s": 216.43355509110017,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c1-b2d991458cb5",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 825.0,
+    "tokens_in": 0,
+    "seconds": 4.039451360702515,
+    "tok_s": 204.23565636312588,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c1-f02391a863f8",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 860.0,
+    "tokens_in": 0,
+    "seconds": 3.5313162803649902,
+    "tok_s": 243.5352519347579,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c1-5561adee49e7",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 946.0,
+    "tokens_in": 0,
+    "seconds": 4.0359416007995605,
+    "tok_s": 234.39387720887436,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c1-0339b058ed79",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 918.0,
+    "tokens_in": 0,
+    "seconds": 4.54039740562439,
+    "tok_s": 202.18494505851692,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c1-2df4fa566de1",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 905.0,
+    "tokens_in": 0,
+    "seconds": 4.539823532104492,
+    "tok_s": 199.3469555809972,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c1-bc99ce2c2612",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 895.0,
+    "tokens_in": 0,
+    "seconds": 4.033543586730957,
+    "tok_s": 221.8892595940349,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c1-2350dc23d54f",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 854.0,
+    "tokens_in": 0,
+    "seconds": 4.034165143966675,
+    "tok_s": 211.69187911833652,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c1-5811f9971d7f",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 963.0,
+    "tokens_in": 0,
+    "seconds": 5.5476531982421875,
+    "tok_s": 173.58691424783603,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c1-d579b7ea0a28",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 983.0,
+    "tokens_in": 0,
+    "seconds": 5.5500593185424805,
+    "tok_s": 177.11522410505495,
+    "gpu0_w": null,
+    "gpu1_w": null,
+    "cpu_pkg_w": null,
+    "gpu_j_per_tok": null,
+    "cpu_j_per_tok": null,
+    "power_limit_w": [
+      null,
+      null
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": false,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "GPU0: window not bracketed by samples",
+      "GPU1: window not bracketed by samples",
+      "CPU: list index out of range",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c1-411fdea41489",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 878.0,
+    "tokens_in": 0,
+    "seconds": 3.024851083755493,
+    "tok_s": 290.2622230612167,
+    "gpu0_w": 376.6315493237692,
+    "gpu1_w": 323.5951703430005,
+    "cpu_pkg_w": 86.81447077882788,
+    "gpu_j_per_tok": 2.4123935670371095,
+    "cpu_j_per_tok": 0.2990898018462381,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c1-63b8f7b5bb2d",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 839.0,
+    "tokens_in": 0,
+    "seconds": 3.0312142372131348,
+    "tok_s": 276.78677069403295,
+    "gpu0_w": 362.4045915945749,
+    "gpu1_w": 323.7444796752498,
+    "cpu_pkg_w": 102.29071251924849,
+    "gpu_j_per_tok": 2.478980731446559,
+    "cpu_j_per_tok": 0.3695650347115874,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c1-6fab2cd1df56",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 866.0,
+    "tokens_in": 0,
+    "seconds": 3.0282061100006104,
+    "tok_s": 285.9778920397943,
+    "gpu0_w": 356.0476047469506,
+    "gpu1_w": 325.5860032722652,
+    "cpu_pkg_w": 88.8707624636814,
+    "gpu_j_per_tok": 2.3835185410918593,
+    "cpu_j_per_tok": 0.3107609536869895,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c2-9a08300b61f5",
+    "concurrency": 2,
+    "kind": "decode",
+    "tokens_out": 1605.0,
+    "tokens_in": 0,
+    "seconds": 3.531388998031616,
+    "tok_s": 454.4953843642321,
+    "gpu0_w": 323.45167303867635,
+    "gpu1_w": 296.8886872178712,
+    "cpu_pkg_w": 104.66624855941869,
+    "gpu_j_per_tok": 1.3648991422086862,
+    "cpu_j_per_tok": 0.23029111440995245,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c2-a72c20da0cc9",
+    "concurrency": 2,
+    "kind": "decode",
+    "tokens_out": 1805.0,
+    "tokens_in": 0,
+    "seconds": 3.5303428173065186,
+    "tok_s": 511.28179143155506,
+    "gpu0_w": 329.72592889565766,
+    "gpu1_w": 299.21896657746254,
+    "cpu_pkg_w": 101.05234465814395,
+    "gpu_j_per_tok": 1.2301335702022873,
+    "cpu_j_per_tok": 0.19764510755449374,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c2-cfbe537517d3",
+    "concurrency": 2,
+    "kind": "decode",
+    "tokens_out": 1665.0,
+    "tokens_in": 0,
+    "seconds": 3.529879570007324,
+    "tok_s": 471.6874802605646,
+    "gpu0_w": 330.58535797510365,
+    "gpu1_w": 299.3168837660122,
+    "cpu_pkg_w": 86.33586578739327,
+    "gpu_j_per_tok": 1.3354228553896574,
+    "cpu_j_per_tok": 0.18303616144253082,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c4-3ec3a39acd01",
+    "concurrency": 4,
+    "kind": "decode",
+    "tokens_out": 3298.0,
+    "tokens_in": 0,
+    "seconds": 3.5330698490142822,
+    "tok_s": 933.4658359273972,
+    "gpu0_w": 341.6653839066356,
+    "gpu1_w": 305.52080972026084,
+    "cpu_pkg_w": 106.37970924963648,
+    "gpu_j_per_tok": 0.6933153509404205,
+    "cpu_j_per_tok": 0.1139620810481493,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c4-5b83b333ab41",
+    "concurrency": 4,
+    "kind": "decode",
+    "tokens_out": 3419.0,
+    "tokens_in": 0,
+    "seconds": 3.529491662979126,
+    "tok_s": 968.6947375062324,
+    "gpu0_w": 342.24194320044757,
+    "gpu1_w": 304.9650568229756,
+    "cpu_pkg_w": 94.17170649250926,
+    "gpu_j_per_tok": 0.6681227583516827,
+    "cpu_j_per_tok": 0.09721504912367028,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c4-add58729f8db",
+    "concurrency": 4,
+    "kind": "decode",
+    "tokens_out": 3120.0,
+    "tokens_in": 0,
+    "seconds": 3.530136823654175,
+    "tok_s": 883.8184342017579,
+    "gpu0_w": 342.5827311757592,
+    "gpu1_w": 306.6528319019209,
+    "cpu_pkg_w": 96.3791050628573,
+    "gpu_j_per_tok": 0.7345802462969139,
+    "cpu_j_per_tok": 0.10904853455552149,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c6-9380bc80ed4c",
+    "concurrency": 6,
+    "kind": "decode",
+    "tokens_out": 4675.0,
+    "tokens_in": 0,
+    "seconds": 3.533273458480835,
+    "tok_s": 1323.1356290237613,
+    "gpu0_w": 343.3094003329813,
+    "gpu1_w": 315.4280510514673,
+    "cpu_pkg_w": 105.82256174346637,
+    "gpu_j_per_tok": 0.4978608669698356,
+    "cpu_j_per_tok": 0.07997862004633992,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c6-6c9c73900faa",
+    "concurrency": 6,
+    "kind": "decode",
+    "tokens_out": 4405.0,
+    "tokens_in": 0,
+    "seconds": 3.532233238220215,
+    "tok_s": 1247.086390653961,
+    "gpu0_w": 334.2781892857224,
+    "gpu1_w": 315.34692142907045,
+    "cpu_pkg_w": 87.87956880142717,
+    "gpu_j_per_tok": 0.5209142811462607,
+    "cpu_j_per_tok": 0.07046790780496283,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c6-f33c348f5981",
+    "concurrency": 6,
+    "kind": "decode",
+    "tokens_out": 4745.0,
+    "tokens_in": 0,
+    "seconds": 3.5301711559295654,
+    "tok_s": 1344.1274630636274,
+    "gpu0_w": 340.2952452290568,
+    "gpu1_w": 314.57558742468143,
+    "cpu_pkg_w": 89.01305757416448,
+    "gpu_j_per_tok": 0.48720887761724,
+    "cpu_j_per_tok": 0.06622367299250013,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c8-b122aeecbde4",
+    "concurrency": 8,
+    "kind": "decode",
+    "tokens_out": 6566.0,
+    "tokens_in": 0,
+    "seconds": 4.034340858459473,
+    "tok_s": 1627.5273285924707,
+    "gpu0_w": 346.56224737451697,
+    "gpu1_w": 318.42976369053093,
+    "cpu_pkg_w": 104.49277787787453,
+    "gpu_j_per_tok": 0.40859038086945726,
+    "cpu_j_per_tok": 0.06420339372626246,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c8-728b8119d166",
+    "concurrency": 8,
+    "kind": "decode",
+    "tokens_out": 5778.0,
+    "tokens_in": 0,
+    "seconds": 3.5300536155700684,
+    "tok_s": 1636.8023348186202,
+    "gpu0_w": 345.80115911105935,
+    "gpu1_w": 316.7223872133675,
+    "cpu_pkg_w": 97.81876346676142,
+    "gpu_j_per_tok": 0.4047669851337568,
+    "cpu_j_per_tok": 0.05976211139605997,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c8-853b65d357ed",
+    "concurrency": 8,
+    "kind": "decode",
+    "tokens_out": 6193.0,
+    "tokens_in": 0,
+    "seconds": 4.0342607498168945,
+    "tok_s": 1535.1015673146774,
+    "gpu0_w": 350.379972529265,
+    "gpu1_w": 312.8299451457001,
+    "cpu_pkg_w": 91.49523078520362,
+    "gpu_j_per_tok": 0.4320299918884879,
+    "cpu_j_per_tok": 0.059602069813044625,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c12-440702b2a082",
+    "concurrency": 12,
+    "kind": "decode",
+    "tokens_out": 10299.0,
+    "tokens_in": 0,
+    "seconds": 4.54046630859375,
+    "tok_s": 2268.2692261160623,
+    "gpu0_w": 378.68248162837233,
+    "gpu1_w": 337.3405128740424,
+    "cpu_pkg_w": 87.28979918254878,
+    "gpu_j_per_tok": 0.3156693157312965,
+    "cpu_j_per_tok": 0.038482997599017084,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c12-6b65a8aad259",
+    "concurrency": 12,
+    "kind": "decode",
+    "tokens_out": 10279.0,
+    "tokens_in": 0,
+    "seconds": 4.540315389633179,
+    "tok_s": 2263.939642490444,
+    "gpu0_w": 376.5997861305459,
+    "gpu1_w": 342.291534204879,
+    "cpu_pkg_w": 95.33793352581188,
+    "gpu_j_per_tok": 0.31753996742802265,
+    "cpu_j_per_tok": 0.04211151734634387,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c12-d2bbde58d824",
+    "concurrency": 12,
+    "kind": "decode",
+    "tokens_out": 10493.0,
+    "tokens_in": 0,
+    "seconds": 4.541745901107788,
+    "tok_s": 2310.3450145550037,
+    "gpu0_w": 373.66269868729376,
+    "gpu1_w": 344.14622687408564,
+    "cpu_pkg_w": 104.0156026222022,
+    "gpu_j_per_tok": 0.31069339039807303,
+    "cpu_j_per_tok": 0.045021675103463575,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c16-8bd4e5717dd0",
+    "concurrency": 16,
+    "kind": "decode",
+    "tokens_out": 13377.0,
+    "tokens_in": 0,
+    "seconds": 5.047627925872803,
+    "tok_s": 2650.1557160013804,
+    "gpu0_w": 379.1948049405218,
+    "gpu1_w": 341.7762333996201,
+    "cpu_pkg_w": 100.31521926773722,
+    "gpu_j_per_tok": 0.2720485569911947,
+    "cpu_j_per_tok": 0.03785257547775165,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c16-611b509df4e8",
+    "concurrency": 16,
+    "kind": "decode",
+    "tokens_out": 13687.0,
+    "tokens_in": 0,
+    "seconds": 5.045337915420532,
+    "tok_s": 2712.801447484252,
+    "gpu0_w": 373.6081242955723,
+    "gpu1_w": 344.5670424468524,
+    "cpu_pkg_w": 95.74534773962286,
+    "gpu_j_per_tok": 0.2647356176429472,
+    "cpu_j_per_tok": 0.03529390174441754,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c16-b5cd892bc7d9",
+    "concurrency": 16,
+    "kind": "decode",
+    "tokens_out": 13075.0,
+    "tokens_in": 0,
+    "seconds": 5.041568994522095,
+    "tok_s": 2593.4386724066676,
+    "gpu0_w": 372.14568703199046,
+    "gpu1_w": 343.04950087388204,
+    "cpu_pkg_w": 89.95499531102234,
+    "gpu_j_per_tok": 0.2757710045413117,
+    "cpu_j_per_tok": 0.034685607285845556,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c1-9640d8da0b89",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 806.0,
+    "tokens_in": 0,
+    "seconds": 3.5300710201263428,
+    "tok_s": 228.32401824344964,
+    "gpu0_w": 358.26777930360345,
+    "gpu1_w": 324.0217118928494,
+    "cpu_pkg_w": 85.55761118013078,
+    "gpu_j_per_tok": 2.988251067257252,
+    "cpu_j_per_tok": 0.37472015357098915,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c1-bd97d6603acb",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 807.0,
+    "tokens_in": 0,
+    "seconds": 3.5333712100982666,
+    "tok_s": 228.39377807053467,
+    "gpu0_w": 357.1554873746739,
+    "gpu1_w": 317.83098001704855,
+    "cpu_pkg_w": 108.26005772405824,
+    "gpu_j_per_tok": 2.955362764668952,
+    "cpu_j_per_tok": 0.47400616005670865,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c1-006c54a85dc1",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 819.0,
+    "tokens_in": 0,
+    "seconds": 4.033287286758423,
+    "tok_s": 203.06016947734838,
+    "gpu0_w": 361.5081199556023,
+    "gpu1_w": 323.13327319412554,
+    "cpu_pkg_w": 87.65006260034423,
+    "gpu_j_per_tok": 3.371618347960162,
+    "cpu_j_per_tok": 0.43164576699578544,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c2-1063ffaf9a4a",
+    "concurrency": 2,
+    "kind": "decode",
+    "tokens_out": 1738.0,
+    "tokens_in": 0,
+    "seconds": 4.5421788692474365,
+    "tok_s": 382.6357459779997,
+    "gpu0_w": 330.8939006406735,
+    "gpu1_w": 297.1470088601401,
+    "cpu_pkg_w": 93.88079153450751,
+    "gpu_j_per_tok": 1.6413545156257408,
+    "cpu_j_per_tok": 0.2453529042210953,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c2-0140bac86436",
+    "concurrency": 2,
+    "kind": "decode",
+    "tokens_out": 1705.0,
+    "tokens_in": 0,
+    "seconds": 4.548593044281006,
+    "tok_s": 374.84118350480145,
+    "gpu0_w": 331.8265683396222,
+    "gpu1_w": 295.3549552223503,
+    "cpu_pkg_w": 101.9478218765151,
+    "gpu_j_per_tok": 1.6731926777569222,
+    "cpu_j_per_tok": 0.27197604308921736,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c2-09de07b9030b",
+    "concurrency": 2,
+    "kind": "decode",
+    "tokens_out": 1714.0,
+    "tokens_in": 0,
+    "seconds": 4.539182662963867,
+    "tok_s": 377.6010192286117,
+    "gpu0_w": 329.30578305763277,
+    "gpu1_w": 295.9495743297825,
+    "cpu_pkg_w": 94.63952641687928,
+    "gpu_j_per_tok": 1.655862472682749,
+    "cpu_j_per_tok": 0.25063366251027386,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c4-53beac027940",
+    "concurrency": 4,
+    "kind": "decode",
+    "tokens_out": 3385.0,
+    "tokens_in": 0,
+    "seconds": 4.538384675979614,
+    "tok_s": 745.8600893652421,
+    "gpu0_w": 343.4991185149726,
+    "gpu1_w": 310.0755207185415,
+    "cpu_pkg_w": 89.06027392406877,
+    "gpu_j_per_tok": 0.8762697569590208,
+    "cpu_j_per_tok": 0.11940613956145954,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c4-d2b836944cf8",
+    "concurrency": 4,
+    "kind": "decode",
+    "tokens_out": 3357.0,
+    "tokens_in": 0,
+    "seconds": 4.540853023529053,
+    "tok_s": 739.2884073995006,
+    "gpu0_w": 344.3536511452338,
+    "gpu1_w": 307.2582803823017,
+    "cpu_pkg_w": 100.27144242228705,
+    "gpu_j_per_tok": 0.8814042327805826,
+    "cpu_j_per_tok": 0.13563237488735821,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c4-6a716f06cd4a",
+    "concurrency": 4,
+    "kind": "decode",
+    "tokens_out": 3413.0,
+    "tokens_in": 0,
+    "seconds": 4.544536590576172,
+    "tok_s": 751.0116668611283,
+    "gpu0_w": 345.34290163889955,
+    "gpu1_w": 305.3872927648527,
+    "cpu_pkg_w": 100.67341441477753,
+    "gpu_j_per_tok": 0.8664714852213881,
+    "cpu_j_per_tok": 0.13405040008971436,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c6-3be9c72a6853",
+    "concurrency": 6,
+    "kind": "decode",
+    "tokens_out": 4816.0,
+    "tokens_in": 0,
+    "seconds": 4.540029287338257,
+    "tok_s": 1060.7861084578026,
+    "gpu0_w": 345.5220651122847,
+    "gpu1_w": 312.3537232793636,
+    "cpu_pkg_w": 90.1469879854333,
+    "gpu_j_per_tok": 0.62017760521778,
+    "cpu_j_per_tok": 0.08498130515348777,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c6-3c4cc502b7df",
+    "concurrency": 6,
+    "kind": "decode",
+    "tokens_out": 4898.0,
+    "tokens_in": 0,
+    "seconds": 4.541162729263306,
+    "tok_s": 1078.5783932465645,
+    "gpu0_w": 341.78755608968845,
+    "gpu1_w": 314.5490010034773,
+    "cpu_pkg_w": 86.5951669790722,
+    "gpu_j_per_tok": 0.6085200308134917,
+    "cpu_j_per_tok": 0.08028639134742654,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c6-182a7f5baff5",
+    "concurrency": 6,
+    "kind": "decode",
+    "tokens_out": 4698.0,
+    "tokens_in": 0,
+    "seconds": 4.548955678939819,
+    "tok_s": 1032.764513787243,
+    "gpu0_w": 343.92730389173244,
+    "gpu1_w": 315.3793536351322,
+    "cpu_pkg_w": 103.94688536946464,
+    "gpu_j_per_tok": 0.6383901157768543,
+    "cpu_j_per_tok": 0.10064916443370213,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c8-633f3f8d5fb5",
+    "concurrency": 8,
+    "kind": "decode",
+    "tokens_out": 6301.0,
+    "tokens_in": 0,
+    "seconds": 4.540840148925781,
+    "tok_s": 1387.6286751672192,
+    "gpu0_w": 349.2900692028305,
+    "gpu1_w": 315.24277139950334,
+    "cpu_pkg_w": 102.99327705992948,
+    "gpu_j_per_tok": 0.47889817535101953,
+    "cpu_j_per_tok": 0.07422250556152427,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c8-053a9ef0271d",
+    "concurrency": 8,
+    "kind": "decode",
+    "tokens_out": 6756.0,
+    "tokens_in": 0,
+    "seconds": 5.0428173542022705,
+    "tok_s": 1339.7272844653205,
+    "gpu0_w": 349.88970356053244,
+    "gpu1_w": 314.35005648114003,
+    "cpu_pkg_w": 100.39723963582338,
+    "gpu_j_per_tok": 0.49580221866330637,
+    "cpu_j_per_tok": 0.0749385645869648,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c8-46c39d610f15",
+    "concurrency": 8,
+    "kind": "decode",
+    "tokens_out": 6385.0,
+    "tokens_in": 0,
+    "seconds": 4.53849720954895,
+    "tok_s": 1406.8533492906038,
+    "gpu0_w": 350.47898299251807,
+    "gpu1_w": 314.0658090672609,
+    "cpu_pkg_w": 95.74962652040725,
+    "gpu_j_per_tok": 0.4723625190890515,
+    "cpu_j_per_tok": 0.06805942251812411,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c12-de3722efe937",
+    "concurrency": 12,
+    "kind": "decode",
+    "tokens_out": 10110.0,
+    "tokens_in": 0,
+    "seconds": 5.54859471321106,
+    "tok_s": 1822.0829818275163,
+    "gpu0_w": 377.59561303858806,
+    "gpu1_w": 342.1684070612031,
+    "cpu_pkg_w": 90.06330666901626,
+    "gpu_j_per_tok": 0.39502263468696736,
+    "cpu_j_per_tok": 0.0494287623380821,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c12-4eb3ce5685c3",
+    "concurrency": 12,
+    "kind": "decode",
+    "tokens_out": 10323.0,
+    "tokens_in": 0,
+    "seconds": 5.546145915985107,
+    "tok_s": 1861.2925365427259,
+    "gpu0_w": 380.3694606715236,
+    "gpu1_w": 345.4935111931719,
+    "cpu_pkg_w": 90.5943657676134,
+    "gpu_j_per_tok": 0.3899779092291189,
+    "cpu_j_per_tok": 0.04867282492621429,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c12-9b816ee5b851",
+    "concurrency": 12,
+    "kind": "decode",
+    "tokens_out": 10117.0,
+    "tokens_in": 0,
+    "seconds": 5.551233530044556,
+    "tok_s": 1822.477823216131,
+    "gpu0_w": 376.4155694417297,
+    "gpu1_w": 344.5996427288871,
+    "cpu_pkg_w": 91.6730591838414,
+    "gpu_j_per_tok": 0.3956235861889609,
+    "cpu_j_per_tok": 0.05030133042829884,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c16-3891de2f0f2b",
+    "concurrency": 16,
+    "kind": "decode",
+    "tokens_out": 13485.0,
+    "tokens_in": 0,
+    "seconds": 6.05985426902771,
+    "tok_s": 2225.3010388257467,
+    "gpu0_w": 379.286812684259,
+    "gpu1_w": 341.279211230751,
+    "cpu_pkg_w": 93.69571024147793,
+    "gpu_j_per_tok": 0.3238060879597847,
+    "cpu_j_per_tok": 0.04210473486810555,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c16-76015401f262",
+    "concurrency": 16,
+    "kind": "decode",
+    "tokens_out": 13767.0,
+    "tokens_in": 0,
+    "seconds": 6.0523152351379395,
+    "tok_s": 2274.6667126776374,
+    "gpu0_w": 378.2630860726209,
+    "gpu1_w": 343.61511802449263,
+    "cpu_pkg_w": 99.99303704265935,
+    "gpu_j_per_tok": 0.3173555932716623,
+    "cpu_j_per_tok": 0.04395942336754555,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c16-8c627bc6d0d1",
+    "concurrency": 16,
+    "kind": "decode",
+    "tokens_out": 13840.0,
+    "tokens_in": 0,
+    "seconds": 6.054197311401367,
+    "tok_s": 2286.017334442714,
+    "gpu0_w": 380.2599835466908,
+    "gpu1_w": 341.76943853249986,
+    "cpu_pkg_w": 94.6215787298589,
+    "gpu_j_per_tok": 0.31584599609136693,
+    "cpu_j_per_tok": 0.041391452857432405,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c1-128b79d4c368",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 801.0,
+    "tokens_in": 0,
+    "seconds": 3.0253984928131104,
+    "tok_s": 264.7585109541074,
+    "gpu0_w": 395.9664595555571,
+    "gpu1_w": 355.1351182218153,
+    "cpu_pkg_w": 87.53932181014163,
+    "gpu_j_per_tok": 2.836930813180039,
+    "cpu_j_per_tok": 0.3306383673736384,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c1-24736612c36d",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 874.0,
+    "tokens_in": 0,
+    "seconds": 3.02504825592041,
+    "tok_s": 288.92101085973394,
+    "gpu0_w": 394.8247422894433,
+    "gpu1_w": 354.8506696428712,
+    "cpu_pkg_w": 93.89520584507596,
+    "gpu_j_per_tok": 2.594741759007166,
+    "cpu_j_per_tok": 0.32498573075621845,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c1-cfbc7d25565f",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 811.0,
+    "tokens_in": 0,
+    "seconds": 3.534552812576294,
+    "tok_s": 229.44911082227446,
+    "gpu0_w": 387.3482530729028,
+    "gpu1_w": 348.2717376222446,
+    "cpu_pkg_w": 105.39476001527255,
+    "gpu_j_per_tok": 3.2060267658432555,
+    "cpu_j_per_tok": 0.4593382804473306,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c1-2a918dc69a7f",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 831.0,
+    "tokens_in": 0,
+    "seconds": 3.533745765686035,
+    "tok_s": 235.16122978322724,
+    "gpu0_w": 389.65873023896415,
+    "gpu1_w": 346.4049518285865,
+    "cpu_pkg_w": 92.72267542217571,
+    "gpu_j_per_tok": 3.130038411289385,
+    "cpu_j_per_tok": 0.39429405734800727,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c1-f8165dc60846",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 790.0,
+    "tokens_in": 0,
+    "seconds": 3.0321455001831055,
+    "tok_s": 260.5415867913639,
+    "gpu0_w": 412.4045202989842,
+    "gpu1_w": 367.8077081273874,
+    "cpu_pkg_w": 103.92955359883592,
+    "gpu_j_per_tok": 2.9945784779884255,
+    "cpu_j_per_tok": 0.39889813706423954,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c1-c997fe00f9c1",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 915.0,
+    "tokens_in": 0,
+    "seconds": 3.5340449810028076,
+    "tok_s": 258.9101171373215,
+    "gpu0_w": 412.2313733609859,
+    "gpu1_w": 366.72739883125786,
+    "cpu_pkg_w": 106.57484748118256,
+    "gpu_j_per_tok": 3.0086069281684242,
+    "cpu_j_per_tok": 0.41162874846121633,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c1-e5e6bc64f123",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 840.0,
+    "tokens_in": 0,
+    "seconds": 4.033841848373413,
+    "tok_s": 208.23820853034127,
+    "gpu0_w": 413.5686033146863,
+    "gpu1_w": 361.7688734575086,
+    "cpu_pkg_w": 94.91388492363114,
+    "gpu_j_per_tok": 3.7233199528761056,
+    "cpu_j_per_tok": 0.45579476309124006,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c1-786e085524c6",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 924.0,
+    "tokens_in": 0,
+    "seconds": 4.0333874225616455,
+    "tok_s": 229.08783689645122,
+    "gpu0_w": 415.73304360118334,
+    "gpu1_w": 363.499554394558,
+    "cpu_pkg_w": 98.0456161284196,
+    "gpu_j_per_tok": 3.4014577489243054,
+    "cpu_j_per_tok": 0.4279826352052758,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c1-09320dc7f7b5",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 878.0,
+    "tokens_in": 0,
+    "seconds": 3.5306501388549805,
+    "tok_s": 248.67941185606762,
+    "gpu0_w": 438.6027932929111,
+    "gpu1_w": 394.48004256676177,
+    "cpu_pkg_w": 102.97871030344635,
+    "gpu_j_per_tok": 3.350027369140837,
+    "cpu_j_per_tok": 0.4141022754350452,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c1-a04265aabb16",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 866.0,
+    "tokens_in": 0,
+    "seconds": 3.531973361968994,
+    "tok_s": 245.18871215869672,
+    "gpu0_w": 443.27831689748314,
+    "gpu1_w": 386.17071975128914,
+    "cpu_pkg_w": 92.88440963115565,
+    "gpu_j_per_tok": 3.382900580316753,
+    "cpu_j_per_tok": 0.37882824544972055,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c1-bf7b3669191f",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 877.0,
+    "tokens_in": 0,
+    "seconds": 4.541003465652466,
+    "tok_s": 193.12911928685125,
+    "gpu0_w": 437.84283936870787,
+    "gpu1_w": 390.1241220861593,
+    "cpu_pkg_w": 106.43911266325571,
+    "gpu_j_per_tok": 4.287116124757461,
+    "cpu_j_per_tok": 0.5511292810545239,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c1-9819f53a83fc",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 937.0,
+    "tokens_in": 0,
+    "seconds": 4.542514801025391,
+    "tok_s": 206.27340604118433,
+    "gpu0_w": 435.7124239484069,
+    "gpu1_w": 391.61061658777425,
+    "cpu_pkg_w": 97.43874951626853,
+    "gpu_j_per_tok": 4.010808064957238,
+    "cpu_j_per_tok": 0.4723766935656942,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c1-8fbedc0b3a2e",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 880.0,
+    "tokens_in": 0,
+    "seconds": 4.539352655410767,
+    "tok_s": 193.86024105244775,
+    "gpu0_w": 458.94412901865326,
+    "gpu1_w": 415.4704604780605,
+    "cpu_pkg_w": 99.66905521840476,
+    "gpu_j_per_tok": 4.510541123592981,
+    "cpu_j_per_tok": 0.5141283982590318,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-code-c1-686c40c476f2",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 922.0,
+    "tokens_in": 0,
+    "seconds": 4.041238069534302,
+    "tok_s": 228.14790520526006,
+    "gpu0_w": 460.872154272451,
+    "gpu1_w": 420.58774839891726,
+    "cpu_pkg_w": 87.64500469469087,
+    "gpu_j_per_tok": 3.8635458952749824,
+    "cpu_j_per_tok": 0.3841587088684353,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c1-0ea03349693f",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 896.0,
+    "tokens_in": 0,
+    "seconds": 5.047661304473877,
+    "tok_s": 177.50794792944038,
+    "gpu0_w": 440.7664944571401,
+    "gpu1_w": 412.13747862631806,
+    "cpu_pkg_w": 99.75837378512854,
+    "gpu_j_per_tok": 4.8048776577738845,
+    "cpu_j_per_tok": 0.5619938428040564,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  },
+  {
+    "phase": "decode-prose-c1-bd0dd2dc4314",
+    "concurrency": 1,
+    "kind": "decode",
+    "tokens_out": 917.0,
+    "tokens_in": 0,
+    "seconds": 5.044960975646973,
+    "tok_s": 181.76552889636628,
+    "gpu0_w": 444.90159257789423,
+    "gpu1_w": 416.84473655009236,
+    "cpu_pkg_w": 104.39158630923093,
+    "gpu_j_per_tok": 4.740977755024781,
+    "cpu_j_per_tok": 0.5743200426564371,
+    "power_limit_w": [
+      600.0,
+      575.0
+    ],
+    "idle_gpu_w": null,
+    "idle_cpu_w": null,
+    "gpu_j_per_tok_marginal": null,
+    "energy_source": "nvml",
+    "valid": true,
+    "notes": [
+      "Wall power unavailable: no metered plug known.",
+      "CPU RAPL cuts interpolate 1 s counters. GPU: whole NVML intervals plus 100 ms power trapezoids at partial edges; no pro-rata counter cuts. SMI uses receipt timestamps; residual bound in DESIGN.md."
+    ]
+  }
+]
