@@ -207,11 +207,8 @@ L1A_NOTE = ("Solid: decode_ss.py, all streams decoding, 1,024 forced tokens, one
              "Dashed: vllm bench serve, closed loop, ShareGPT reference-reply lengths / 256 tokens, mean of passes A and B, "
             "memory clock offset +4500 (r27-l1a-std-bench).\n"
             "Both: served v0.31.0 L1a launcher, 16 sequences, stock power, 2026-10-17.")
-BA4_NOTE = ("Solid: decode_ss.py, all streams decoding, 1,024 forced tokens, one code and one prose prompt, three runs per point; "
-            "served BA4 launcher, 2026-10-19, memory clock offset +4500 (r27-ba4-curves).\n"
-            "Dashed: vllm bench serve, closed loop, ShareGPT reference-reply lengths / 256 tokens, mean of passes A and B, "
-            "memory clock offset +4500; L1a launcher, 2026-10-17 (r27-l1a-std-bench), re-measure on BA4 in progress.\n"
-            "Both: v0.31.0, 16 sequences, stock power.")
+BA4_NOTE = ("decode_ss.py, all streams decoding, 1,024 forced tokens, one code and one prose prompt, three runs per point; "
+            "served v0.31.0 BA4 launcher, 16 sequences, stock power, memory clock offset +4500, 2026-10-19 (r27-ba4-curves).")
 
 
 def std_figure(rates, std, name, caption, rounds=("L1a", "L1a"),
@@ -278,15 +275,13 @@ def std_figure(rates, std, name, caption, rounds=("L1a", "L1a"),
 
 
 def figure_decode_scaling():
-    """The served 16-sequence figure: decode alone on the BA4 launcher (2026-10-19, solid) and R793's standard-benchmark
-    protocol on the L1a launcher (2026-10-17, dashed) until r27-ba4-std-bench replaces it; the legend names both."""
+    """The served 16-sequence figure: decode alone on the BA4 launcher (r27-ba4-curves, 2026-10-19). The standard
+    benchmark's dashed lines return when it is measured on BA4 (r27-ba4-std-bench)."""
     rates = {k: decode_ss_exact(R27C / f"decode-{k}.jsonl", R27_CONC) for k in ("code", "prose")}
-    std_figure(rates, std_bench(), "decode-scaling-16.svg",
-               "16 sequences: decode alone on the served BA4 launcher (r27-ba4-curves, 2026-10-19, solid) and vllm bench serve "
-               "on ShareGPT V3 and Spec-Bench on the L1a launcher (r27-l1a-std-bench, 2026-10-17, dashed), decode aggregate / "
-               "wall-clock output tok/s and per stream",
-               rounds=("BA4, 2026-10-19", "L1a, 2026-10-17"),
-               title="Decode alone (served BA4) against the standard benchmark (L1a, 2026-10-17)", note=BA4_NOTE)
+    std_figure(rates, None, "decode-scaling-16.svg",
+               "16 sequences: decode on the served BA4 launcher (r27-ba4-curves, 2026-10-19), decode aggregate and per stream",
+               rounds=("BA4, 2026-10-19", "BA4, 2026-10-19"),
+               title="Decode on the served BA4 launcher, 16 sequences", note=BA4_NOTE)
 
 
 def figure_decode_scaling_64():

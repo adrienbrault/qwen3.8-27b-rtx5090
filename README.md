@@ -1,43 +1,41 @@
 # Qwen3.8-27B on RTX 5090
 
+![Recipe card: served configuration, decode, prefill, KV pool and power, 2026-10-19](docs/img/recipe-card.png)
+
 Serving configuration, vLLM patches, launch scripts and measurements for [Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B), served as [nvidia/Qwen3.8-27B-NVFP4](https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4) by [vLLM](https://github.com/vllm-project/vllm) v0.31.0 with the patch chain in [patches-v0310/](patches-v0310/) and FlashInfer 0.7.0.post1 across two RTX 5090 cards. The window is 262,144 tokens, the KV cache is NVFP4, the checkpoint's own MTP head drafts 3 tokens, and vision, reasoning, tool calls and structured output are all on. The target workload is a few concurrent coding agents with long contexts. The one-card and older shapes are under [Other configurations](#other-configurations).
 
-Every number here was measured on one machine on the date given, and each links the write-up that names its raw results directory. None is an estimate. The index of experiments is [bench/RESULTS.md](bench/RESULTS.md), newest first.
+Every number in the text and tables was measured on one machine on the date given, and each links the write-up that names its raw results directory; the card's power figures are marked ≈ where they come from an earlier draw measurement. The index of experiments is [bench/RESULTS.md](bench/RESULTS.md), newest first.
 
 ## Numbers
 
-Decode and prefill on [scripts/serve-v031-ba4-daily.sh](scripts/serve-v031-ba4-daily.sh), image `vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan`, at stock power limits on 2026-10-19 23:39 to 23:53 UTC ([r27-ba4-curves](bench/results/r27-ba4-curves.md), results `2026-10-19-233406-r27-ba4-curves`, [driver](scripts/r27-ba4-curves.sh)). The standard benchmark was measured on the L1a launcher, [scripts/serve-v031-l1a-daily.sh](scripts/serve-v031-l1a-daily.sh), on 2026-10-17 09:31 to 12:09 UTC ([r27-l1a-std-bench](bench/results/r27-l1a-std-bench.md), results `2026-10-17-r27-l1a-std-bench-0930`, [driver](scripts/r27-l1a-std-bench.sh)); its re-measure on BA4 is in progress. [decode_ss.py](scripts/decode_ss.py) measures greedy, synchronized code and prose streams with 1,024 forced tokens, three runs per shape on one boot; `vllm bench serve` v0.30.0 with the request shim measures closed-loop ShareGPT V3 and Spec-Bench requests, two passes with a fresh boot per cell. Decode rate is tokens per second per stream while every stream is decoding, and decode aggregate is the sum over those concurrent streams; standard-benchmark output tok/s is a wall-clock rate including prefill and request turnover. Method: [How the numbers are measured](#how-the-numbers-are-measured).
+Measured on the served launcher [scripts/serve-v031-ba4-daily.sh](scripts/serve-v031-ba4-daily.sh), image `vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan`, at stock power limits on 2026-10-19 ([r27-ba4-curves](bench/results/r27-ba4-curves.md), results `2026-10-19-233406-r27-ba4-curves`). [decode_ss.py](scripts/decode_ss.py) runs greedy, synchronized code and prose streams with 1,024 forced tokens, three runs per shape. Decode rate is tokens per second per stream while every stream is decoding; decode aggregate is the sum over the concurrent streams. Method: [How the numbers are measured](#how-the-numbers-are-measured).
 
-![BA4 decode alone and the L1a standard benchmark, decode aggregate and wall-clock output tok/s at left, per stream at right](docs/img/decode-scaling-16.svg)
+![Decode aggregate and per-stream rate against concurrent streams, code and prose](docs/img/decode-scaling-16.svg)
 
-The solid blue and red lines show code and prose decode alone on BA4, with decode aggregate at left and per-stream rate at right. Dashed green and brown lines show ShareGPT V3 and Spec-Bench on the L1a launcher on 2026-10-17: wall-clock output tok/s at left and the mean of each pass's 1000 / TPOT p50 at right.
+Blue is code and red is prose; the left panel is decode aggregate, the right panel the rate of each stream.
 
-- One stream decodes 273.3 t/s of code and 225.3 of prose. The aggregate rises at every step to the served limit of 16 sequences: 2,646.7 t/s of code and 2,232.2 of prose at 16 streams, 165.4 and 139.5 per stream ([r27-ba4-curves](bench/results/r27-ba4-curves.md)).
-- The BA4 GEMM serves only verify steps of one sequence; from two streams on every `in_proj_ba` call runs the original GEMM ([r27 BA4](bench/results/r27-ba4.md)).
-- The rates depend on how many draft tokens the MTP head gets accepted, which depends on the text: 0.622 to 0.684 of the draft tokens on code and 0.465 to 0.504 on prose across the concurrency sweep ([r27-ba4-curves](bench/results/r27-ba4-curves.md)).
-- On the L1a launcher on 2026-10-17, at 16 streams, the standard benchmark read 1,702.0 / 1,970.8 wall-clock output tok/s and 120.3 / 133.2 per stream for ShareGPT V3 / Spec-Bench; time to first token p50 was 112.5 / 116.5 ms, the mean of the two pass medians ([r27-l1a-std-bench](bench/results/r27-l1a-std-bench.md)). The re-measure on BA4 is in progress.
-- The L1a measurements with the sequence limit raised to 64 are under [Other configurations](#l1a-at-64-sequences).
+- One stream decodes 273.3 t/s of code and 225.3 of prose.
+- At the 16-sequence limit the aggregate is 2,646.7 t/s of code and 2,232.2 of prose, 165.4 and 139.5 per stream.
+- The MTP head gets 0.62 to 0.68 of its draft tokens accepted on code and 0.47 to 0.50 on prose, which is most of the gap between the two.
 
 ![Cold prefill rate and decode rate at depth against prompt length](docs/img/prefill.svg)
 
-Cold prefill on the same boot runs at 9,582 t/s at 6.7K prompt tokens and 3,996 at 200K, because every full-attention layer reads the whole prefix for each chunk ([r27-ba4-curves](bench/results/r27-ba4-curves.md), [scripts/kv_capacity_probe.py](scripts/kv_capacity_probe.py), prompt tokens counted by the server). One code stream reads 259.4 t/s at a 60K filler budget and 219.6 at 200K, 19.6 % below its no-filler rate.
+Cold prefill runs at 9,582 t/s at 6.7K prompt tokens and 3,996 at 200K. One code stream decodes 259.4 t/s at 60K tokens of context and 219.6 at 200K.
 
 | | value | source |
 |---|---|---|
 | context window | 262,144 tokens | 2026-10-19, [r27-ba4-curves](bench/results/r27-ba4-curves.md) |
-| KV pool on the GPUs | 1,391,795 tokens, NVFP4, pinned at 14.86 GB per card, 16 sequences | 2026-10-19, [r27-ba4-curves](bench/results/r27-ba4-curves.md) |
-| free VRAM after the launcher's pre-warm | 3,919 / 3,921 MiB on the two cards | 2026-10-19, [r27-ba4-curves](bench/results/r27-ba4-curves.md) |
-| time to first token, cold prompt | 0.70 / 3.00 / 17.3 / 50.1 s at 6.7K / 25K / 100K / 200K prompt tokens | 2026-10-19, [r27-ba4-curves](bench/results/r27-ba4-curves.md) |
-| `vllm bench serve` v0.30.0, 16 streams, L1a launcher (re-measure on BA4 in progress) | 1,702.0 / 1,970.8 output tok/s, wall clock; 120.3 / 133.2 per stream (mean of each pass's 1000 / TPOT p50), ShareGPT V3 / Spec-Bench | 2026-10-17, [r27-l1a-std-bench](bench/results/r27-l1a-std-bench.md), results `2026-10-17-r27-l1a-std-bench-0930` |
-| time to first token, standard benchmark, 16 streams, L1a launcher (re-measure on BA4 in progress) | p50 112.5 / 116.5 ms; p99 501.7 / 285.4 ms, ShareGPT V3 / Spec-Bench, means of the two pass quantiles | 2026-10-17, [r27-l1a-std-bench](bench/results/r27-l1a-std-bench.md), results `2026-10-17-r27-l1a-std-bench-0930` |
+| KV pool on the GPUs | 1,391,795 tokens, NVFP4, 14.86 GB per card, 16 sequences | 2026-10-19, [r27-ba4-curves](bench/results/r27-ba4-curves.md) |
+| free VRAM after the launcher's pre-warm | 3,919 / 3,921 MiB | 2026-10-19, [r27-ba4-curves](bench/results/r27-ba4-curves.md) |
+| time to first token, cold prompt | 0.70 / 3.00 / 17.3 / 50.1 s at 6.7K / 25K / 100K / 200K tokens | 2026-10-19, [r27-ba4-curves](bench/results/r27-ba4-curves.md) |
 | KV tiers behind the pool | 16 GiB host RAM, then 300 GB of disk with LRU eviction, kept across restarts | 2026-10-19, [r27-ba4-curves](bench/results/r27-ba4-curves.md) |
-| fidelity vs the [bf16 model](https://huggingface.co/Qwen/Qwen3.8-27B), dense text, 555,549 positions | top-1 90.71 %, perplexity +1.901 % on four BA4 boots | 2026-10-19, [r27 BA4](bench/results/r27-ba4.md), results `2026-10-19-r27-audition-screen-070155-3532152`, `2026-10-19-r27-audition-screen-075049-955439` |
+| fidelity vs the [bf16 model](https://huggingface.co/Qwen/Qwen3.8-27B), dense text, 555,549 positions | top-1 90.71 %, perplexity +1.901 % | 2026-10-19, [r27 BA4](bench/results/r27-ba4.md) |
 
-Also passing (2026-10-19, [r27 BA4](bench/results/r27-ba4.md), results `2026-10-19-223642-ba4-lean-gate`, `2026-10-19-224947-ba4-lean-gate`, `2026-10-19-231840-ba4-lean-gate`, `2026-10-19-233300-ba4-promote`): GSM8K 5-shot T=0 0.905 over 200 problems, tool-eval 91.0 ± 1.4 (69 × 4), BA4 GEMM error on live operands equal to the correctly rounded bf16 product's, tool smoke 5 of 5, 96 of 96 BA4 rank-layers active at boot.
+Also passing (2026-10-19, [r27 BA4](bench/results/r27-ba4.md)): GSM8K 5-shot T=0 0.905 over 200 problems, tool-eval 91.0 ± 1.4 (69 × 4), tool smoke 5 of 5.
 
 ## Served configuration
 
-- Since 2026-10-20 ([r27 BA4](bench/results/r27-ba4.md)): weights [nvidia/Qwen3.8-27B-NVFP4](https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4), image `vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan` (vLLM v0.31.0, [patches-v0310/](patches-v0310/), FlashInfer 0.7.0.post1), port 8020. Launcher [scripts/serve-v031-ba4-daily.sh](scripts/serve-v031-ba4-daily.sh); [scripts/serve.sh](scripts/serve.sh) starts the same engine with the host paths as settings. Rollback: [scripts/serve-v031-l1a-daily.sh](scripts/serve-v031-l1a-daily.sh), the L1a launcher. Each promotion is a row in [docs/HISTORY.md](docs/HISTORY.md), and every flag is explained in [docs/CONFIG.md](docs/CONFIG.md).
+- Weights [nvidia/Qwen3.8-27B-NVFP4](https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4), image `vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan` (vLLM v0.31.0, [patches-v0310/](patches-v0310/), FlashInfer 0.7.0.post1), port 8020. Launcher [scripts/serve-v031-ba4-daily.sh](scripts/serve-v031-ba4-daily.sh); [scripts/serve.sh](scripts/serve.sh) starts the same engine with the host paths as settings. Promotions and rollbacks: [docs/HISTORY.md](docs/HISTORY.md); every flag: [docs/CONFIG.md](docs/CONFIG.md).
 - Tensor parallel 2, 16 sequences, 262,144-token window, NVFP4 KV pinned at 14.86 GB per card (`--kv-cache-memory-bytes`), linear-attention state cached in bf16.
 - The checkpoint's MTP head at 3 draft tokens (`qwen3_5_mtp`), with L1a's CPU upper-bound plan for pure draft decode (`VLLM_SM12X_DRAFT_UB_PLAN=1`).
 - The bf16 M=4 `in_proj_ba` call of the 48 GDN layers on the MTP verify step runs on a Triton GEMM (BA4, `VLLM_SM12X_BA_M4=1`), admitted per card from admission reports measured on the serving host's cards; a layer whose report does not match the device, code or weights keeps the original GEMM.
@@ -52,9 +50,9 @@ Also passing (2026-10-19, [r27 BA4](bench/results/r27-ba4.md), results `2026-10-
   - NVFP4 KV on `sm_120`, which upstream gates to SM100.
   - A pooled FlashInfer workspace, prefix-cache reuse under speculative decoding, the embedding table in pinned host RAM.
   - LRU eviction for the disk tier, which upstream lacks.
-  - FlashInfer main's `pcie_ipc` all-reduce as the two-card decode all-reduce, vendored as patch 0138 behind `VLLM_SM12X_PCIE_IPC_AR=1` and asserted at boot; served since 2026-09-05 ([R185](bench/results/r185-pcie-ipc-all-reduce.md)). Patch 0148 admits the MTP head to it.
+  - FlashInfer main's `pcie_ipc` all-reduce as the two-card decode all-reduce, vendored as patch 0138 behind `VLLM_SM12X_PCIE_IPC_AR=1` and asserted at boot ([R185](bench/results/r185-pcie-ipc-all-reduce.md)); patch 0148 admits the MTP head to it.
   - The prefix cache and the offload tiers hit under the MTP head, including the linear-attention state blocks: 0152, 0155, 0156 and the 0158 replay boundary are upstream in v0.31.0, 0154 is carried as a patch ([THIRD_PARTY.md](THIRD_PARTY.md)).
-  - [FlashInfer](https://github.com/flashinfer-ai/flashinfer) 0.7.0.post1, the version vLLM v0.31.0 pins, with patch 0136 turning back on the split-KV path that FlashInfer 0.7 turns off for an NVFP4 KV cache on SM12x ([r27](bench/results/r27-v031-splitkv.md)). FlashInfer 0.7 does not pick cuDNN for `bmm_fp8` on SM12x, so the cuDNN FP8 plan eviction that crashed 0.6.16 under CUDA graphs does not apply ([docs/GOTCHAS.md](docs/GOTCHAS.md)).
+  - [FlashInfer](https://github.com/flashinfer-ai/flashinfer) 0.7.0.post1, the version vLLM v0.31.0 pins, with patch 0136 turning back on the split-KV path that FlashInfer 0.7 turns off for an NVFP4 KV cache on SM12x ([r27](bench/results/r27-v031-splitkv.md)).
   - L1a plans pure MTP draft decode from the CPU sequence-length upper bound and orders consecutive plan copies with CUDA events (`VLLM_SM12X_DRAFT_UB_PLAN=1`); ACTIVE and USED log lines are required and INACTIVE fails the boot ([r27 L1a](bench/results/r27-l1a.md)).
   - BA4 serves the M=4 `in_proj_ba` product with a Triton kernel that reduces in FP32 and rounds once, and returns every other shape to the original GEMM (`VLLM_SM12X_BA_M4=1`, [patches-v0310/ba4/](patches-v0310/ba4/)). Each card admits each layer from its report; the boot log counts the ACTIVE rank-layers and an INACTIVE layer does not fail the boot ([r27 BA4](bench/results/r27-ba4.md)).
   - vLLM's `--enable-batch-sharded-sampling`, with patch 0147 so the flag does not fork the compile artifact ([R193e](bench/results/r193e-pin-and-bss.md)).
