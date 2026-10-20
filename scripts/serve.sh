@@ -12,6 +12,9 @@
 # unless BA4_INPUTS names a directory of admission reports for these GPUs, weights and image (bench/results/r27-ba4.md);
 # off, the BA4 image computes as the L1a image does. NO_BLOCK_DROP=1 (default) puts "disable_eagle_block_drop":true in the
 # MTP speculative config as the served launcher does (bench/results/r27-no-block-drop.md); NO_BLOCK_DROP=0 leaves vLLM's drop on.
+# PCIE_IPC=1 (default) runs the served pcie_ipc all-reduce, which needs GPU peer-to-peer (driver 610.57.04 with the QuixiAI
+# modules, scripts/gpu-p2p-610.sh); PCIE_IPC=0 leaves it off, as the serving host's experiment boots do, and vLLM's own
+# all-reduce backends carry the collectives (docs/CONFIG.md).
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 SERVED_LAUNCHER=$ROOT/scripts/serve-v031-nbd-daily.sh
@@ -20,7 +23,7 @@ die(){ echo "serve.sh: FAILED: $*" >&2; exit 1; }
 # Settings: remember what the environment sets (set-but-empty counts, so KV_TIER_DIR= turns off a tier the file enables),
 # source the file, then put the environment values back on top.
 KNOBS=(MODEL_DIR CACHE_DIR PORT BIND GPUS NAME IMAGE SERVED_NAME SERVED_ALIAS KV_TIER_DIR KV_TIER_CAP_GB POWER_LIMIT_W
-       DOCKER HEALTH_TIMEOUT BA4_INPUTS NO_BLOCK_DROP)
+       DOCKER HEALTH_TIMEOUT BA4_INPUTS NO_BLOCK_DROP PCIE_IPC)
 declare -A FROM_ENV=()
 for k in "${KNOBS[@]}"; do if [ -n "${!k+x}" ]; then FROM_ENV[$k]=${!k}; fi; done
 ENV_FILE=${SERVE_ENV:-$ROOT/serve.env}
@@ -47,6 +50,7 @@ KV_TIER_CAP_GB=${KV_TIER_CAP_GB:-300}
 POWER_LIMIT_W=${POWER_LIMIT_W:-}
 BA4_INPUTS=${BA4_INPUTS:-}               # empty: BA4 off; a directory: ba4-rank0.json, ba4-rank1.json and binding.json
 NO_BLOCK_DROP=${NO_BLOCK_DROP:-1}        # 1: keep the last full-attention block of a prefix hit (served); 0: vLLM's default drop
+PCIE_IPC=${PCIE_IPC:-1}                  # 1: pcie_ipc all-reduce, needs GPU peer-to-peer (served); 0: vLLM's CUSTOM/PYNCCL all-reduce
 DOCKER=${DOCKER:-docker}                 # "sudo docker" where the user is not in the docker group
 HEALTH_TIMEOUT=${HEALTH_TIMEOUT:-1500}   # seconds (the serving host waits 25 minutes); a first boot compiles kernels
 read -r -a DK <<< "$DOCKER"
@@ -86,6 +90,11 @@ for v in MODEL_DIR CACHE_DIR KV_TIER_DIR BA4_INPUTS; do case "${!v}" in ''|/*) ;
 # "SM12X BA4 INACTIVE" for that layer, which then runs the original GEMM. The served launcher warns on that, it does not fail.
 case "$NO_BLOCK_DROP" in 1) SPEC='{"method":"qwen3_5_mtp","num_speculative_tokens":3,"disable_eagle_block_drop":true}';;
   0) SPEC='{"method":"qwen3_5_mtp","num_speculative_tokens":3}';; *) die "NO_BLOCK_DROP must be 0 or 1 (got $NO_BLOCK_DROP)";; esac
+# pcie_ipc (patch 0138) with the MTP drafter admitted on it (0148). It needs vLLM's CustomAllreduce, which disables itself when
+# its peer-to-peer test fails; pcie_ipc then disables itself too and the boot checks below fail. Off, as on the serving host's
+# experiment boots with PCIE_IPC unset, neither variable is passed and the boot must not show pcie_ipc enabled.
+case "$PCIE_IPC" in 1) PCIE_RUN=(-e VLLM_SM12X_PCIE_IPC_AR=1 -e VLLM_SM12X_PCIE_IPC_MTP=1);; 0) PCIE_RUN=();;
+  *) die "PCIE_IPC must be 0 or 1 (got $PCIE_IPC)";; esac
 BA4_RUN=()
 if [ -n "$BA4_INPUTS" ]; then
   case "$IMAGE" in *-BA4-*) ;; *) die "BA4_INPUTS is set but IMAGE=$IMAGE is not a BA4 image";; esac
@@ -118,7 +127,7 @@ RUN=("${DK[@]}" run -d --name "$NAME" --restart unless-stopped --oom-score-adj -
   -e NCCL_P2P_LEVEL=SYS -e VLLM_SM12X_NVFP4_XQA=0 -e VLLM_SM12X_DFLASH_GRAPHS=1
   -e VLLM_SM12X_NVFP4_PREFILL_SPLIT_KV=1                 # 0136: undo FlashInfer 0.7's split-KV-off guard for NVFP4 KV on SM12x (r27)
   -e VLLM_SM12X_DRAFT_UB_PLAN=1                         # L1a: plan q_len=1 draft decode from the CPU sequence-length upper bound
-  -e VLLM_SM12X_PCIE_IPC_AR=1 -e VLLM_SM12X_PCIE_IPC_MTP=1   # pcie_ipc all-reduce (0138), MTP drafter admitted on it (0148)
+  "${PCIE_RUN[@]}"                                        # PCIE_IPC above: pcie_ipc all-reduce (0138), MTP drafter on it (0148)
   -e VLLM_USE_V2_MODEL_RUNNER=1                           # the runner the r27 screen and qualify runs booted
   "${BA4_RUN[@]}"                                         # BA4: env and the read-only reports mount, when BA4_INPUTS is set
   -v "$CACHE_DIR/torch_compile_qwen38_v0280nv":/root/.cache/vllm/torch_compile_cache   # subdir names match the serving host
@@ -149,6 +158,7 @@ if [ "$MODE" = print ]; then
   printf '%q ' "${RUN[@]}"; echo
   [ -n "$KV_TIER_DIR" ] || echo "# disk KV tier off (set KV_TIER_DIR to enable)" >&2
   [ -n "$BA4_INPUTS" ] || echo "# BA4 layer off (set BA4_INPUTS to enable)" >&2
+  [ "$PCIE_IPC" = 1 ] || echo "# pcie_ipc all-reduce off (PCIE_IPC=0)" >&2
   [ -z "$POWER_LIMIT_W" ] || echo "# after the boot checks: sudo nvidia-smi -i <each of ${GPUS}> -pl $POWER_LIMIT_W" >&2
   exit 0
 fi
@@ -163,6 +173,16 @@ NGPU=$(nvidia-smi -L 2>/dev/null | grep -c '^GPU ' || true)
 [ "${NGPU:-0}" -ge 2 ] || die "nvidia-smi sees ${NGPU:-0} GPU(s); this configuration needs two"
 for i in "${GPU_LIST[@]}"; do [ "$i" -lt "$NGPU" ] 2>/dev/null || die "GPUS=$GPUS: no GPU $i (nvidia-smi sees $NGPU)"; done
 [ "$GPUS" != all ] || mapfile -t GPU_LIST < <(seq 0 $((NGPU - 1)))
+# pcie_ipc needs peer-to-peer between the cards. The stock GeForce driver reports CNS (chipset not supported) here; the boot
+# would then come up without pcie_ipc and fail its checks. A matrix this script cannot parse is left to the boot checks.
+if [ "$PCIE_IPC" = 1 ]; then
+  P2P=$(nvidia-smi topo -p2p r 2>/dev/null || true)
+  for i in "${GPU_LIST[@]}"; do for j in "${GPU_LIST[@]}"; do
+    [ "$i" != "$j" ] || continue
+    st=$(awk -v r="GPU$i" -v c="$j" '$1 == r {print $(c + 2); exit}' <<< "$P2P")
+    [ -z "$st" ] || [ "$st" = OK ] || die "nvidia-smi topo -p2p r reports '$st' for GPU $i -> GPU $j; the pcie_ipc all-reduce needs peer-to-peer (driver 610.57.04 with the QuixiAI modules, scripts/gpu-p2p-610.sh), or set PCIE_IPC=0"
+  done; done
+fi
 # Tokenizer guard, as serve-v0280-daily.sh does it: a tokenizer.json that carries a truncation setting cuts prompts short,
 # so the setting is removed in place and the original kept next to it.
 if ! grep -qE '"truncation": *null' "$MODEL_DIR/tokenizer.json"; then
@@ -221,16 +241,18 @@ NEED=("linear-V-scale store overlay ACTIVE"             # 0102: without it NVFP4
       "as specified by kv_cache_memory_bytes"           # the byte pin, not utilization, sized the pool
       "int workspace shrunk 8 MiB -> 1 MiB"             # 0131
       "Setting attention block size to 1472 tokens"
-      "Offloader set to UVAOffloader" "Total CPU offloaded parameters: 1.18"
-      "PCIe IPC all-reduce enabled" "Using ['PCIE_IPC', 'CUSTOM', 'PYNCCL'] all-reduce backends"
-      "SM12X PCIe IPC: MTP drafter admitted" "Batch-sharded sampling enabled"
+      "Offloader set to UVAOffloader" "Total CPU offloaded parameters: 1.18" "Batch-sharded sampling enabled"
       "re-enabled FlashInfer split-KV"                    # 0136 on (r27); 0158's replay boundary is upstream in v0.31 and logs nothing
       "SM12X draft UB plan ACTIVE: VLLM_SM12X_DRAFT_UB_PLAN=1"
       "SM12X draft UB plan USED")                        # L1a: enabled and used by the draft-decode planner
 [ -z "$KV_TIER_DIR" ] || NEED+=("OffloadingConnector")
+NOT=("decode_backend=xqa" "SM12X draft UB plan INACTIVE")
+if [ "$PCIE_IPC" = 1 ]; then   # a silent fallback to vLLM's own all-reduce is what these guard against
+  NEED+=("PCIe IPC all-reduce enabled" "Using ['PCIE_IPC', 'CUSTOM', 'PYNCCL'] all-reduce backends" "SM12X PCIe IPC: MTP drafter admitted")
+else NOT+=("PCIe IPC all-reduce enabled"); fi
 bad=0
 for l in "${NEED[@]}"; do grep -qaF -- "$l" <<< "$LOG" || { echo "boot log lacks: $l" >&2; bad=1; }; done
-for l in "decode_backend=xqa" "SM12X draft UB plan INACTIVE"; do
+for l in "${NOT[@]}"; do
   if grep -qaF -- "$l" <<< "$LOG"; then echo "boot log shows: $l" >&2; bad=1; fi
 done
 VERS=$("${DK[@]}" exec "$NAME" python3 -c 'import vllm, flashinfer; print(vllm.__version__, flashinfer.__version__)' 2>/dev/null || true)
@@ -249,6 +271,7 @@ if [ -n "$BA4_INPUTS" ]; then   # as the served launcher: 48 layers x 2 ranks, a
   BA4_DESC="$BA4_A/96 active"
   [ "$BA4_A" = 96 ] && [ "$BA4_I" = 0 ] || echo "WARN: BA4 $BA4_A/96 rank-layers active, $BA4_I INACTIVE lines (those layers run the original GEMM)" >&2
 fi
+AR=$(grep -aoE "Using \[[^]]*\] all-reduce backends" <<< "$LOG" | head -1 | sed -E "s/^Using \[(.*)\].*/\1/; s/[' ]//g" || true)
 POOL=$(grep -a 'GPU KV cache size' <<< "$LOG" | tail -1 | grep -oE 'cache size: [0-9,]+' | tr -dc 0-9 || true)
 [ "$POOL" = 1391795 ] || echo "WARN: KV pool ${POOL:-?} tokens; the served boots read 1,391,795 at this pin (R234)" >&2
 if [ -n "$KV_TIER_DIR" ]; then   # a host that cannot pin 16 GiB gets fewer CPU-tier blocks, and long prompts stop being tier-served
@@ -264,4 +287,4 @@ if [ -n "$POWER_LIMIT_W" ]; then
   done
 fi
 echo "UP: http://$HOST:$PORT/v1, model $SERVED_NAME${SERVED_ALIAS:+ (alias $SERVED_ALIAS)}, KV pool ${POOL:-?} tokens," \
-     "disk tier ${KV_TIER_DIR:-off}, BA4 $BA4_DESC, block drop $([ "$NO_BLOCK_DROP" = 1 ] && echo off || echo on)${POWER_LIMIT_W:+, power limit $POWER_LIMIT_W W}"
+     "disk tier ${KV_TIER_DIR:-off}, BA4 $BA4_DESC, all-reduce ${AR:-?}, block drop $([ "$NO_BLOCK_DROP" = 1 ] && echo off || echo on)${POWER_LIMIT_W:+, power limit $POWER_LIMIT_W W}"
