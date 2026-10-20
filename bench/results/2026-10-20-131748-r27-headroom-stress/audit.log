@@ -1,0 +1,20 @@
+-rw-r--r-- 1 adrienbrault adrienbrault 50351112 Oct 20 13:23 big0.png
+-rw-r--r-- 1 adrienbrault adrienbrault 50351112 Oct 20 13:23 big1.png
+-rw-r--r-- 1 adrienbrault adrienbrault 50351112 Oct 20 13:23 big2.png
+-rw-r--r-- 1 adrienbrault adrienbrault 50351112 Oct 20 13:23 big3.png
+2026-10-20T13:24:39+00:00 [r27-headroom-stress] --- pin 16900000000: tier wiped, boot ---
+2026-10-20T13:27:10+00:00 [r27-headroom-stress] [16900000000] UP: Pool 1583674, min free VRAM 1431 MiB BA4 96/96 active 
+2026-10-20T13:28:00+00:00 [r27-headroom-stress] [16900000000] c16: "ss_agg_tps_median": 2588.7  prefill: {"ctx": 120000, "conc": 1, "seed": 2837, "max_kv_usage_pct": 9.8, "max_running": 2, "preemptions": 0, "requests": [[20.3
+2026-10-20T13:28:00+00:00 [r27-headroom-stress] [16900000000] img12: RESULT {"tag": "img12", "ok": true, "images": 16, "s": 41.2, "usage": {"prompt_tokens": 30964, "total_tokens": 31092, "completion_tokens": 128, "prompt_tokens_details": {"cached_tokens": 0, "created_c
+2026-10-20T13:28:00+00:00 [r27-headroom-stress] [16900000000] big4: RESULT {"tag": "big4", "ok": true, "images": 4, "s": 41.3, "usage": {"prompt_tokens": 65564, "total_tokens": 65649, "completion_tokens": 85, "prompt_tokens_details": {"cached_tokens": 0, "created_cache_tokens": 64768, "multimodal_tokens": {"image": 65536}}, "c
+2026-10-20T13:28:00+00:00 [r27-headroom-stress] [16900000000] min free VRAM 99 MiB over 96 samples, engine OOM/CUDA-error lines: 0, all requests ok: 1
+2026-10-20T13:28:47+00:00 [r27-headroom-stress] --- pin 15900000000: tier wiped, boot ---
+2026-10-20T13:31:18+00:00 [r27-headroom-stress] [15900000000] UP: Pool 1490437, min free VRAM 2559 MiB BA4 96/96 active 
+2026-10-20T13:32:07+00:00 [r27-headroom-stress] [15900000000] c16: "ss_agg_tps_median": 2683.7  prefill: {"ctx": 120000, "conc": 1, "seed": 3085, "max_kv_usage_pct": 10.6, "max_running": 2, "preemptions": 0, "requests": [[21.
+2026-10-20T13:32:07+00:00 [r27-headroom-stress] [15900000000] img12: RESULT {"tag": "img12", "ok": true, "images": 16, "s": 41.4, "usage": {"prompt_tokens": 30964, "total_tokens": 31092, "completion_tokens": 128, "prompt_tokens_details": {"cached_tokens": 0, "created_c
+2026-10-20T13:32:07+00:00 [r27-headroom-stress] [15900000000] big4: RESULT {"tag": "big4", "ok": true, "images": 4, "s": 41.2, "usage": {"prompt_tokens": 65564, "total_tokens": 65637, "completion_tokens": 73, "prompt_tokens_details": {"cached_tokens": 0, "created_cache_tokens": 64768, "multimodal_tokens": {"image": 65536}}, "c
+2026-10-20T13:32:07+00:00 [r27-headroom-stress] [15900000000] min free VRAM 1227 MiB over 96 samples, engine OOM/CUDA-error lines: 0, all requests ok: 1
+2026-10-20T13:32:55+00:00 [r27-headroom-stress] VERDICT PASS 15.90 GB (16.90 failed)
+attempt 1 FAILED: 
+DAILY RESTORED attempt 2
+2026-10-20T13:42:11+00:00 [r27-headroom-stress] === PASS 15.90 GB (16.90 failed) ===

@@ -1,0 +1,19 @@
+-rw-r--r-- 1 adrienbrault adrienbrault 50351112 Oct 20 13:57 big0.png
+-rw-r--r-- 1 adrienbrault adrienbrault 50351112 Oct 20 13:57 big1.png
+-rw-r--r-- 1 adrienbrault adrienbrault 50351112 Oct 20 13:57 big2.png
+-rw-r--r-- 1 adrienbrault adrienbrault 50351112 Oct 20 13:57 big3.png
+2026-10-20T13:57:49+00:00 [r27-headroom-stress] --- pin 16020000000: tier wiped, boot ---
+2026-10-20T14:00:20+00:00 [r27-headroom-stress] [16020000000] UP: Pool 1501247, min free VRAM 2403 MiB BA4 96/96 active 
+2026-10-20T14:01:09+00:00 [r27-headroom-stress] [16020000000] c16: "ss_agg_tps_median": 2629.0  prefill: {"ctx": 120000, "conc": 1, "seed": 4827, "max_kv_usage_pct": 10.5, "max_running": 2, "preemptions": 0, "requests": [[21.
+2026-10-20T14:01:09+00:00 [r27-headroom-stress] [16020000000] img12: RESULT {"tag": "img12", "ok": true, "images": 16, "s": 41.4, "usage": {"prompt_tokens": 30964, "total_tokens": 31092, "completion_tokens": 128, "prompt_tokens_details": {"cached_tokens": 0, "created_c
+2026-10-20T14:01:09+00:00 [r27-headroom-stress] [16020000000] big4: RESULT {"tag": "big4", "ok": true, "images": 4, "s": 41.2, "usage": {"prompt_tokens": 65564, "total_tokens": 65648, "completion_tokens": 84, "prompt_tokens_details": {"cached_tokens": 0, "created_cache_tokens": 64768, "multimodal_tokens": {"image": 65536}}, "c
+2026-10-20T14:01:09+00:00 [r27-headroom-stress] [16020000000] min free VRAM 925 MiB over 96 samples, engine OOM/CUDA-error lines: 0, all requests ok: 1
+2026-10-20T14:01:57+00:00 [r27-headroom-stress] --- pin 16020000000: tier wiped, boot ---
+2026-10-20T14:04:30+00:00 [r27-headroom-stress] [16020000000] UP: Pool 1501247, min free VRAM 2523 MiB BA4 96/96 active 
+2026-10-20T14:05:20+00:00 [r27-headroom-stress] [16020000000] c16: "ss_agg_tps_median": 2660.6  prefill: {"ctx": 120000, "conc": 1, "seed": 5077, "max_kv_usage_pct": 10.3, "max_running": 2, "preemptions": 0, "requests": [[20.
+2026-10-20T14:05:20+00:00 [r27-headroom-stress] [16020000000] img12: RESULT {"tag": "img12", "ok": true, "images": 16, "s": 41.4, "usage": {"prompt_tokens": 30964, "total_tokens": 31092, "completion_tokens": 128, "prompt_tokens_details": {"cached_tokens": 0, "created_c
+2026-10-20T14:05:20+00:00 [r27-headroom-stress] [16020000000] big4: RESULT {"tag": "big4", "ok": true, "images": 4, "s": 41.2, "usage": {"prompt_tokens": 65564, "total_tokens": 65648, "completion_tokens": 84, "prompt_tokens_details": {"cached_tokens": 0, "created_cache_tokens": 64768, "multimodal_tokens": {"image": 65536}}, "c
+2026-10-20T14:05:20+00:00 [r27-headroom-stress] [16020000000] min free VRAM 1047 MiB over 96 samples, engine OOM/CUDA-error lines: 0, all requests ok: 1
+2026-10-20T14:06:07+00:00 [r27-headroom-stress] VERDICT FAIL pins [16020000000 16020000000]
+DAILY RESTORED attempt 1
+2026-10-20T14:10:24+00:00 [r27-headroom-stress] === FAIL pins [16020000000 16020000000] ===

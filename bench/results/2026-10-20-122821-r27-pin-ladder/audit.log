@@ -1,0 +1,62 @@
+2026-10-20T12:28:21+00:00 === r27-pin-ladder start: 15.90 / 16.90 (17.90 if 16.90 qualifies), 3 boots each, verified-cold stress ===
+2026-10-20T12:29:06+00:00 --- P1590-1: pin 15900000000 (14.81 GiB), seeds 33282/33382, tier wiped ---
+2026-10-20T12:31:38+00:00 [P1590-1] BOOT OK  pool=1490437  free after pre-warm=2631 MiB
+2026-10-20T12:33:24+00:00 [P1590-1 five120k] {"ctx": 120000, "conc": 5, "seed": 33282, "max_kv_usage_pct": 37.2, "max_running": 5, "preemptions": 0, "requests": [[105.9, 100053], [104.5, 100076], [104.6, 99957], [103.4, 100040], [104.6, 100027]]}
+2026-10-20T12:34:19+00:00 [P1590-1 one250k] {"ctx": 250000, "conc": 1, "seed": 33382, "max_kv_usage_pct": 14.5, "max_running": 1, "preemptions": 0, "requests": [[54.3, 208166]]}
+2026-10-20T12:34:19+00:00 [P1590-1] cold verified (3834 tok/s)  free DURING stress: min=2631 MiB over 80 samples
+2026-10-20T12:35:06+00:00 --- P1590-2: pin 15900000000 (14.81 GiB), seeds 33283/33383, tier wiped ---
+2026-10-20T12:37:38+00:00 [P1590-2] BOOT OK  pool=1490437  free after pre-warm=2879 MiB
+2026-10-20T12:39:25+00:00 [P1590-2 five120k] {"ctx": 120000, "conc": 5, "seed": 33283, "max_kv_usage_pct": 37.6, "max_running": 5, "preemptions": 0, "requests": [[105.7, 99915], [106.9, 100030], [104.5, 100074], [105.1, 100036], [104.6, 100067]]}
+2026-10-20T12:40:20+00:00 [P1590-2 one250k] {"ctx": 250000, "conc": 1, "seed": 33383, "max_kv_usage_pct": 14.5, "max_running": 1, "preemptions": 0, "requests": [[54.4, 208444]]}
+2026-10-20T12:40:20+00:00 [P1590-2] cold verified (3832 tok/s)  free DURING stress: min=2877 MiB over 81 samples
+2026-10-20T12:41:07+00:00 --- P1590-3: pin 15900000000 (14.81 GiB), seeds 33284/33384, tier wiped ---
+2026-10-20T12:43:38+00:00 [P1590-3] BOOT OK  pool=1490437  free after pre-warm=2561 MiB
+2026-10-20T12:45:26+00:00 [P1590-3 five120k] {"ctx": 120000, "conc": 5, "seed": 33284, "max_kv_usage_pct": 37.4, "max_running": 5, "preemptions": 0, "requests": [[107.4, 99977], [106.4, 100022], [107.0, 100122], [105.6, 100063], [107.5, 100040]]}
+2026-10-20T12:46:21+00:00 [P1590-3 one250k] {"ctx": 250000, "conc": 1, "seed": 33384, "max_kv_usage_pct": 14.5, "max_running": 1, "preemptions": 0, "requests": [[54.4, 208378]]}
+2026-10-20T12:46:21+00:00 [P1590-3] cold verified (3830 tok/s)  free DURING stress: min=2561 MiB over 81 samples
+2026-10-20T12:47:09+00:00 --- P1690-1: pin 16900000000 (15.74 GiB), seeds 33482/33582, tier wiped ---
+2026-10-20T12:49:40+00:00 [P1690-1] BOOT OK  pool=1583674  free after pre-warm=1611 MiB
+2026-10-20T12:51:27+00:00 [P1690-1 five120k] {"ctx": 120000, "conc": 5, "seed": 33482, "max_kv_usage_pct": 35.0, "max_running": 5, "preemptions": 0, "requests": [[104.5, 100115], [104.4, 99967], [102.7, 100008], [106.7, 100059], [106.7, 99955]]}
+2026-10-20T12:52:22+00:00 [P1690-1 one250k] {"ctx": 250000, "conc": 1, "seed": 33582, "max_kv_usage_pct": 13.7, "max_running": 1, "preemptions": 0, "requests": [[54.4, 208419]]}
+2026-10-20T12:52:22+00:00 [P1690-1] cold verified (3831 tok/s)  free DURING stress: min=1611 MiB over 81 samples
+2026-10-20T12:53:09+00:00 --- P1690-2: pin 16900000000 (15.74 GiB), seeds 33483/33583, tier wiped ---
+2026-10-20T12:55:40+00:00 [P1690-2] BOOT OK  pool=1583674  free after pre-warm=1553 MiB
+2026-10-20T12:57:27+00:00 [P1690-2 five120k] {"ctx": 120000, "conc": 5, "seed": 33483, "max_kv_usage_pct": 35.2, "max_running": 5, "preemptions": 0, "requests": [[106.5, 99825], [105.7, 99900], [104.4, 99949], [106.6, 100029], [104.2, 100105]]}
+2026-10-20T12:58:22+00:00 [P1690-2 one250k] {"ctx": 250000, "conc": 1, "seed": 33583, "max_kv_usage_pct": 13.7, "max_running": 1, "preemptions": 0, "requests": [[54.4, 208443]]}
+2026-10-20T12:58:22+00:00 [P1690-2] cold verified (3832 tok/s)  free DURING stress: min=1553 MiB over 80 samples
+2026-10-20T12:59:09+00:00 --- P1690-3: pin 16900000000 (15.74 GiB), seeds 33484/33584, tier wiped ---
+2026-10-20T13:02:04+00:00 [P1690-3] BOOT OK  pool=1583674  free after pre-warm=1181 MiB
+2026-10-20T13:03:52+00:00 [P1690-3 five120k] {"ctx": 120000, "conc": 5, "seed": 33484, "max_kv_usage_pct": 35.1, "max_running": 5, "preemptions": 0, "requests": [[105.5, 100010], [105.8, 99997], [108.0, 99894], [106.4, 99945], [108.1, 99857]]}
+2026-10-20T13:04:47+00:00 [P1690-3 one250k] {"ctx": 250000, "conc": 1, "seed": 33584, "max_kv_usage_pct": 13.7, "max_running": 1, "preemptions": 0, "requests": [[54.3, 208438]]}
+2026-10-20T13:04:47+00:00 [P1690-3] cold verified (3839 tok/s)  free DURING stress: min=1181 MiB over 81 samples
+2026-10-20T13:05:34+00:00 --- P1790-1: pin 17900000000 (16.67 GiB), seeds 33682/33782, tier wiped ---
+2026-10-20T13:07:57+00:00 [P1790-1] BOOT OK  pool=1676910  free after pre-warm=415 MiB
+2026-10-20T13:09:44+00:00 [P1790-1 five120k] {"ctx": 120000, "conc": 5, "seed": 33682, "max_kv_usage_pct": 33.1, "max_running": 5, "preemptions": 0, "requests": [[103.9, 100009], [104.5, 100158], [106.4, 100011], [103.0, 100033], [104.9, 99829]]}
+2026-10-20T13:10:38+00:00 [P1790-1 one250k] {"ctx": 250000, "conc": 1, "seed": 33782, "max_kv_usage_pct": 12.9, "max_running": 1, "preemptions": 0, "requests": [[54.6, 208486]]}
+2026-10-20T13:10:39+00:00 [P1790-1] cold verified (3818 tok/s)  free DURING stress: min=415 MiB over 81 samples
+2026-10-20T13:11:25+00:00 --- P1790-2: pin 17900000000 (16.67 GiB), seeds 33683/33783, tier wiped ---
+2026-10-20T13:13:47+00:00 [P1790-2] BOOT OK  pool=1676910  free after pre-warm=859 MiB
+2026-10-20T13:15:34+00:00 [P1790-2 five120k] {"ctx": 120000, "conc": 5, "seed": 33683, "max_kv_usage_pct": 33.2, "max_running": 5, "preemptions": 0, "requests": [[104.6, 99903], [106.7, 99968], [105.1, 99914], [106.5, 99986], [104.6, 99771]]}
+2026-10-20T13:16:29+00:00 [P1790-2 one250k] {"ctx": 250000, "conc": 1, "seed": 33783, "max_kv_usage_pct": 12.9, "max_running": 1, "preemptions": 0, "requests": [[54.4, 208504]]}
+2026-10-20T13:16:29+00:00 [P1790-2] cold verified (3833 tok/s)  free DURING stress: min=857 MiB over 81 samples
+2026-10-20T13:17:16+00:00 --- P1790-3: pin 17900000000 (16.67 GiB), seeds 33684/33784, tier wiped ---
+2026-10-20T13:19:37+00:00 [P1790-3] BOOT OK  pool=1676910  free after pre-warm=605 MiB
+2026-10-20T13:21:23+00:00 [P1790-3 five120k] {"ctx": 120000, "conc": 5, "seed": 33684, "max_kv_usage_pct": 33.1, "max_running": 5, "preemptions": 0, "requests": [[106.1, 99955], [105.9, 99972], [103.8, 99996], [105.5, 100065], [104.6, 100105]]}
+2026-10-20T13:22:18+00:00 [P1790-3 one250k] {"ctx": 250000, "conc": 1, "seed": 33784, "max_kv_usage_pct": 12.9, "max_running": 1, "preemptions": 0, "requests": [[54.3, 208199]]}
+2026-10-20T13:22:18+00:00 [P1790-3] cold verified (3834 tok/s)  free DURING stress: min=605 MiB over 80 samples
+2026-10-20T13:23:05+00:00 === ladder (tag pin pool free_prewarm free_in_stress state) ===
+P1590-1 15900000000 1490437 2631 2631 cold-3834
+P1590-2 15900000000 1490437 2879 2877 cold-3832
+P1590-3 15900000000 1490437 2561 2561 cold-3830
+P1690-1 16900000000 1583674 1611 1611 cold-3831
+P1690-2 16900000000 1583674 1553 1553 cold-3832
+P1690-3 16900000000 1583674 1181 1181 cold-3839
+P1790-1 17900000000 1676910 415 415 cold-3818
+P1790-2 17900000000 1676910 859 857 cold-3833
+P1790-3 17900000000 1676910 605 605 cold-3834
+2026-10-20T13:23:05+00:00 PIN 15900000000: 3/3 qualifying boots, 0 flakes, worst in-stress free=2561 MiB
+2026-10-20T13:23:05+00:00 PIN 16900000000: 3/3 qualifying boots, 0 flakes, worst in-stress free=1181 MiB
+2026-10-20T13:23:05+00:00 PIN 17900000000: 0/3 qualifying boots, 0 flakes, worst in-stress free=415 MiB
+2026-10-20T13:23:05+00:00 VERDICT largest qualifying pin: 16900000000
+DAILY RESTORE SKIPPED: r27-headroom-stress (pid 2777607) is queued for the GPUs next
+2026-10-20T13:23:51+00:00 === r27-pin-ladder DONE ===

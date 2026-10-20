@@ -1,0 +1,1 @@
+SUMMARY 2026-10-20-135353-pin-promote DONE: 27B daily on the 15.90 GB pin, pool 1490437, BA4 96/96, tools 5/5

@@ -1,0 +1,9 @@
+5de3072d45817b47255ccfa6ef4d494b  /srv/qwen5090/launch-daily.sh
+e680228b1d33277cac62590addf52c0d  /srv/qwen5090/launch-daily-nbd.sh
+0.29 nvfp4 DAILY UP on 0.0.0.0:8020 (vllm 0.31.0, FlashInfer 0.7.0.post1, NVIDIA NVFP4 weights + NVFP4 KV pinned 15900000000 B/GPU + MTP head ns3 no-block-drop + SSM bfloat16 + 0131/0134 + embed offload=1 + split_kv=1 + draft_ub_plan=1 + pcie_ipc=1 + bss=1 + native disk tier cap 300 GB + CPU tier 17179869184 B, dual 5090, image vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan, SEQS 16). Pool 1490437, min free VRAM 2561 MiB, power 400.00/400.00 W. Rollback: launch-daily-v0290-r207.sh + BA4 96/96 active
+ok   Show me what is in src/main.py.
+ok   Run the test suite with pytest -q and tell me what fails.
+ok   Create a file hello.py that prints 'hello world'.
+ok   Write a Python function fib(n) with a docstring into fib.py.
+ok   How many lines does README.md have? Use a shell command.
+SUMMARY 2026-10-20-135353-pin-promote DONE: 27B daily on the 15.90 GB pin, pool 1490437, BA4 96/96, tools 5/5

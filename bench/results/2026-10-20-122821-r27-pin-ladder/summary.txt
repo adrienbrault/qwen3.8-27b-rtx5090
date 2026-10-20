@@ -1,0 +1,1 @@
+SUMMARY 2026-10-20-122821-r27-pin-ladder VERDICT largest qualifying pin: 16900000000
