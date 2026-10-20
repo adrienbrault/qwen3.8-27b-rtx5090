@@ -1,0 +1,3 @@
+f0149f7092923ebf2a88757771dc3b798561a6bd5093b671d067f1a46743cdf1  served-ba4-manifest.txt (generated from the served image, kept on the serving host)
+f0149f7092923ebf2a88757771dc3b798561a6bd5093b671d067f1a46743cdf1  expected-ba4-manifest.txt (derived by build-v031-image.sh from patches-v0310/served-l1a-manifest.txt and ba4/manifest.json)
+4939319f102a05c786ea7b632f3159027cbcf13b620c2907262e007051a44bfb  built-ba4-manifest.txt (rebuilt, kept on the serving host)
