@@ -1,6 +1,6 @@
 # Qwen3.8-27B on RTX 5090
 
-![Recipe card: served configuration, decode, prefill, KV pool and power, 2026-10-19](docs/img/recipe-card-26f3231b.png)
+![Recipe card: served configuration, decode, prefill, KV pool and power, 2026-10-20](docs/img/recipe-card-f66fa441.png)
 
 Serving configuration, vLLM patches, launch scripts and measurements for [Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B), served as [nvidia/Qwen3.8-27B-NVFP4](https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4) by [vLLM](https://github.com/vllm-project/vllm) v0.31.0 with the patch chain in [patches-v0310/](patches-v0310/) and FlashInfer 0.7.0.post1 across two RTX 5090 cards. The window is 262,144 tokens, the KV cache is NVFP4, the checkpoint's own MTP head drafts 3 tokens, and vision, reasoning, tool calls and structured output are all on. The target workload is a few concurrent coding agents with long contexts. The one-card and older shapes are under [Other configurations](#other-configurations).
 
