@@ -18,6 +18,8 @@ The served launcher is [scripts/serve-v031-ba4-daily.sh](../scripts/serve-v031-b
 
 The daily branch forces BA4 on for a `*-BA4-*` image. Experiment boots of such an image default on and may pass `BA4=0` for L1a behavior on it; `BA4=1` on an image without that tag fails before boot. Rollback is [scripts/serve-v031-l1a-daily.sh](../scripts/serve-v031-l1a-daily.sh).
 
+The served 16-sequence shape's decode, depth and cold-prefill curves were measured with [r27-ba4-curves](../bench/results/r27-ba4-curves.md) on 2026-10-19 (results `2026-10-19-233406-r27-ba4-curves`, [driver](../scripts/r27-ba4-curves.sh)): the same launcher run, first boot admitted, pool 1,391,795 tokens, 3,919 / 3,921 MiB free after the pre-warm, 96 of 96 BA4 rank-layers active. The standard benchmark on this launcher is being re-measured; the current figures are the L1a launcher's ([r27-l1a-std-bench](../bench/results/r27-l1a-std-bench.md), 2026-10-17).
+
 ## 2026-10-17 to 2026-10-20: L1a plans pure draft decode from the CPU upper bound
 
 The L1a launcher is [scripts/serve-v031-l1a-daily.sh](../scripts/serve-v031-l1a-daily.sh), the A_S launcher of the next section with one Python image layer and one environment pair added. The vLLM arguments, checkpoint, KV pin, sequence limit, draft length, KV and state dtypes and tiers are unchanged. Qualify passed on 2026-10-17 (results `2026-10-16-r27-audition-qualify-231459-865333`); the order-balanced screen measured the paired decode and fidelity results in [r27-l1a](../bench/results/r27-l1a.md) (results `2026-10-17-r27-audition-screen-022747-4123606`).

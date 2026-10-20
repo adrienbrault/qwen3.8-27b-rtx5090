@@ -1,0 +1,52 @@
+2026-10-19T23:34:06+00:00 [r27-ba4-curves] queued behind: ba4-promote(pid 1861146)
+2026-10-19T23:37:15+00:00 [r27-ba4-curves] lock held
+2026-10-19T23:37:15+00:00 [r27-ba4-curves] boot attempt 1/3: launch-daily.sh
+0.29 nvfp4 DAILY UP on 0.0.0.0:8020 (vllm 0.31.0, FlashInfer 0.7.0.post1, NVIDIA NVFP4 weights + NVFP4 KV pinned 14860000000 B/GPU + MTP head ns3 + SSM bfloat16 + 0131/0134 + embed offload=1 + split_kv=1 + draft_ub_plan=1 + pcie_ipc=1 + bss=1 + native disk tier cap 300 GB + CPU tier 17179869184 B, d
+2026-10-19T23:39:46+00:00 [r27-ba4-curves] UP: pool 1391795 tokens, free 3919 3921 , power 0, 600.00 W 1, 575.00 W 
+2026-10-19T23:39:46+00:00 [r27-ba4-curves] image vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan
+2026-10-19T23:39:46+00:00 [r27-ba4-curves] decode c1..c16, code and prose
+[code] RESULT {"c": 1, "kind": "code", "ctx": 0, "runs": 3, "ss_agg_tps_median": 273.3, "ss_agg_tps_min_max": [234.0, 284.9], "ss_per_stream_tps_median": 273.3, "accept_per_draft_median": 0.665, "ttft_s_median": 0.04, "ss_window_s
+[code] RESULT {"c": 2, "kind": "code", "ctx": 0, "runs": 3, "ss_agg_tps_median": 444.2, "ss_agg_tps_min_max": [426.4, 474.8], "ss_per_stream_tps_median": 222.1, "accept_per_draft_median": 0.622, "ttft_s_median": 0.05, "ss_window_s
+[code] RESULT {"c": 4, "kind": "code", "ctx": 0, "runs": 3, "ss_agg_tps_median": 937.8, "ss_agg_tps_min_max": [928.0, 970.1], "ss_per_stream_tps_median": 234.4, "accept_per_draft_median": 0.67, "ttft_s_median": 0.13, "ss_window_s"
+[code] RESULT {"c": 6, "kind": "code", "ctx": 0, "runs": 3, "ss_agg_tps_median": 1332.4, "ss_agg_tps_min_max": [1316.5, 1341.6], "ss_per_stream_tps_median": 222.1, "accept_per_draft_median": 0.684, "ttft_s_median": 0.13, "ss_windo
+[code] RESULT {"c": 8, "kind": "code", "ctx": 0, "runs": 3, "ss_agg_tps_median": 1678.1, "ss_agg_tps_min_max": [1651.3, 1718.5], "ss_per_stream_tps_median": 209.8, "accept_per_draft_median": 0.678, "ttft_s_median": 0.14, "ss_windo
+[code] RESULT {"c": 12, "kind": "code", "ctx": 0, "runs": 3, "ss_agg_tps_median": 2238.2, "ss_agg_tps_min_max": [2175.2, 2293.2], "ss_per_stream_tps_median": 186.5, "accept_per_draft_median": 0.652, "ttft_s_median": 0.14, "ss_wind
+[code] RESULT {"c": 16, "kind": "code", "ctx": 0, "runs": 3, "ss_agg_tps_median": 2646.7, "ss_agg_tps_min_max": [2644.5, 2683.6], "ss_per_stream_tps_median": 165.4, "accept_per_draft_median": 0.626, "ttft_s_median": 0.17, "ss_wind
+[prose] RESULT {"c": 1, "kind": "prose", "ctx": 0, "runs": 3, "ss_agg_tps_median": 225.3, "ss_agg_tps_min_max": [221.1, 227.6], "ss_per_stream_tps_median": 225.3, "accept_per_draft_median": 0.504, "ttft_s_median": 0.04, "ss_window
+[prose] RESULT {"c": 2, "kind": "prose", "ctx": 0, "runs": 3, "ss_agg_tps_median": 379.9, "ss_agg_tps_min_max": [363.6, 381.3], "ss_per_stream_tps_median": 189.9, "accept_per_draft_median": 0.478, "ttft_s_median": 0.05, "ss_window
+[prose] RESULT {"c": 4, "kind": "prose", "ctx": 0, "runs": 3, "ss_agg_tps_median": 772.8, "ss_agg_tps_min_max": [725.2, 777.0], "ss_per_stream_tps_median": 193.2, "accept_per_draft_median": 0.501, "ttft_s_median": 0.07, "ss_window
+[prose] RESULT {"c": 6, "kind": "prose", "ctx": 0, "runs": 3, "ss_agg_tps_median": 1047.6, "ss_agg_tps_min_max": [1038.5, 1070.1], "ss_per_stream_tps_median": 174.6, "accept_per_draft_median": 0.465, "ttft_s_median": 0.13, "ss_win
+[prose] RESULT {"c": 8, "kind": "prose", "ctx": 0, "runs": 3, "ss_agg_tps_median": 1355.1, "ss_agg_tps_min_max": [1325.6, 1359.4], "ss_per_stream_tps_median": 169.4, "accept_per_draft_median": 0.483, "ttft_s_median": 0.14, "ss_win
+[prose] RESULT {"c": 12, "kind": "prose", "ctx": 0, "runs": 3, "ss_agg_tps_median": 1849.4, "ss_agg_tps_min_max": [1793.1, 1874.7], "ss_per_stream_tps_median": 154.1, "accept_per_draft_median": 0.477, "ttft_s_median": 0.14, "ss_wi
+[prose] RESULT {"c": 16, "kind": "prose", "ctx": 0, "runs": 3, "ss_agg_tps_median": 2232.2, "ss_agg_tps_min_max": [2207.9, 2241.1], "ss_per_stream_tps_median": 139.5, "accept_per_draft_median": 0.471, "ttft_s_median": 0.15, "ss_wi
+2026-10-19T23:44:20+00:00 [r27-ba4-curves] cold prefill, 3 fresh prompts per length
+2026-10-19T23:44:21+00:00 [r27-ba4-curves]   prefill ctx 8000 #1: {"ctx": 8000, "conc": 1, "seed": 72383, "max_kv_usage_pct": 1.9, "max_running": 1, "preemptions": 0, "requests": [[0.7, 6647]]}
+2026-10-19T23:44:22+00:00 [r27-ba4-curves]   prefill ctx 8000 #2: {"ctx": 8000, "conc": 1, "seed": 72384, "max_kv_usage_pct": 1.9, "max_running": 1, "preemptions": 0, "requests": [[0.7, 6733]]}
+2026-10-19T23:44:24+00:00 [r27-ba4-curves]   prefill ctx 8000 #3: {"ctx": 8000, "conc": 1, "seed": 72385, "max_kv_usage_pct": 1.9, "max_running": 1, "preemptions": 0, "requests": [[0.7, 6743]]}
+2026-10-19T23:44:27+00:00 [r27-ba4-curves]   prefill ctx 30000 #1: {"ctx": 30000, "conc": 1, "seed": 72603, "max_kv_usage_pct": 3.4, "max_running": 1, "preemptions": 0, "requests": [[3.0, 25039]]}
+2026-10-19T23:44:30+00:00 [r27-ba4-curves]   prefill ctx 30000 #2: {"ctx": 30000, "conc": 1, "seed": 72604, "max_kv_usage_pct": 3.4, "max_running": 1, "preemptions": 0, "requests": [[3.0, 25038]]}
+2026-10-19T23:44:33+00:00 [r27-ba4-curves]   prefill ctx 30000 #3: {"ctx": 30000, "conc": 1, "seed": 72605, "max_kv_usage_pct": 3.4, "max_running": 1, "preemptions": 0, "requests": [[3.0, 25075]]}
+2026-10-19T23:44:40+00:00 [r27-ba4-curves]   prefill ctx 60000 #1: {"ctx": 60000, "conc": 1, "seed": 72903, "max_kv_usage_pct": 5.1, "max_running": 1, "preemptions": 0, "requests": [[6.8, 49989]]}
+2026-10-19T23:44:47+00:00 [r27-ba4-curves]   prefill ctx 60000 #2: {"ctx": 60000, "conc": 1, "seed": 72904, "max_kv_usage_pct": 5.1, "max_running": 1, "preemptions": 0, "requests": [[6.8, 49977]]}
+2026-10-19T23:44:54+00:00 [r27-ba4-curves]   prefill ctx 60000 #3: {"ctx": 60000, "conc": 1, "seed": 72905, "max_kv_usage_pct": 5.2, "max_running": 1, "preemptions": 0, "requests": [[6.8, 50145]]}
+2026-10-19T23:45:12+00:00 [r27-ba4-curves]   prefill ctx 120000 #1: {"ctx": 120000, "conc": 1, "seed": 73503, "max_kv_usage_pct": 8.4, "max_running": 1, "preemptions": 0, "requests": [[17.3, 100083]]}
+2026-10-19T23:45:30+00:00 [r27-ba4-curves]   prefill ctx 120000 #2: {"ctx": 120000, "conc": 1, "seed": 73504, "max_kv_usage_pct": 8.5, "max_running": 1, "preemptions": 0, "requests": [[17.3, 100171]]}
+2026-10-19T23:45:48+00:00 [r27-ba4-curves]   prefill ctx 120000 #3: {"ctx": 120000, "conc": 1, "seed": 73505, "max_kv_usage_pct": 8.4, "max_running": 1, "preemptions": 0, "requests": [[17.3, 99931]]}
+2026-10-19T23:46:26+00:00 [r27-ba4-curves]   prefill ctx 200000 #1: {"ctx": 200000, "conc": 1, "seed": 74303, "max_kv_usage_pct": 12.8, "max_running": 1, "preemptions": 0, "requests": [[37.4, 166702]]}
+2026-10-19T23:47:03+00:00 [r27-ba4-curves]   prefill ctx 200000 #2: {"ctx": 200000, "conc": 1, "seed": 74304, "max_kv_usage_pct": 12.8, "max_running": 1, "preemptions": 0, "requests": [[37.5, 166696]]}
+2026-10-19T23:47:41+00:00 [r27-ba4-curves]   prefill ctx 200000 #3: {"ctx": 200000, "conc": 1, "seed": 74305, "max_kv_usage_pct": 12.8, "max_running": 1, "preemptions": 0, "requests": [[37.3, 166650]]}
+2026-10-19T23:48:31+00:00 [r27-ba4-curves]   prefill ctx 240000 #1: {"ctx": 240000, "conc": 1, "seed": 74703, "max_kv_usage_pct": 15.0, "max_running": 1, "preemptions": 0, "requests": [[50.0, 200017]]}
+2026-10-19T23:49:22+00:00 [r27-ba4-curves]   prefill ctx 240000 #2: {"ctx": 240000, "conc": 1, "seed": 74704, "max_kv_usage_pct": 15.0, "max_running": 1, "preemptions": 0, "requests": [[50.1, 200163]]}
+2026-10-19T23:50:12+00:00 [r27-ba4-curves]   prefill ctx 240000 #3: {"ctx": 240000, "conc": 1, "seed": 74705, "max_kv_usage_pct": 15.0, "max_running": 1, "preemptions": 0, "requests": [[50.1, 200061]]}
+2026-10-19T23:50:12+00:00 [r27-ba4-curves] decode at depth, one stream
+[code-c1-30k] RESULT {"c": 1, "kind": "code", "ctx": 30000, "runs": 2, "ss_agg_tps_median": 275.95000000000005, "ss_agg_tps_min_max": [270.6, 281.3], "ss_per_stream_tps_median": 276.0, "accept_per_draft_median": 0.726, "ttft_s_med
+[prose-c1-30k] RESULT {"c": 1, "kind": "prose", "ctx": 30000, "runs": 2, "ss_agg_tps_median": 215.85, "ss_agg_tps_min_max": [208.0, 223.7], "ss_per_stream_tps_median": 215.8, "accept_per_draft_median": 0.499, "ttft_s_median": 0.36
+[code-c1-60k] RESULT {"c": 1, "kind": "code", "ctx": 60000, "runs": 2, "ss_agg_tps_median": 259.4, "ss_agg_tps_min_max": [258.4, 260.4], "ss_per_stream_tps_median": 259.4, "accept_per_draft_median": 0.7124999999999999, "ttft_s_med
+[prose-c1-60k] RESULT {"c": 1, "kind": "prose", "ctx": 60000, "runs": 2, "ss_agg_tps_median": 211.7, "ss_agg_tps_min_max": [208.9, 214.5], "ss_per_stream_tps_median": 211.7, "accept_per_draft_median": 0.5195000000000001, "ttft_s_m
+[code-c1-120k] RESULT {"c": 1, "kind": "code", "ctx": 120000, "runs": 2, "ss_agg_tps_median": 238.2, "ss_agg_tps_min_max": [238.0, 238.4], "ss_per_stream_tps_median": 238.2, "accept_per_draft_median": 0.7075, "ttft_s_median": 16.5
+[prose-c1-120k] RESULT {"c": 1, "kind": "prose", "ctx": 120000, "runs": 2, "ss_agg_tps_median": 194.25, "ss_agg_tps_min_max": [191.8, 196.7], "ss_per_stream_tps_median": 194.2, "accept_per_draft_median": 0.517, "ttft_s_median": 1.
+[code-c1-200k] RESULT {"c": 1, "kind": "code", "ctx": 200000, "runs": 2, "ss_agg_tps_median": 219.55, "ss_agg_tps_min_max": [219.2, 219.9], "ss_per_stream_tps_median": 219.6, "accept_per_draft_median": 0.7304999999999999, "ttft_s_
+[prose-c1-200k] RESULT {"c": 1, "kind": "prose", "ctx": 200000, "runs": 2, "ss_agg_tps_median": 181.15, "ss_agg_tps_min_max": [175.0, 187.3], "ss_per_stream_tps_median": 181.2, "accept_per_draft_median": 0.5445, "ttft_s_median": 1
+2026-10-19T23:53:44+00:00 [r27-ba4-curves] engine errors: 0  preemptions: 0.0  xid: 0
+2026-10-19T23:53:47+00:00 [r27-ba4-curves] GPU queue continues (r27-ba4-std-bench(pid 2440554)); GLM restore left to the next unit
+2026-10-19T23:53:47+00:00 [r27-ba4-curves] === r27-ba4-curves DONE ===

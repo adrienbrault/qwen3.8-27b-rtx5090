@@ -1,0 +1,12 @@
+clock offsets: memory +4500, core 0 on every GPU; readback mem 4500 4500 | core 0 0
+tokenizer guard: clean
+shm sweep: removed 4 orphan psm_* segments (31G free now)
+a9e94e6d2f2afc0eefb099c46faa812aac8d533f8ecb18c80fa5ff7966b2d7af
+launching vllm-27b (v0.28 nvfp4+XQA+MTP+native-offload) on 0.0.0.0:8020 ...
+HEALTHY
+daily up. KV pool: 1391795 tokens
+pre-warming autotune shapes (pp8192 c8)...
+pre-warm done. free VRAM: 3919 MiB
+3921 MiB
+DAILY UP (v0.28 gen: nvfp4 KV + XQA decode + MTP ns4 + native disk tier @ /srv/qwen5090/native-l2, image vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan). Pool 1391795. R104-R107 gauntlet 2026-08-28.
+0.29 nvfp4 DAILY UP on 0.0.0.0:8020 (vllm 0.31.0, FlashInfer 0.7.0.post1, NVIDIA NVFP4 weights + NVFP4 KV pinned 14860000000 B/GPU + MTP head ns3 + SSM bfloat16 + 0131/0134 + embed offload=1 + split_kv=1 + draft_ub_plan=1 + pcie_ipc=1 + bss=1 + native disk tier cap 300 GB + CPU tier 17179869184 B, dual 5090, image vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan, SEQS 16). Pool 1391795, min free VRAM 3919 MiB, power 400.00/400.00 W. Rollback: launch-daily-v0290-r207.sh + BA4 96/96 active
