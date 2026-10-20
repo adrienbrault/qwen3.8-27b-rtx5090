@@ -27,6 +27,7 @@ bash scripts/build-v031-image.sh
 | `vllm-v0.31.0/csrc/`, `vllm-v0.31.0/cmake/patches/` | from the pinned vLLM source archive below |
 | `assets/wheels/` | an `arctic_inference-0.1.1` wheel built in a throwaway container from the pinned vLLM base after installing hashed PyPI build tools; `pip wheel` disables index access, dependency resolution and build isolation |
 | `assets/debs/` | empty if the base has `patch`, `g++` and `ninja`; otherwise `.deb` files and dependencies downloaded from the base's apt repositories |
+| `ba4/` | this directory's `ba4/`, the build context of the BA4 Dockerfile; staged on every run, built only with `BA4=1` |
 
 The base pins supplied with the served-image build inputs are registry digests: `vllm/vllm-openai@sha256:c1c9f6fd5c109ba7f0546a59f5b2f15fb87f64c77782e90a27b648b42a8e67c3` and `nvidia/cuda@sha256:b7ae301dea2c162444795462ce17a05f6a516e5a75944b57af5b88540a1a2266`. When the exact reference is absent from local `RepoDigests`, the script pulls that reference with `--platform linux/amd64`, then requires `RepoDigests` to contain it. The script resolves that digest reference's local `.Id`, verifies `linux/amd64` and uses the resolved ID for the first Dockerfile's base arguments and preparation containers. The local ID can equal the registry digest with the containerd image store and differ with the classic image store, where it identifies the image config. Existing base tags are never retagged or replaced.
 
