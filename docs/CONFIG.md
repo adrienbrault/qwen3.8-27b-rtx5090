@@ -4,6 +4,12 @@ Every flag of the two-card configuration, why it is set, and what happens withou
 
 To run the served configuration on another host, [`scripts/serve.sh`](../scripts/serve.sh) passes the `docker run` arguments of [`scripts/serve-v031-nbd-daily.sh`](../scripts/serve-v031-nbd-daily.sh) with the model and cache paths, bind address, GPUs, disk tier, BA4 admission reports, power cap and `pcie_ipc` all-reduce as settings ([`serve.env.example`](../serve.env.example)); the disk tier, the BA4 layer and the power cap are off unless set, and `PCIE_IPC=0` turns the all-reduce off for a host without GPU peer-to-peer ([Host](#host)).
 
+## Since 2026-10-20: the KV pin is 15.90 GB per card
+
+The 16-sequence shape uses `--kv-cache-memory-bytes 15900000000`, a 1,490,437-token pool. The daily launcher admits pools from 1,460,000 to 1,525,000 tokens; `scripts/serve.sh` warns if its pool differs from 1,490,437. The pin ladder, concurrent headroom stress and promotion are in [r27-kv-pin](../bench/results/r27-kv-pin.md), measured 2026-10-20 (results `2026-10-20-122821-r27-pin-ladder`, `2026-10-20-131748-r27-headroom-stress`, `2026-10-20-135519-r27-headroom-stress`, `2026-10-20-135353-pin-promote`). The 15.90 GB pin left 1,227 MiB free under concurrent decode, cold prefill and image requests; 16.90 GB left 99 MiB, and 16.02 GB left 925 and 1,047 MiB on two boots, failing the ≥ 1,000 MiB rule.
+
+The headroom stress ran on the BA4 image with 96 of 96 rank-layers active. The Quick start's L1a image carries no BA4 scratch; these headroom readings describe the BA4 image. The earlier 14.86 GB pin and 1,391,795-token pool below describe the dated configurations that used them.
+
 ## Since 2026-10-20: the MTP drafter keeps the last block of a prefix hit
 
 The served launcher is [scripts/serve-v031-nbd-daily.sh](../scripts/serve-v031-nbd-daily.sh), the BA4 launcher of the next section with one key added to the MTP speculative config. The screens and the promotion boot: [r27-no-block-drop](../bench/results/r27-no-block-drop.md) (results `2026-10-20-051649-r27-flags-screen`, `2026-10-20-070708-r27-flags-screen`, `2026-10-20-081135-nbd-promote`).

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Serves the configuration on any host with two RTX 5090 cards: the engine of scripts/serve-v031-nbd-daily.sh
-# (image, vLLM flags, container env, MTP ns3 without the trailing-block drop, NVFP4 KV pinned at 14.86 GB per card, 16 sequences) without the serving
+# (image, vLLM flags, container env, MTP ns3 without the trailing-block drop, NVFP4 KV pinned at 15.90 GB per card, 16 sequences) without the serving
 # host's /srv/qwen5090 layout. Settings: serve.env in the repo root, or SERVE_ENV=<file>; environment variables override the
 # file; serve.env.example lists every setting and its default.
 #   bash scripts/serve.sh           start, wait for /health, check the boot log, print the endpoint
@@ -148,7 +148,7 @@ RUN=("${DK[@]}" run -d --name "$NAME" --restart unless-stopped --oom-score-adj -
   --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_xml
   --enable-prompt-tokens-details
   --override-generation-config '{"temperature":0.6,"top_p":0.95,"top_k":20}'
-  --kv-cache-memory-bytes 14860000000                     # R234 pin: pool 1,391,795 tokens
+  --kv-cache-memory-bytes 15900000000                     # 2026-10-20 pin: pool 1,490,437 tokens (r27-kv-pin)
   --offload-backend uva --cpu-offload-gb 1 --cpu-offload-params embed_tokens   # embedding table in pinned host RAM (0135)
   --mamba-ssm-cache-dtype bfloat16
   --enable-batch-sharded-sampling
@@ -273,7 +273,7 @@ if [ -n "$BA4_INPUTS" ]; then   # as the served launcher: 48 layers x 2 ranks, a
 fi
 AR=$(grep -aoE "Using \[[^]]*\] all-reduce backends" <<< "$LOG" | head -1 | sed -E "s/^Using \[(.*)\].*/\1/; s/[' ]//g" || true)
 POOL=$(grep -a 'GPU KV cache size' <<< "$LOG" | tail -1 | grep -oE 'cache size: [0-9,]+' | tr -dc 0-9 || true)
-[ "$POOL" = 1391795 ] || echo "WARN: KV pool ${POOL:-?} tokens; the served boots read 1,391,795 at this pin (R234)" >&2
+[ "$POOL" = 1490437 ] || echo "WARN: KV pool ${POOL:-?} tokens; the served boots read 1,490,437 at this pin (2026-10-20, r27-kv-pin)" >&2
 if [ -n "$KV_TIER_DIR" ]; then   # a host that cannot pin 16 GiB gets fewer CPU-tier blocks, and long prompts stop being tier-served
   CPUBLK=$(grep -aoE 'primary tier \(lru, [0-9]+ (blocks|chunks)\)' <<< "$LOG" | tail -1 | tr -dc 0-9 || true)   # v0.31 says chunks
   [ "${CPUBLK:-0}" -ge 550 ] || echo "WARN: CPU tier holds ${CPUBLK:-?} blocks; the served boots hold 595 of 1,472 tokens (R207)" >&2

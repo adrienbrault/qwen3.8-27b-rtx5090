@@ -49,7 +49,7 @@ BOOT_LINES = [
     "re-enabled FlashInfer split-KV",
     "SM12X draft UB plan ACTIVE: VLLM_SM12X_DRAFT_UB_PLAN=1",
     "SM12X draft UB plan USED",
-    "GPU KV cache size: 1,391,795 tokens",
+    "GPU KV cache size: 1,490,437 tokens",
 ]
 PCIE_ON_LINES = [
     "PCIe IPC all-reduce enabled: TP2 bf16, max_rows=320",
@@ -114,6 +114,7 @@ class ServeTests(unittest.TestCase):
         for v in PCIE_ENV:
             self.assertIn(v, r.stdout)
         self.assertIn("NCCL_P2P_LEVEL=SYS", r.stdout)
+        self.assertIn("--kv-cache-memory-bytes 15900000000", r.stdout)
         self.assertNotIn("pcie_ipc all-reduce off", r.stderr)
 
     def test_print_pcie_ipc_off_passes_neither_variable(self):
