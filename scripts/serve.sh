@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Serves the configuration on any host with two RTX 5090 cards: the engine of scripts/serve-v031-nbd-daily.sh
+# Serves the configuration on any host with two RTX 5090 cards: the engine of scripts/serve-v031-served-daily.sh
 # (image, vLLM flags, container env, MTP ns3 without the trailing-block drop, NVFP4 KV pinned at 15.90 GB per card, 16 sequences) without the serving
 # host's /srv/qwen5090 layout. Settings: serve.env in the repo root, or SERVE_ENV=<file>; environment variables override the
 # file; serve.env.example lists every setting and its default.
@@ -17,7 +17,7 @@
 # all-reduce backends carry the collectives (docs/CONFIG.md).
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-SERVED_LAUNCHER=$ROOT/scripts/serve-v031-nbd-daily.sh
+SERVED_LAUNCHER=$ROOT/scripts/serve-v031-served-daily.sh
 die(){ echo "serve.sh: FAILED: $*" >&2; exit 1; }
 
 # Settings: remember what the environment sets (set-but-empty counts, so KV_TIER_DIR= turns off a tier the file enables),
