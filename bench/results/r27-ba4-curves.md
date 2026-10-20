@@ -14,7 +14,7 @@ The BA4 kernel serves the `in_proj_ba` call only when the verify step carries fo
 
 ## One stream decodes 273.3 t/s of code and 225.3 of prose
 
-[`decode_ss.py`](../../scripts/decode_ss.py) forces 1,024 tokens per stream at temperature 0, starts all streams together and measures the samples where every stream was decoding, three runs per shape. Each value is the median of the runs; aggregate is the measured sum of stream rates, and per-stream rate is reported separately, in tokens per second. Sources: `decode-code.jsonl` and `decode-prose.jsonl` in each directory above.
+[`decode_ss.py`](../../scripts/decode_ss.py) forces 1,024 tokens per stream sampled at temperature 0.6, starts all streams together and measures the samples where every stream was decoding, three runs per shape. Each value is the median of the runs; aggregate is the measured sum of stream rates, and per-stream rate is reported separately, in tokens per second. Sources: `decode-code.jsonl` and `decode-prose.jsonl` in each directory above.
 
 ### Code
 

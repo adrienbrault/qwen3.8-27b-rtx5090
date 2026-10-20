@@ -8,15 +8,16 @@ Every number in the text and tables was measured on one machine on the date give
 
 ## Numbers
 
-Measured on the served launcher [scripts/serve-v031-ba4-daily.sh](scripts/serve-v031-ba4-daily.sh), image `vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan`, at stock power limits on 2026-10-19 ([r27-ba4-curves](bench/results/r27-ba4-curves.md), results `2026-10-19-233406-r27-ba4-curves`). [decode_ss.py](scripts/decode_ss.py) runs greedy, synchronized code and prose streams with 1,024 forced tokens, three runs per shape. Decode rate is tokens per second per stream while every stream is decoding; decode aggregate is the sum over the concurrent streams. Method: [How the numbers are measured](#how-the-numbers-are-measured).
+Measured on the served launcher [scripts/serve-v031-ba4-daily.sh](scripts/serve-v031-ba4-daily.sh), image `vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan`, at stock power limits on 2026-10-19 ([r27-ba4-curves](bench/results/r27-ba4-curves.md), results `2026-10-19-233406-r27-ba4-curves`), and under the standard benchmark on 2026-10-19 and 2026-10-20 ([r27-ba4-std-bench](bench/results/r27-ba4-std-bench.md), results `2026-10-19-r27-ba4-std-bench-2335`). [decode_ss.py](scripts/decode_ss.py) runs synchronized code and prose streams sampled at temperature 0.6 with 1,024 forced tokens, three runs per shape. Decode rate is tokens per second per stream while every stream is decoding; decode aggregate is the sum over the concurrent streams. Method: [How the numbers are measured](#how-the-numbers-are-measured).
 
 ![Decode aggregate and per-stream rate against concurrent streams, code and prose](docs/img/decode-scaling-16.svg)
 
-Blue is code and red is prose; the left panel is decode aggregate, the right panel the rate of each stream.
+Solid lines are decode alone, blue code and red prose: decode aggregate on the left, the rate of each stream on the right. Dashed lines are `vllm bench serve` on ShareGPT V3 (green) and Spec-Bench (brown): wall-clock output tok/s on the left, 1000 / TPOT p50 per stream on the right.
 
 - One stream decodes 273.3 t/s of code and 225.3 of prose.
 - At the 16-sequence limit the aggregate is 2,646.7 t/s of code and 2,232.2 of prose, 165.4 and 139.5 per stream.
 - The MTP head gets 0.62 to 0.68 of its draft tokens accepted on code and 0.47 to 0.50 on prose, which is most of the gap between the two.
+- Under `vllm bench serve` at 16 streams, wall-clock output is 1,589.0 tok/s on ShareGPT V3 and 1,899.5 on Spec-Bench, 114.3 and 129.1 tok/s per stream.
 
 ![Cold prefill rate and decode rate at depth against prompt length](docs/img/prefill.svg)
 
@@ -29,6 +30,8 @@ Cold prefill runs at 9,582 t/s at 6.7K prompt tokens and 3,996 at 200K. One code
 | free VRAM after the launcher's pre-warm | 3,919 / 3,921 MiB | 2026-10-19, [r27-ba4-curves](bench/results/r27-ba4-curves.md) |
 | time to first token, cold prompt | 0.70 / 3.00 / 17.3 / 50.1 s at 6.7K / 25K / 100K / 200K tokens | 2026-10-19, [r27-ba4-curves](bench/results/r27-ba4-curves.md) |
 | KV tiers behind the pool | 16 GiB host RAM, then 300 GB of disk with LRU eviction, kept across restarts | 2026-10-19, [r27-ba4-curves](bench/results/r27-ba4-curves.md) |
+| `vllm bench serve`, 16 streams, wall-clock output | 1,589.0 tok/s on ShareGPT V3, 1,899.5 on Spec-Bench | 2026-10-19/20, [r27-ba4-std-bench](bench/results/r27-ba4-std-bench.md) |
+| `vllm bench serve`, 16 streams, time to first token p50 / p99 | 129.4 / 494.1 ms on ShareGPT V3, 131.1 / 292.0 ms on Spec-Bench | 2026-10-19/20, [r27-ba4-std-bench](bench/results/r27-ba4-std-bench.md) |
 | fidelity vs the [bf16 model](https://huggingface.co/Qwen/Qwen3.8-27B), dense text, 555,549 positions | top-1 90.71 %, perplexity +1.901 % | 2026-10-19, [r27 BA4](bench/results/r27-ba4.md) |
 
 Also passing (2026-10-19, [r27 BA4](bench/results/r27-ba4.md)): GSM8K 5-shot T=0 0.905 over 200 problems, tool-eval 91.0 ± 1.4 (69 × 4), tool smoke 5 of 5.
@@ -69,19 +72,19 @@ Also passing (2026-10-19, [r27 BA4](bench/results/r27-ba4.md)): GSM8K 5-shot T=0
 
 ## How the numbers are measured
 
-- **Decode** ([r27-ba4-curves](bench/results/r27-ba4-curves.md), [scripts/r27-ba4-curves.sh](scripts/r27-ba4-curves.sh); the same instruments as R675): `decode_ss.py` starts all streams together on one code or one prose prompt, forces 1,024 tokens per stream at temperature 0, and takes the rate over the samples where every stream was decoding, median of three runs. Acceptance is accepted draft tokens over draft tokens from the server's counters. At depth, `--ctx N` puts N/1.3 filler words in front of the prompt; the probe does not record the prompt's token count, so the figure plots those points against N, two runs per point.
+- **Decode** ([r27-ba4-curves](bench/results/r27-ba4-curves.md), [scripts/r27-ba4-curves.sh](scripts/r27-ba4-curves.sh); the same instruments as R675): `decode_ss.py` starts all streams together on one code or one prose prompt, forces 1,024 tokens per stream sampled at temperature 0.6, and takes the rate over the samples where every stream was decoding, median of three runs. Acceptance is accepted draft tokens over draft tokens from the server's counters. At depth, `--ctx N` puts N/1.3 filler words in front of the prompt; the probe does not record the prompt's token count, so the figure plots those points against N, two runs per point.
 - **Prefill** ([r27-ba4-curves](bench/results/r27-ba4-curves.md)): `kv_capacity_probe.py --conc 1 --tokens 1`, one request at a time with one output token, three prompts per length, each with a fresh seed so that neither the GPU prefix cache nor the CPU and disk tiers hold it.
-- **Power and clocks**: r27-ba4-curves ran at the stock 600 / 575 W limits on 2026-10-19 (results `2026-10-19-233406-r27-ba4-curves`), and its boot log records memory clock offset +4500 and core offset 0 ([r27-ba4-curves](bench/results/r27-ba4-curves.md)). r27-l1a-std-bench and r27-l1a-seq64 ran at the same limits on 2026-10-17 on the L1a launcher (results `2026-10-17-r27-l1a-std-bench-0930`, `2026-10-17-r27-l1a-seq64-curves-1226`) and recorded the same offsets at boot and after each cell.
+- **Power and clocks**: r27-ba4-curves ran at the stock 600 / 575 W limits on 2026-10-19 (results `2026-10-19-233406-r27-ba4-curves`), and its boot log records memory clock offset +4500 and core offset 0 ([r27-ba4-curves](bench/results/r27-ba4-curves.md)). r27-ba4-std-bench ran at the same limits on 2026-10-19 and 2026-10-20 (results `2026-10-19-r27-ba4-std-bench-2335`) and recorded the same offsets at every boot and after each cell; r27-l1a-seq64, under [Other configurations](#other-configurations), did the same on 2026-10-17 on the L1a launcher (results `2026-10-17-r27-l1a-seq64-curves-1226`).
 
 ### Standard benchmark (vllm bench serve)
 
-Measured on 2026-10-17 09:31 to 12:09 UTC against the L1a launcher [scripts/serve-v031-l1a-daily.sh](scripts/serve-v031-l1a-daily.sh), served from 2026-10-17 to 2026-10-20, results `2026-10-17-r27-l1a-std-bench-0930` ([write-up](bench/results/r27-l1a-std-bench.md)). The re-measure on the BA4 launcher is in progress.
+Measured on 2026-10-19 23:54 UTC to 2026-10-20 02:37 UTC against the served launcher [scripts/serve-v031-ba4-daily.sh](scripts/serve-v031-ba4-daily.sh), results `2026-10-19-r27-ba4-std-bench-2335` ([write-up](bench/results/r27-ba4-std-bench.md)).
 
-- **Client** ([r27-l1a-std-bench](bench/results/r27-l1a-std-bench.md), [scripts/r27-l1a-std-bench.sh](scripts/r27-l1a-std-bench.sh)): `vllm bench serve` v0.30.0 through the request shim of the Flash-Next repository, closed loop at 1, 2, 4, 6, 8, 12 and 16 concurrent requests, greedy, streamed, thinking on.
+- **Client** ([r27-ba4-std-bench](bench/results/r27-ba4-std-bench.md), [scripts/r27-ba4-std-bench.sh](scripts/r27-ba4-std-bench.sh)): `vllm bench serve` v0.30.0 through the request shim of the Flash-Next repository, closed loop at 1, 2, 4, 6, 8, 12 and 16 concurrent requests, greedy, streamed, thinking on.
 - **Samples**: ShareGPT V3, 400 conversations, seed 7310, each output forced with `min_tokens` to the reference reply's length (mean 210 tokens); Spec-Bench, all 480 questions, each output forced to 256 tokens. The outputs are truncated reasoning, not answers.
-- **Cells**: a fresh boot per cell, pass A over all 14 cells and then pass B, a cell being the mean of the two. Every cell had 0 failed requests, 0 preemptions and 0 cached prompt tokens; the maximum A/B output-rate spread is 2.08 % at ShareGPT c1 ([r27-l1a-std-bench](bench/results/r27-l1a-std-bench.md)).
+- **Cells**: a fresh boot per cell, pass A over all 14 cells and then pass B, a cell being the mean of the two. Every cell had 0 failed requests, 0 preemptions and 0 cached prompt tokens, and every boot logged 96 of 96 BA4 rank-layers active; the maximum A/B output-rate spread is 1.33 % at ShareGPT c8 ([r27-ba4-std-bench](bench/results/r27-ba4-std-bench.md)).
 - **Metrics**: output tok/s is completion tokens over the time from the first request's start to the last completion, with prefill, time to first token and turnover between requests included. The per-stream rate is 1000 / TPOT p50, where TPOT includes the steps a request waits while other requests' prefill chunks run.
-- **Against the decode curve**: the two lines differ in launcher (BA4 against L1a), output length, prompts, interleaved prefill, request turnover and boot; the gap is not a measure of what prefill costs decode ([r27-l1a-std-bench](bench/results/r27-l1a-std-bench.md#the-difference-spans-the-engine-upgrade-and-the-l1a-layer)).
+- **Against the decode curve**: the two lines differ in output length, prompts, interleaved prefill, request turnover and boot; the gap is not a measure of what prefill costs decode ([r27-ba4-std-bench](bench/results/r27-ba4-std-bench.md#the-figure)).
 
 ## Hardware
 
