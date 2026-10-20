@@ -1,0 +1,270 @@
+  shim: patched vllm 0.30.0: openai-chat -> tabby_chat (usage from any frame, CRLF SSE, min_tokens=output_len ON); SpecBench skip_chat_template forced, SpecBench jsonl read without pandas; sample manifest ON
+  preflight: tokenizer CachedQwen2Tokenizer vocab 248077 | template tail 'user\nhi<|im_end|>\n<|im_start|>assistant\n<think>\n'
+  preflight: specbench rows 480
+  preflight: specbench templated prompt tokens max 1540 | >= 1472: 3 | >= 2944: 0
+2026-10-19T23:35:17+00:00 [r27-ba4-std-bench] queued behind: ba4-promote(pid 1861146)
+r27-ba4-curves(pid 2182015)
+2026-10-19T23:54:22+00:00 [r27-ba4-std-bench] lock held; GLM at entry: down; :8020 empty; direct clients stopped: hermes hermes-webui owui-proxy; passes A B; datasets sharegpt specbench; concs 1 2 4 6 8 12 16; SG_N 400 seed 7310; SB_N 480 out 256; POWER stock (want 600 575 W); offsets now core 0 0 / memory 4500 4500, power 600 575 W; GLM restore helper md5 bdf38e5a2a051b04f391c9bd2bdf4923; native-l2  223G 393G 60%
+2026-10-19T23:54:22+00:00 [r27-ba4-std-bench] GLM daily stopped (logs archived)
+2026-10-19T23:57:12+00:00 [r27-ba4-std-bench] [A-sharegpt-c1] stopped again after the boot: owui-proxy (launch-daily-v0280.sh restarts owui-proxy)
+2026-10-19T23:57:13+00:00 [r27-ba4-std-bench] [A-sharegpt-c1] UP after 1 attempt(s): image vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan (sha256:1df9b4c4e1d2); launcher md5 7cb1a981b0d7db5a54dd8e03c52e1b09; vllm 0.31.0; engine config sha 72477f4ec2f0 (env 48); pool 1391795 (R675 1391795); SEQS 16; power 600 575 W (launcher: power 400.00/400.00 W; unit: POWER=stock); core offsets 0 0; memory offsets 4500 4500 (clock offsets: memory +4500, core 0 on every GPU; readback mem 4500 4500 | core 0 0); VRAM free 3569/3569
+2026-10-19T23:57:13+00:00 [r27-ba4-std-bench] [A-sharegpt-c1] warm-up: 1/1 ok, completion tokens [64]
+2026-10-19T23:57:15+00:00 [r27-ba4-std-bench] [A-sharegpt-c1] warm-up counters: requests 1, generation tokens 64, drafts 17, running/waiting now 0/0
+2026-10-20T00:03:14+00:00 [r27-ba4-std-bench] [A-sharegpt-c1] rc 0; 1 shim line; 400 sampled; server: requests 400/400, generation tokens 84120, prompt tokens 92102, cached 0 GPU + 0 tier, accepted 55329 of 86670 drafted, preemptions 0, running/waiting at end 0/0; Successful requests: 400 ;Failed requests: 0 ;Benchmark duration (s): 340.30 ;Output token throughput (tok/s): 247.19 ;Median TPOT (ms): 3.69 ; engine ERROR lines 0 tracebacks 0 OOM 0; offsets after core 0 0 memory 4500 4500, power 600 575 W
+2026-10-20T00:06:06+00:00 [r27-ba4-std-bench] [A-sharegpt-c2] stopped again after the boot: owui-proxy (launch-daily-v0280.sh restarts owui-proxy)
+2026-10-20T00:06:07+00:00 [r27-ba4-std-bench] [A-sharegpt-c2] UP after 1 attempt(s): image vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan (sha256:1df9b4c4e1d2); launcher md5 7cb1a981b0d7db5a54dd8e03c52e1b09; vllm 0.31.0; engine config sha 72477f4ec2f0 (env 48); pool 1391795 (R675 1391795); SEQS 16; power 600 575 W (launcher: power 400.00/400.00 W; unit: POWER=stock); core offsets 0 0; memory offsets 4500 4500 (clock offsets: memory +4500, core 0 on every GPU; readback mem 4500 4500 | core 0 0); VRAM free 3709/3677
+2026-10-20T00:06:07+00:00 [r27-ba4-std-bench] [A-sharegpt-c2] warm-up: 2/2 ok, completion tokens [64, 64]
+2026-10-20T00:06:09+00:00 [r27-ba4-std-bench] [A-sharegpt-c2] warm-up counters: requests 2, generation tokens 128, drafts 43, running/waiting now 0/0
+2026-10-20T00:09:59+00:00 [r27-ba4-std-bench] [A-sharegpt-c2] rc 0; 1 shim line; 400 sampled; server: requests 400/400, generation tokens 84120, prompt tokens 92102, cached 0 GPU + 0 tier, accepted 55477 of 86091 drafted, preemptions 0, running/waiting at end 0/0; Successful requests: 400 ;Failed requests: 0 ;Benchmark duration (s): 210.66 ;Output token throughput (tok/s): 399.31 ;Median TPOT (ms): 4.49 ; engine ERROR lines 0 tracebacks 0 OOM 0; offsets after core 0 0 memory 4500 4500, power 600 575 W
+2026-10-20T00:12:51+00:00 [r27-ba4-std-bench] [A-sharegpt-c4] stopped again after the boot: owui-proxy (launch-daily-v0280.sh restarts owui-proxy)
+2026-10-20T00:12:51+00:00 [r27-ba4-std-bench] [A-sharegpt-c4] UP after 1 attempt(s): image vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan (sha256:1df9b4c4e1d2); launcher md5 7cb1a981b0d7db5a54dd8e03c52e1b09; vllm 0.31.0; engine config sha 72477f4ec2f0 (env 48); pool 1391795 (R675 1391795); SEQS 16; power 600 575 W (launcher: power 400.00/400.00 W; unit: POWER=stock); core offsets 0 0; memory offsets 4500 4500 (clock offsets: memory +4500, core 0 on every GPU; readback mem 4500 4500 | core 0 0); VRAM free 3815/3815
+2026-10-20T00:12:51+00:00 [r27-ba4-std-bench] [A-sharegpt-c4] warm-up: 4/4 ok, completion tokens [64, 64, 64, 64]
+2026-10-20T00:12:54+00:00 [r27-ba4-std-bench] [A-sharegpt-c4] warm-up counters: requests 4, generation tokens 256, drafts 84, running/waiting now 0/0
+2026-10-20T00:15:08+00:00 [r27-ba4-std-bench] [A-sharegpt-c4] rc 0; 1 shim line; 400 sampled; server: requests 400/400, generation tokens 84120, prompt tokens 92102, cached 0 GPU + 0 tier, accepted 55503 of 86193 drafted, preemptions 0, running/waiting at end 0/0; Successful requests: 400 ;Failed requests: 0 ;Benchmark duration (s): 116.09 ;Output token throughput (tok/s): 724.61 ;Median TPOT (ms): 4.88 ; engine ERROR lines 0 tracebacks 0 OOM 0; offsets after core 0 0 memory 4500 4500, power 600 575 W
+2026-10-20T00:18:00+00:00 [r27-ba4-std-bench] [A-sharegpt-c6] stopped again after the boot: owui-proxy (launch-daily-v0280.sh restarts owui-proxy)
+2026-10-20T00:18:01+00:00 [r27-ba4-std-bench] [A-sharegpt-c6] UP after 1 attempt(s): image vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan (sha256:1df9b4c4e1d2); launcher md5 7cb1a981b0d7db5a54dd8e03c52e1b09; vllm 0.31.0; engine config sha 72477f4ec2f0 (env 48); pool 1391795 (R675 1391795); SEQS 16; power 600 575 W (launcher: power 400.00/400.00 W; unit: POWER=stock); core offsets 0 0; memory offsets 4500 4500 (clock offsets: memory +4500, core 0 on every GPU; readback mem 4500 4500 | core 0 0); VRAM free 3811/3811
+2026-10-20T00:18:01+00:00 [r27-ba4-std-bench] [A-sharegpt-c6] warm-up: 6/6 ok, completion tokens [64, 64, 64, 64, 64, 64]
+2026-10-20T00:18:03+00:00 [r27-ba4-std-bench] [A-sharegpt-c6] warm-up counters: requests 6, generation tokens 384, drafts 123, running/waiting now 0/0
+2026-10-20T00:19:49+00:00 [r27-ba4-std-bench] [A-sharegpt-c6] rc 0; 1 shim line; 400 sampled; server: requests 400/400, generation tokens 84120, prompt tokens 92102, cached 0 GPU + 0 tier, accepted 55440 of 86403 drafted, preemptions 0, running/waiting at end 0/0; Successful requests: 400 ;Failed requests: 0 ;Benchmark duration (s): 87.40 ;Output token throughput (tok/s): 962.52 ;Median TPOT (ms): 5.41 ; engine ERROR lines 0 tracebacks 0 OOM 0; offsets after core 0 0 memory 4500 4500, power 600 575 W
+2026-10-20T00:22:41+00:00 [r27-ba4-std-bench] [A-sharegpt-c8] stopped again after the boot: owui-proxy (launch-daily-v0280.sh restarts owui-proxy)
+2026-10-20T00:22:41+00:00 [r27-ba4-std-bench] [A-sharegpt-c8] UP after 1 attempt(s): image vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan (sha256:1df9b4c4e1d2); launcher md5 7cb1a981b0d7db5a54dd8e03c52e1b09; vllm 0.31.0; engine config sha 72477f4ec2f0 (env 48); pool 1391795 (R675 1391795); SEQS 16; power 600 575 W (launcher: power 400.00/400.00 W; unit: POWER=stock); core offsets 0 0; memory offsets 4500 4500 (clock offsets: memory +4500, core 0 on every GPU; readback mem 4500 4500 | core 0 0); VRAM free 3505/3505
+2026-10-20T00:22:42+00:00 [r27-ba4-std-bench] [A-sharegpt-c8] warm-up: 8/8 ok, completion tokens [64, 64, 64, 64, 64, 64, 64, 64]
+2026-10-20T00:22:44+00:00 [r27-ba4-std-bench] [A-sharegpt-c8] warm-up counters: requests 8, generation tokens 512, drafts 155, running/waiting now 0/0
+2026-10-20T00:24:18+00:00 [r27-ba4-std-bench] [A-sharegpt-c8] rc 0; 1 shim line; 400 sampled; server: requests 400/400, generation tokens 84120, prompt tokens 92102, cached 0 GPU + 0 tier, accepted 55547 of 86031 drafted, preemptions 0, running/waiting at end 0/0; Successful requests: 400 ;Failed requests: 0 ;Benchmark duration (s): 74.76 ;Output token throughput (tok/s): 1125.22 ;Median TPOT (ms): 6.17 ; engine ERROR lines 0 tracebacks 0 OOM 0; offsets after core 0 0 memory 4500 4500, power 600 575 W
+2026-10-20T00:27:10+00:00 [r27-ba4-std-bench] [A-sharegpt-c12] stopped again after the boot: owui-proxy (launch-daily-v0280.sh restarts owui-proxy)
+2026-10-20T00:27:10+00:00 [r27-ba4-std-bench] [A-sharegpt-c12] UP after 1 attempt(s): image vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan (sha256:1df9b4c4e1d2); launcher md5 7cb1a981b0d7db5a54dd8e03c52e1b09; vllm 0.31.0; engine config sha 72477f4ec2f0 (env 48); pool 1391795 (R675 1391795); SEQS 16; power 600 575 W (launcher: power 400.00/400.00 W; unit: POWER=stock); core offsets 0 0; memory offsets 4500 4500 (clock offsets: memory +4500, core 0 on every GPU; readback mem 4500 4500 | core 0 0); VRAM free 3569/3569
+2026-10-20T00:27:11+00:00 [r27-ba4-std-bench] [A-sharegpt-c12] warm-up: 12/12 ok, completion tokens [64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64]
+2026-10-20T00:27:13+00:00 [r27-ba4-std-bench] [A-sharegpt-c12] warm-up counters: requests 12, generation tokens 768, drafts 229, running/waiting now 0/0
+2026-10-20T00:28:32+00:00 [r27-ba4-std-bench] [A-sharegpt-c12] rc 0; 1 shim line; 400 sampled; server: requests 400/400, generation tokens 84120, prompt tokens 92102, cached 0 GPU + 0 tier, accepted 55312 of 86697 drafted, preemptions 0, running/waiting at end 0/0; Successful requests: 400 ;Failed requests: 0 ;Benchmark duration (s): 60.65 ;Output token throughput (tok/s): 1386.95 ;Median TPOT (ms): 7.61 ; engine ERROR lines 0 tracebacks 0 OOM 0; offsets after core 0 0 memory 4500 4500, power 600 575 W
+2026-10-20T00:31:24+00:00 [r27-ba4-std-bench] [A-sharegpt-c16] stopped again after the boot: owui-proxy (launch-daily-v0280.sh restarts owui-proxy)
+2026-10-20T00:31:25+00:00 [r27-ba4-std-bench] [A-sharegpt-c16] UP after 1 attempt(s): image vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan (sha256:1df9b4c4e1d2); launcher md5 7cb1a981b0d7db5a54dd8e03c52e1b09; vllm 0.31.0; engine config sha 72477f4ec2f0 (env 48); pool 1391795 (R675 1391795); SEQS 16; power 600 575 W (launcher: power 400.00/400.00 W; unit: POWER=stock); core offsets 0 0; memory offsets 4500 4500 (clock offsets: memory +4500, core 0 on every GPU; readback mem 4500 4500 | core 0 0); VRAM free 3503/3505
+2026-10-20T00:31:25+00:00 [r27-ba4-std-bench] [A-sharegpt-c16] warm-up: 16/16 ok, completion tokens [64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64]
+2026-10-20T00:31:27+00:00 [r27-ba4-std-bench] [A-sharegpt-c16] warm-up counters: requests 16, generation tokens 1024, drafts 312, running/waiting now 0/0
+2026-10-20T00:32:37+00:00 [r27-ba4-std-bench] [A-sharegpt-c16] rc 0; 1 shim line; 400 sampled; server: requests 400/400, generation tokens 84120, prompt tokens 92102, cached 0 GPU + 0 tier, accepted 55388 of 86553 drafted, preemptions 0, running/waiting at end 0/0; Successful requests: 400 ;Failed requests: 0 ;Benchmark duration (s): 53.05 ;Output token throughput (tok/s): 1585.69 ;Median TPOT (ms): 8.76 ; engine ERROR lines 0 tracebacks 0 OOM 0; offsets after core 0 0 memory 4500 4500, power 600 575 W
+2026-10-20T00:35:29+00:00 [r27-ba4-std-bench] [A-specbench-c1] stopped again after the boot: owui-proxy (launch-daily-v0280.sh restarts owui-proxy)
+2026-10-20T00:35:30+00:00 [r27-ba4-std-bench] [A-specbench-c1] UP after 1 attempt(s): image vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan (sha256:1df9b4c4e1d2); launcher md5 7cb1a981b0d7db5a54dd8e03c52e1b09; vllm 0.31.0; engine config sha 72477f4ec2f0 (env 48); pool 1391795 (R675 1391795); SEQS 16; power 600 575 W (launcher: power 400.00/400.00 W; unit: POWER=stock); core offsets 0 0; memory offsets 4500 4500 (clock offsets: memory +4500, core 0 on every GPU; readback mem 4500 4500 | core 0 0); VRAM free 3815/3815
+2026-10-20T00:35:30+00:00 [r27-ba4-std-bench] [A-specbench-c1] warm-up: 1/1 ok, completion tokens [64]
+2026-10-20T00:35:32+00:00 [r27-ba4-std-bench] [A-specbench-c1] warm-up counters: requests 1, generation tokens 64, drafts 22, running/waiting now 0/0
+2026-10-20T00:43:11+00:00 [r27-ba4-std-bench] [A-specbench-c1] rc 0; 1 shim line; 480 sampled; server: requests 480/480, generation tokens 122880, prompt tokens 134377, cached 0 GPU + 0 tier, accepted 84851 of 114414 drafted, preemptions 0, running/waiting at end 0/0; Successful requests: 480 ;Failed requests: 0 ;Benchmark duration (s): 443.42 ;Output token throughput (tok/s): 277.12 ;Median TPOT (ms): 3.33 ; engine ERROR lines 0 tracebacks 0 OOM 0; offsets after core 0 0 memory 4500 4500, power 600 575 W
+2026-10-20T00:46:03+00:00 [r27-ba4-std-bench] [A-specbench-c2] stopped again after the boot: owui-proxy (launch-daily-v0280.sh restarts owui-proxy)
+2026-10-20T00:46:03+00:00 [r27-ba4-std-bench] [A-specbench-c2] UP after 1 attempt(s): image vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan (sha256:1df9b4c4e1d2); launcher md5 7cb1a981b0d7db5a54dd8e03c52e1b09; vllm 0.31.0; engine config sha 72477f4ec2f0 (env 48); pool 1391795 (R675 1391795); SEQS 16; power 600 575 W (launcher: power 400.00/400.00 W; unit: POWER=stock); core offsets 0 0; memory offsets 4500 4500 (clock offsets: memory +4500, core 0 on every GPU; readback mem 4500 4500 | core 0 0); VRAM free 3573/3573
+2026-10-20T00:46:03+00:00 [r27-ba4-std-bench] [A-specbench-c2] warm-up: 2/2 ok, completion tokens [64, 64]
+2026-10-20T00:46:05+00:00 [r27-ba4-std-bench] [A-specbench-c2] warm-up counters: requests 2, generation tokens 128, drafts 39, running/waiting now 0/0
+2026-10-20T00:50:54+00:00 [r27-ba4-std-bench] [A-specbench-c2] rc 0; 1 shim line; 480 sampled; server: requests 480/480, generation tokens 122880, prompt tokens 134377, cached 0 GPU + 0 tier, accepted 84889 of 114390 drafted, preemptions 0, running/waiting at end 0/0; Successful requests: 480 ;Failed requests: 0 ;Benchmark duration (s): 273.46 ;Output token throughput (tok/s): 449.35 ;Median TPOT (ms): 4.04 ; engine ERROR lines 0 tracebacks 0 OOM 0; offsets after core 0 0 memory 4500 4500, power 600 575 W
+2026-10-20T00:53:46+00:00 [r27-ba4-std-bench] [A-specbench-c4] stopped again after the boot: owui-proxy (launch-daily-v0280.sh restarts owui-proxy)
+2026-10-20T00:53:47+00:00 [r27-ba4-std-bench] [A-specbench-c4] UP after 1 attempt(s): image vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan (sha256:1df9b4c4e1d2); launcher md5 7cb1a981b0d7db5a54dd8e03c52e1b09; vllm 0.31.0; engine config sha 72477f4ec2f0 (env 48); pool 1391795 (R675 1391795); SEQS 16; power 600 575 W (launcher: power 400.00/400.00 W; unit: POWER=stock); core offsets 0 0; memory offsets 4500 4500 (clock offsets: memory +4500, core 0 on every GPU; readback mem 4500 4500 | core 0 0); VRAM free 3573/3573
+2026-10-20T00:53:47+00:00 [r27-ba4-std-bench] [A-specbench-c4] warm-up: 4/4 ok, completion tokens [64, 64, 64, 64]
+2026-10-20T00:53:49+00:00 [r27-ba4-std-bench] [A-specbench-c4] warm-up counters: requests 4, generation tokens 256, drafts 84, running/waiting now 0/0
+2026-10-20T00:56:33+00:00 [r27-ba4-std-bench] [A-specbench-c4] rc 0; 1 shim line; 480 sampled; server: requests 480/480, generation tokens 122880, prompt tokens 134377, cached 0 GPU + 0 tier, accepted 85038 of 113961 drafted, preemptions 0, running/waiting at end 0/0; Successful requests: 480 ;Failed requests: 0 ;Benchmark duration (s): 148.16 ;Output token throughput (tok/s): 829.38 ;Median TPOT (ms): 4.41 ; engine ERROR lines 0 tracebacks 0 OOM 0; offsets after core 0 0 memory 4500 4500, power 600 575 W
+2026-10-20T00:59:24+00:00 [r27-ba4-std-bench] [A-specbench-c6] stopped again after the boot: owui-proxy (launch-daily-v0280.sh restarts owui-proxy)
+2026-10-20T00:59:25+00:00 [r27-ba4-std-bench] [A-specbench-c6] UP after 1 attempt(s): image vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan (sha256:1df9b4c4e1d2); launcher md5 7cb1a981b0d7db5a54dd8e03c52e1b09; vllm 0.31.0; engine config sha 72477f4ec2f0 (env 48); pool 1391795 (R675 1391795); SEQS 16; power 600 575 W (launcher: power 400.00/400.00 W; unit: POWER=stock); core offsets 0 0; memory offsets 4500 4500 (clock offsets: memory +4500, core 0 on every GPU; readback mem 4500 4500 | core 0 0); VRAM free 3591/3557
+2026-10-20T00:59:25+00:00 [r27-ba4-std-bench] [A-specbench-c6] warm-up: 6/6 ok, completion tokens [64, 64, 64, 64, 64, 64]
+2026-10-20T00:59:27+00:00 [r27-ba4-std-bench] [A-specbench-c6] warm-up counters: requests 6, generation tokens 384, drafts 125, running/waiting now 0/0
+2026-10-20T01:01:33+00:00 [r27-ba4-std-bench] [A-specbench-c6] rc 0; 1 shim line; 480 sampled; server: requests 480/480, generation tokens 122880, prompt tokens 134377, cached 0 GPU + 0 tier, accepted 84849 of 114507 drafted, preemptions 0, running/waiting at end 0/0; Successful requests: 480 ;Failed requests: 0 ;Benchmark duration (s): 111.52 ;Output token throughput (tok/s): 1101.89 ;Median TPOT (ms): 4.99 ; engine ERROR lines 0 tracebacks 0 OOM 0; offsets after core 0 0 memory 4500 4500, power 600 575 W
+2026-10-20T01:04:25+00:00 [r27-ba4-std-bench] [A-specbench-c8] stopped again after the boot: owui-proxy (launch-daily-v0280.sh restarts owui-proxy)
+2026-10-20T01:04:25+00:00 [r27-ba4-std-bench] [A-specbench-c8] UP after 1 attempt(s): image vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan (sha256:1df9b4c4e1d2); launcher md5 7cb1a981b0d7db5a54dd8e03c52e1b09; vllm 0.31.0; engine config sha 72477f4ec2f0 (env 48); pool 1391795 (R675 1391795); SEQS 16; power 600 575 W (launcher: power 400.00/400.00 W; unit: POWER=stock); core offsets 0 0; memory offsets 4500 4500 (clock offsets: memory +4500, core 0 on every GPU; readback mem 4500 4500 | core 0 0); VRAM free 3815/3817
+2026-10-20T01:04:26+00:00 [r27-ba4-std-bench] [A-specbench-c8] warm-up: 8/8 ok, completion tokens [64, 64, 64, 64, 64, 64, 64, 64]
+2026-10-20T01:04:28+00:00 [r27-ba4-std-bench] [A-specbench-c8] warm-up counters: requests 8, generation tokens 512, drafts 167, running/waiting now 0/0
+2026-10-20T01:06:16+00:00 [r27-ba4-std-bench] [A-specbench-c8] rc 0; 1 shim line; 480 sampled; server: requests 480/480, generation tokens 122880, prompt tokens 134377, cached 0 GPU + 0 tier, accepted 85012 of 114018 drafted, preemptions 0, running/waiting at end 0/0; Successful requests: 480 ;Failed requests: 0 ;Benchmark duration (s): 92.33 ;Output token throughput (tok/s): 1330.94 ;Median TPOT (ms): 5.53 ; engine ERROR lines 0 tracebacks 0 OOM 0; offsets after core 0 0 memory 4500 4500, power 600 575 W
+2026-10-20T01:09:08+00:00 [r27-ba4-std-bench] [A-specbench-c12] stopped again after the boot: owui-proxy (launch-daily-v0280.sh restarts owui-proxy)
+2026-10-20T01:09:08+00:00 [r27-ba4-std-bench] [A-specbench-c12] UP after 1 attempt(s): image vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan (sha256:1df9b4c4e1d2); launcher md5 7cb1a981b0d7db5a54dd8e03c52e1b09; vllm 0.31.0; engine config sha 72477f4ec2f0 (env 48); pool 1391795 (R675 1391795); SEQS 16; power 600 575 W (launcher: power 400.00/400.00 W; unit: POWER=stock); core offsets 0 0; memory offsets 4500 4500 (clock offsets: memory +4500, core 0 on every GPU; readback mem 4500 4500 | core 0 0); VRAM free 3151/3151
+2026-10-20T01:09:09+00:00 [r27-ba4-std-bench] [A-specbench-c12] warm-up: 12/12 ok, completion tokens [64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64]
+2026-10-20T01:09:11+00:00 [r27-ba4-std-bench] [A-specbench-c12] warm-up counters: requests 12, generation tokens 768, drafts 246, running/waiting now 0/0
+2026-10-20T01:10:38+00:00 [r27-ba4-std-bench] [A-specbench-c12] rc 0; 1 shim line; 480 sampled; server: requests 480/480, generation tokens 122880, prompt tokens 134377, cached 0 GPU + 0 tier, accepted 84796 of 114597 drafted, preemptions 0, running/waiting at end 0/0; Successful requests: 480 ;Failed requests: 0 ;Benchmark duration (s): 73.20 ;Output token throughput (tok/s): 1678.63 ;Median TPOT (ms): 6.54 ; engine ERROR lines 0 tracebacks 0 OOM 0; offsets after core 0 0 memory 4500 4500, power 600 575 W
+2026-10-20T01:13:30+00:00 [r27-ba4-std-bench] [A-specbench-c16] stopped again after the boot: owui-proxy (launch-daily-v0280.sh restarts owui-proxy)
+2026-10-20T01:13:30+00:00 [r27-ba4-std-bench] [A-specbench-c16] UP after 1 attempt(s): image vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan (sha256:1df9b4c4e1d2); launcher md5 7cb1a981b0d7db5a54dd8e03c52e1b09; vllm 0.31.0; engine config sha 72477f4ec2f0 (env 48); pool 1391795 (R675 1391795); SEQS 16; power 600 575 W (launcher: power 400.00/400.00 W; unit: POWER=stock); core offsets 0 0; memory offsets 4500 4500 (clock offsets: memory +4500, core 0 on every GPU; readback mem 4500 4500 | core 0 0); VRAM free 3685/3685
+2026-10-20T01:13:31+00:00 [r27-ba4-std-bench] [A-specbench-c16] warm-up: 16/16 ok, completion tokens [64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64]
+2026-10-20T01:13:33+00:00 [r27-ba4-std-bench] [A-specbench-c16] warm-up counters: requests 16, generation tokens 1024, drafts 331, running/waiting now 0/0
+2026-10-20T01:14:52+00:00 [r27-ba4-std-bench] [A-specbench-c16] rc 0; 1 shim line; 480 sampled; server: requests 480/480, generation tokens 122880, prompt tokens 134377, cached 0 GPU + 0 tier, accepted 84934 of 114201 drafted, preemptions 0, running/waiting at end 0/0; Successful requests: 480 ;Failed requests: 0 ;Benchmark duration (s): 64.45 ;Output token throughput (tok/s): 1906.49 ;Median TPOT (ms): 7.73 ; engine ERROR lines 0 tracebacks 0 OOM 0; offsets after core 0 0 memory 4500 4500, power 600 575 W
+2026-10-20T01:17:44+00:00 [r27-ba4-std-bench] [B-sharegpt-c1] stopped again after the boot: owui-proxy (launch-daily-v0280.sh restarts owui-proxy)
+2026-10-20T01:17:45+00:00 [r27-ba4-std-bench] [B-sharegpt-c1] UP after 1 attempt(s): image vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan (sha256:1df9b4c4e1d2); launcher md5 7cb1a981b0d7db5a54dd8e03c52e1b09; vllm 0.31.0; engine config sha 72477f4ec2f0 (env 48); pool 1391795 (R675 1391795); SEQS 16; power 600 575 W (launcher: power 400.00/400.00 W; unit: POWER=stock); core offsets 0 0; memory offsets 4500 4500 (clock offsets: memory +4500, core 0 on every GPU; readback mem 4500 4500 | core 0 0); VRAM free 3439/3439
+2026-10-20T01:17:45+00:00 [r27-ba4-std-bench] [B-sharegpt-c1] warm-up: 1/1 ok, completion tokens [64]
+2026-10-20T01:17:47+00:00 [r27-ba4-std-bench] [B-sharegpt-c1] warm-up counters: requests 1, generation tokens 64, drafts 18, running/waiting now 0/0
+2026-10-20T01:23:46+00:00 [r27-ba4-std-bench] [B-sharegpt-c1] rc 0; 1 shim line; 400 sampled; server: requests 400/400, generation tokens 84120, prompt tokens 92102, cached 0 GPU + 0 tier, accepted 55330 of 86646 drafted, preemptions 0, running/waiting at end 0/0; Successful requests: 400 ;Failed requests: 0 ;Benchmark duration (s): 341.73 ;Output token throughput (tok/s): 246.16 ;Median TPOT (ms): 3.71 ; engine ERROR lines 0 tracebacks 0 OOM 0; offsets after core 0 0 memory 4500 4500, power 600 575 W
+2026-10-20T01:26:38+00:00 [r27-ba4-std-bench] [B-sharegpt-c2] stopped again after the boot: owui-proxy (launch-daily-v0280.sh restarts owui-proxy)
+2026-10-20T01:26:38+00:00 [r27-ba4-std-bench] [B-sharegpt-c2] UP after 1 attempt(s): image vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan (sha256:1df9b4c4e1d2); launcher md5 7cb1a981b0d7db5a54dd8e03c52e1b09; vllm 0.31.0; engine config sha 72477f4ec2f0 (env 48); pool 1391795 (R675 1391795); SEQS 16; power 600 575 W (launcher: power 400.00/400.00 W; unit: POWER=stock); core offsets 0 0; memory offsets 4500 4500 (clock offsets: memory +4500, core 0 on every GPU; readback mem 4500 4500 | core 0 0); VRAM free 3565/3565
+2026-10-20T01:26:39+00:00 [r27-ba4-std-bench] [B-sharegpt-c2] warm-up: 2/2 ok, completion tokens [64, 64]
+2026-10-20T01:26:41+00:00 [r27-ba4-std-bench] [B-sharegpt-c2] warm-up counters: requests 2, generation tokens 128, drafts 41, running/waiting now 0/0
+2026-10-20T01:30:28+00:00 [r27-ba4-std-bench] [B-sharegpt-c2] rc 0; 1 shim line; 400 sampled; server: requests 400/400, generation tokens 84120, prompt tokens 92102, cached 0 GPU + 0 tier, accepted 55419 of 86385 drafted, preemptions 0, running/waiting at end 0/0; Successful requests: 400 ;Failed requests: 0 ;Benchmark duration (s): 209.60 ;Output token throughput (tok/s): 401.34 ;Median TPOT (ms): 4.47 ; engine ERROR lines 0 tracebacks 0 OOM 0; offsets after core 0 0 memory 4500 4500, power 600 575 W
+2026-10-20T01:33:20+00:00 [r27-ba4-std-bench] [B-sharegpt-c4] stopped again after the boot: owui-proxy (launch-daily-v0280.sh restarts owui-proxy)
+2026-10-20T01:33:20+00:00 [r27-ba4-std-bench] [B-sharegpt-c4] UP after 1 attempt(s): image vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan (sha256:1df9b4c4e1d2); launcher md5 7cb1a981b0d7db5a54dd8e03c52e1b09; vllm 0.31.0; engine config sha 72477f4ec2f0 (env 48); pool 1391795 (R675 1391795); SEQS 16; power 600 575 W (launcher: power 400.00/400.00 W; unit: POWER=stock); core offsets 0 0; memory offsets 4500 4500 (clock offsets: memory +4500, core 0 on every GPU; readback mem 4500 4500 | core 0 0); VRAM free 3491/3493
+2026-10-20T01:33:21+00:00 [r27-ba4-std-bench] [B-sharegpt-c4] warm-up: 4/4 ok, completion tokens [64, 64, 64, 64]
+2026-10-20T01:33:23+00:00 [r27-ba4-std-bench] [B-sharegpt-c4] warm-up counters: requests 4, generation tokens 256, drafts 83, running/waiting now 0/0
+2026-10-20T01:35:36+00:00 [r27-ba4-std-bench] [B-sharegpt-c4] rc 0; 1 shim line; 400 sampled; server: requests 400/400, generation tokens 84120, prompt tokens 92102, cached 0 GPU + 0 tier, accepted 55673 of 85755 drafted, preemptions 0, running/waiting at end 0/0; Successful requests: 400 ;Failed requests: 0 ;Benchmark duration (s): 114.79 ;Output token throughput (tok/s): 732.81 ;Median TPOT (ms): 4.86 ; engine ERROR lines 0 tracebacks 0 OOM 0; offsets after core 0 0 memory 4500 4500, power 600 575 W
+2026-10-20T01:38:28+00:00 [r27-ba4-std-bench] [B-sharegpt-c6] stopped again after the boot: owui-proxy (launch-daily-v0280.sh restarts owui-proxy)
+2026-10-20T01:38:28+00:00 [r27-ba4-std-bench] [B-sharegpt-c6] UP after 1 attempt(s): image vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan (sha256:1df9b4c4e1d2); launcher md5 7cb1a981b0d7db5a54dd8e03c52e1b09; vllm 0.31.0; engine config sha 72477f4ec2f0 (env 48); pool 1391795 (R675 1391795); SEQS 16; power 600 575 W (launcher: power 400.00/400.00 W; unit: POWER=stock); core offsets 0 0; memory offsets 4500 4500 (clock offsets: memory +4500, core 0 on every GPU; readback mem 4500 4500 | core 0 0); VRAM free 3309/3311
+2026-10-20T01:38:29+00:00 [r27-ba4-std-bench] [B-sharegpt-c6] warm-up: 6/6 ok, completion tokens [64, 64, 64, 64, 64, 64]
+2026-10-20T01:38:31+00:00 [r27-ba4-std-bench] [B-sharegpt-c6] warm-up counters: requests 6, generation tokens 384, drafts 122, running/waiting now 0/0
+2026-10-20T01:40:16+00:00 [r27-ba4-std-bench] [B-sharegpt-c6] rc 0; 1 shim line; 400 sampled; server: requests 400/400, generation tokens 84120, prompt tokens 92102, cached 0 GPU + 0 tier, accepted 55607 of 85791 drafted, preemptions 0, running/waiting at end 0/0; Successful requests: 400 ;Failed requests: 0 ;Benchmark duration (s): 87.82 ;Output token throughput (tok/s): 957.92 ;Median TPOT (ms): 5.50 ; engine ERROR lines 0 tracebacks 0 OOM 0; offsets after core 0 0 memory 4500 4500, power 600 575 W
+2026-10-20T01:43:08+00:00 [r27-ba4-std-bench] [B-sharegpt-c8] stopped again after the boot: owui-proxy (launch-daily-v0280.sh restarts owui-proxy)
+2026-10-20T01:43:09+00:00 [r27-ba4-std-bench] [B-sharegpt-c8] UP after 1 attempt(s): image vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan (sha256:1df9b4c4e1d2); launcher md5 7cb1a981b0d7db5a54dd8e03c52e1b09; vllm 0.31.0; engine config sha 72477f4ec2f0 (env 48); pool 1391795 (R675 1391795); SEQS 16; power 600 575 W (launcher: power 400.00/400.00 W; unit: POWER=stock); core offsets 0 0; memory offsets 4500 4500 (clock offsets: memory +4500, core 0 on every GPU; readback mem 4500 4500 | core 0 0); VRAM free 3565/3567
+2026-10-20T01:43:09+00:00 [r27-ba4-std-bench] [B-sharegpt-c8] warm-up: 8/8 ok, completion tokens [64, 64, 64, 64, 64, 64, 64, 64]
+2026-10-20T01:43:11+00:00 [r27-ba4-std-bench] [B-sharegpt-c8] warm-up counters: requests 8, generation tokens 512, drafts 165, running/waiting now 0/0
+2026-10-20T01:44:43+00:00 [r27-ba4-std-bench] [B-sharegpt-c8] rc 0; 1 shim line; 400 sampled; server: requests 400/400, generation tokens 84120, prompt tokens 92102, cached 0 GPU + 0 tier, accepted 55505 of 86115 drafted, preemptions 0, running/waiting at end 0/0; Successful requests: 400 ;Failed requests: 0 ;Benchmark duration (s): 73.77 ;Output token throughput (tok/s): 1140.25 ;Median TPOT (ms): 6.19 ; engine ERROR lines 0 tracebacks 0 OOM 0; offsets after core 0 0 memory 4500 4500, power 600 575 W
+2026-10-20T01:47:35+00:00 [r27-ba4-std-bench] [B-sharegpt-c12] stopped again after the boot: owui-proxy (launch-daily-v0280.sh restarts owui-proxy)
+2026-10-20T01:47:35+00:00 [r27-ba4-std-bench] [B-sharegpt-c12] UP after 1 attempt(s): image vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan (sha256:1df9b4c4e1d2); launcher md5 7cb1a981b0d7db5a54dd8e03c52e1b09; vllm 0.31.0; engine config sha 72477f4ec2f0 (env 48); pool 1391795 (R675 1391795); SEQS 16; power 600 575 W (launcher: power 400.00/400.00 W; unit: POWER=stock); core offsets 0 0; memory offsets 4500 4500 (clock offsets: memory +4500, core 0 on every GPU; readback mem 4500 4500 | core 0 0); VRAM free 3809/3809
+2026-10-20T01:47:36+00:00 [r27-ba4-std-bench] [B-sharegpt-c12] warm-up: 12/12 ok, completion tokens [64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64]
+2026-10-20T01:47:38+00:00 [r27-ba4-std-bench] [B-sharegpt-c12] warm-up counters: requests 12, generation tokens 768, drafts 239, running/waiting now 0/0
+2026-10-20T01:48:57+00:00 [r27-ba4-std-bench] [B-sharegpt-c12] rc 0; 1 shim line; 400 sampled; server: requests 400/400, generation tokens 84120, prompt tokens 92102, cached 0 GPU + 0 tier, accepted 55448 of 86223 drafted, preemptions 0, running/waiting at end 0/0; Successful requests: 400 ;Failed requests: 0 ;Benchmark duration (s): 60.35 ;Output token throughput (tok/s): 1393.95 ;Median TPOT (ms): 7.55 ; engine ERROR lines 0 tracebacks 0 OOM 0; offsets after core 0 0 memory 4500 4500, power 600 575 W
+2026-10-20T01:51:49+00:00 [r27-ba4-std-bench] [B-sharegpt-c16] stopped again after the boot: owui-proxy (launch-daily-v0280.sh restarts owui-proxy)
+2026-10-20T01:51:49+00:00 [r27-ba4-std-bench] [B-sharegpt-c16] UP after 1 attempt(s): image vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan (sha256:1df9b4c4e1d2); launcher md5 7cb1a981b0d7db5a54dd8e03c52e1b09; vllm 0.31.0; engine config sha 72477f4ec2f0 (env 48); pool 1391795 (R675 1391795); SEQS 16; power 600 575 W (launcher: power 400.00/400.00 W; unit: POWER=stock); core offsets 0 0; memory offsets 4500 4500 (clock offsets: memory +4500, core 0 on every GPU; readback mem 4500 4500 | core 0 0); VRAM free 3817/3819
+2026-10-20T01:51:50+00:00 [r27-ba4-std-bench] [B-sharegpt-c16] warm-up: 16/16 ok, completion tokens [64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64]
+2026-10-20T01:51:52+00:00 [r27-ba4-std-bench] [B-sharegpt-c16] warm-up counters: requests 16, generation tokens 1024, drafts 328, running/waiting now 0/0
+2026-10-20T01:53:03+00:00 [r27-ba4-std-bench] [B-sharegpt-c16] rc 0; 1 shim line; 400 sampled; server: requests 400/400, generation tokens 84120, prompt tokens 92102, cached 0 GPU + 0 tier, accepted 55615 of 85848 drafted, preemptions 0, running/waiting at end 0/0; Successful requests: 400 ;Failed requests: 0 ;Benchmark duration (s): 52.83 ;Output token throughput (tok/s): 1592.40 ;Median TPOT (ms): 8.74 ; engine ERROR lines 0 tracebacks 0 OOM 0; offsets after core 0 0 memory 4500 4500, power 600 575 W
+2026-10-20T01:55:55+00:00 [r27-ba4-std-bench] [B-specbench-c1] stopped again after the boot: owui-proxy (launch-daily-v0280.sh restarts owui-proxy)
+2026-10-20T01:55:55+00:00 [r27-ba4-std-bench] [B-specbench-c1] UP after 1 attempt(s): image vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan (sha256:1df9b4c4e1d2); launcher md5 7cb1a981b0d7db5a54dd8e03c52e1b09; vllm 0.31.0; engine config sha 72477f4ec2f0 (env 48); pool 1391795 (R675 1391795); SEQS 16; power 600 575 W (launcher: power 400.00/400.00 W; unit: POWER=stock); core offsets 0 0; memory offsets 4500 4500 (clock offsets: memory +4500, core 0 on every GPU; readback mem 4500 4500 | core 0 0); VRAM free 3063/3065
+2026-10-20T01:55:55+00:00 [r27-ba4-std-bench] [B-specbench-c1] warm-up: 1/1 ok, completion tokens [64]
+2026-10-20T01:55:57+00:00 [r27-ba4-std-bench] [B-specbench-c1] warm-up counters: requests 1, generation tokens 64, drafts 19, running/waiting now 0/0
+2026-10-20T02:03:38+00:00 [r27-ba4-std-bench] [B-specbench-c1] rc 0; 1 shim line; 480 sampled; server: requests 480/480, generation tokens 122880, prompt tokens 134377, cached 0 GPU + 0 tier, accepted 84795 of 114549 drafted, preemptions 0, running/waiting at end 0/0; Successful requests: 480 ;Failed requests: 0 ;Benchmark duration (s): 444.90 ;Output token throughput (tok/s): 276.20 ;Median TPOT (ms): 3.34 ; engine ERROR lines 0 tracebacks 0 OOM 0; offsets after core 0 0 memory 4500 4500, power 600 575 W
+2026-10-20T02:06:30+00:00 [r27-ba4-std-bench] [B-specbench-c2] stopped again after the boot: owui-proxy (launch-daily-v0280.sh restarts owui-proxy)
+2026-10-20T02:06:30+00:00 [r27-ba4-std-bench] [B-specbench-c2] UP after 1 attempt(s): image vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan (sha256:1df9b4c4e1d2); launcher md5 7cb1a981b0d7db5a54dd8e03c52e1b09; vllm 0.31.0; engine config sha 72477f4ec2f0 (env 48); pool 1391795 (R675 1391795); SEQS 16; power 600 575 W (launcher: power 400.00/400.00 W; unit: POWER=stock); core offsets 0 0; memory offsets 4500 4500 (clock offsets: memory +4500, core 0 on every GPU; readback mem 4500 4500 | core 0 0); VRAM free 3565/3565
+2026-10-20T02:06:31+00:00 [r27-ba4-std-bench] [B-specbench-c2] warm-up: 2/2 ok, completion tokens [64, 64]
+2026-10-20T02:06:33+00:00 [r27-ba4-std-bench] [B-specbench-c2] warm-up counters: requests 2, generation tokens 128, drafts 44, running/waiting now 0/0
+2026-10-20T02:11:20+00:00 [r27-ba4-std-bench] [B-specbench-c2] rc 0; 1 shim line; 480 sampled; server: requests 480/480, generation tokens 122880, prompt tokens 134377, cached 0 GPU + 0 tier, accepted 84896 of 114249 drafted, preemptions 0, running/waiting at end 0/0; Successful requests: 480 ;Failed requests: 0 ;Benchmark duration (s): 271.95 ;Output token throughput (tok/s): 451.85 ;Median TPOT (ms): 4.02 ; engine ERROR lines 0 tracebacks 0 OOM 0; offsets after core 0 0 memory 4500 4500, power 600 575 W
+2026-10-20T02:14:13+00:00 [r27-ba4-std-bench] [B-specbench-c4] stopped again after the boot: owui-proxy (launch-daily-v0280.sh restarts owui-proxy)
+2026-10-20T02:14:13+00:00 [r27-ba4-std-bench] [B-specbench-c4] UP after 1 attempt(s): image vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan (sha256:1df9b4c4e1d2); launcher md5 7cb1a981b0d7db5a54dd8e03c52e1b09; vllm 0.31.0; engine config sha 72477f4ec2f0 (env 48); pool 1391795 (R675 1391795); SEQS 16; power 600 575 W (launcher: power 400.00/400.00 W; unit: POWER=stock); core offsets 0 0; memory offsets 4500 4500 (clock offsets: memory +4500, core 0 on every GPU; readback mem 4500 4500 | core 0 0); VRAM free 3817/3817
+2026-10-20T02:14:13+00:00 [r27-ba4-std-bench] [B-specbench-c4] warm-up: 4/4 ok, completion tokens [64, 64, 64, 64]
+2026-10-20T02:14:16+00:00 [r27-ba4-std-bench] [B-specbench-c4] warm-up counters: requests 4, generation tokens 256, drafts 82, running/waiting now 0/0
+2026-10-20T02:16:58+00:00 [r27-ba4-std-bench] [B-specbench-c4] rc 0; 1 shim line; 480 sampled; server: requests 480/480, generation tokens 122880, prompt tokens 134377, cached 0 GPU + 0 tier, accepted 84893 of 114324 drafted, preemptions 0, running/waiting at end 0/0; Successful requests: 480 ;Failed requests: 0 ;Benchmark duration (s): 147.71 ;Output token throughput (tok/s): 831.91 ;Median TPOT (ms): 4.38 ; engine ERROR lines 0 tracebacks 0 OOM 0; offsets after core 0 0 memory 4500 4500, power 600 575 W
+2026-10-20T02:19:50+00:00 [r27-ba4-std-bench] [B-specbench-c6] stopped again after the boot: owui-proxy (launch-daily-v0280.sh restarts owui-proxy)
+2026-10-20T02:19:50+00:00 [r27-ba4-std-bench] [B-specbench-c6] UP after 1 attempt(s): image vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan (sha256:1df9b4c4e1d2); launcher md5 7cb1a981b0d7db5a54dd8e03c52e1b09; vllm 0.31.0; engine config sha 72477f4ec2f0 (env 48); pool 1391795 (R675 1391795); SEQS 16; power 600 575 W (launcher: power 400.00/400.00 W; unit: POWER=stock); core offsets 0 0; memory offsets 4500 4500 (clock offsets: memory +4500, core 0 on every GPU; readback mem 4500 4500 | core 0 0); VRAM free 3671/3671
+2026-10-20T02:19:51+00:00 [r27-ba4-std-bench] [B-specbench-c6] warm-up: 6/6 ok, completion tokens [64, 64, 64, 64, 64, 64]
+2026-10-20T02:19:53+00:00 [r27-ba4-std-bench] [B-specbench-c6] warm-up counters: requests 6, generation tokens 384, drafts 123, running/waiting now 0/0
+2026-10-20T02:22:01+00:00 [r27-ba4-std-bench] [B-specbench-c6] rc 0; 1 shim line; 480 sampled; server: requests 480/480, generation tokens 122880, prompt tokens 134377, cached 0 GPU + 0 tier, accepted 84908 of 114363 drafted, preemptions 0, running/waiting at end 0/0; Successful requests: 480 ;Failed requests: 0 ;Benchmark duration (s): 112.09 ;Output token throughput (tok/s): 1096.28 ;Median TPOT (ms): 5.01 ; engine ERROR lines 0 tracebacks 0 OOM 0; offsets after core 0 0 memory 4500 4500, power 600 575 W
+2026-10-20T02:24:53+00:00 [r27-ba4-std-bench] [B-specbench-c8] stopped again after the boot: owui-proxy (launch-daily-v0280.sh restarts owui-proxy)
+2026-10-20T02:24:53+00:00 [r27-ba4-std-bench] [B-specbench-c8] UP after 1 attempt(s): image vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan (sha256:1df9b4c4e1d2); launcher md5 7cb1a981b0d7db5a54dd8e03c52e1b09; vllm 0.31.0; engine config sha 72477f4ec2f0 (env 48); pool 1391795 (R675 1391795); SEQS 16; power 600 575 W (launcher: power 400.00/400.00 W; unit: POWER=stock); core offsets 0 0; memory offsets 4500 4500 (clock offsets: memory +4500, core 0 on every GPU; readback mem 4500 4500 | core 0 0); VRAM free 3813/3813
+2026-10-20T02:24:54+00:00 [r27-ba4-std-bench] [B-specbench-c8] warm-up: 8/8 ok, completion tokens [64, 64, 64, 64, 64, 64, 64, 64]
+2026-10-20T02:24:56+00:00 [r27-ba4-std-bench] [B-specbench-c8] warm-up counters: requests 8, generation tokens 512, drafts 167, running/waiting now 0/0
+2026-10-20T02:26:41+00:00 [r27-ba4-std-bench] [B-specbench-c8] rc 0; 1 shim line; 480 sampled; server: requests 480/480, generation tokens 122880, prompt tokens 134377, cached 0 GPU + 0 tier, accepted 84858 of 114408 drafted, preemptions 0, running/waiting at end 0/0; Successful requests: 480 ;Failed requests: 0 ;Benchmark duration (s): 91.47 ;Output token throughput (tok/s): 1343.44 ;Median TPOT (ms): 5.46 ; engine ERROR lines 0 tracebacks 0 OOM 0; offsets after core 0 0 memory 4500 4500, power 600 575 W
+2026-10-20T02:29:33+00:00 [r27-ba4-std-bench] [B-specbench-c12] stopped again after the boot: owui-proxy (launch-daily-v0280.sh restarts owui-proxy)
+2026-10-20T02:29:33+00:00 [r27-ba4-std-bench] [B-specbench-c12] UP after 1 attempt(s): image vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan (sha256:1df9b4c4e1d2); launcher md5 7cb1a981b0d7db5a54dd8e03c52e1b09; vllm 0.31.0; engine config sha 72477f4ec2f0 (env 48); pool 1391795 (R675 1391795); SEQS 16; power 600 575 W (launcher: power 400.00/400.00 W; unit: POWER=stock); core offsets 0 0; memory offsets 4500 4500 (clock offsets: memory +4500, core 0 on every GPU; readback mem 4500 4500 | core 0 0); VRAM free 3321/3321
+2026-10-20T02:29:34+00:00 [r27-ba4-std-bench] [B-specbench-c12] warm-up: 12/12 ok, completion tokens [64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64]
+2026-10-20T02:29:36+00:00 [r27-ba4-std-bench] [B-specbench-c12] warm-up counters: requests 12, generation tokens 768, drafts 243, running/waiting now 0/0
+2026-10-20T02:31:05+00:00 [r27-ba4-std-bench] [B-specbench-c12] rc 0; 1 shim line; 480 sampled; server: requests 480/480, generation tokens 122880, prompt tokens 134377, cached 0 GPU + 0 tier, accepted 84869 of 114357 drafted, preemptions 0, running/waiting at end 0/0; Successful requests: 480 ;Failed requests: 0 ;Benchmark duration (s): 73.35 ;Output token throughput (tok/s): 1675.34 ;Median TPOT (ms): 6.57 ; engine ERROR lines 0 tracebacks 0 OOM 0; offsets after core 0 0 memory 4500 4500, power 600 575 W
+2026-10-20T02:33:56+00:00 [r27-ba4-std-bench] [B-specbench-c16] stopped again after the boot: owui-proxy (launch-daily-v0280.sh restarts owui-proxy)
+2026-10-20T02:33:57+00:00 [r27-ba4-std-bench] [B-specbench-c16] UP after 1 attempt(s): image vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan (sha256:1df9b4c4e1d2); launcher md5 7cb1a981b0d7db5a54dd8e03c52e1b09; vllm 0.31.0; engine config sha 72477f4ec2f0 (env 48); pool 1391795 (R675 1391795); SEQS 16; power 600 575 W (launcher: power 400.00/400.00 W; unit: POWER=stock); core offsets 0 0; memory offsets 4500 4500 (clock offsets: memory +4500, core 0 on every GPU; readback mem 4500 4500 | core 0 0); VRAM free 3675/3677
+2026-10-20T02:33:57+00:00 [r27-ba4-std-bench] [B-specbench-c16] warm-up: 16/16 ok, completion tokens [64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64]
+2026-10-20T02:33:59+00:00 [r27-ba4-std-bench] [B-specbench-c16] warm-up counters: requests 16, generation tokens 1024, drafts 321, running/waiting now 0/0
+2026-10-20T02:35:20+00:00 [r27-ba4-std-bench] [B-specbench-c16] rc 0; 1 shim line; 480 sampled; server: requests 480/480, generation tokens 122880, prompt tokens 134377, cached 0 GPU + 0 tier, accepted 84876 of 114417 drafted, preemptions 0, running/waiting at end 0/0; Successful requests: 480 ;Failed requests: 0 ;Benchmark duration (s): 64.93 ;Output token throughput (tok/s): 1892.58 ;Median TPOT (ms): 7.76 ; engine ERROR lines 0 tracebacks 0 OOM 0; offsets after core 0 0 memory 4500 4500, power 600 575 W
+2026-10-20T02:35:20+00:00 [r27-ba4-std-bench] all cells done; boot attempts that failed: 0
+  == configuration (first boot; FLAGS list any boot that differs) ==
+    image          vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan
+    image_id       sha256:1df9b4c4e1d2
+    launcher_md5   7cb1a981b0d7db5a54dd8e03c52e1b09
+    env_n          48
+    env_sha        72477f4ec2f0
+    keys_n         -
+    window         -
+    slots          16
+    cache          1391795
+    policy         -
+    gpc_boot       0 0
+    mem_boot       4500 4500
+    power_limit_w  600 575
+    vram_free      3569/3569
+    pwr_line       launcher: power 400.00/400.00 W; unit: POWER=stock
+    boots          28
+  
+  == sharegpt, pass A ==
+  | Concurrency | Requests | Output tok/s | Req/s | TTFT p50 / p99 (ms) | TPOT p50 / p99 (ms) | Per-stream tok/s (1000/TPOT p50) | E2E p50 (s) | tau | depth |
+  |---|---|---|---|---|---|---|---|---|---|
+  | 1 | 400 | 247.2 | 1.18 | 44 / 114 | 3.69 / 5.41 | 271 | 0.53 | 2.92 | 3.01 |
+  | 2 | 400 | 399.3 | 1.90 | 97 / 149 | 4.49 / 6.56 | 223 | 0.68 | 2.94 | 3.01 |
+  | 4 | 400 | 724.6 | 3.45 | 111 / 228 | 4.88 / 11.31 | 205 | 0.75 | 2.94 | 3.01 |
+  | 6 | 400 | 962.5 | 4.58 | 113 / 298 | 5.41 / 9.35 | 185 | 0.87 | 2.93 | 3.01 |
+  | 8 | 400 | 1125.2 | 5.35 | 114 / 308 | 6.17 / 13.01 | 162 | 0.91 | 2.94 | 3.01 |
+  | 12 | 400 | 1387.0 | 6.60 | 121 / 360 | 7.61 / 20.56 | 131 | 1.07 | 2.92 | 3.01 |
+  | 16 | 400 | 1585.7 | 7.54 | 129 / 492 | 8.76 / 19.37 | 114 | 1.28 | 2.93 | 3.01 |
+  
+  == sharegpt, pass B ==
+  | Concurrency | Requests | Output tok/s | Req/s | TTFT p50 / p99 (ms) | TPOT p50 / p99 (ms) | Per-stream tok/s (1000/TPOT p50) | E2E p50 (s) | tau | depth |
+  |---|---|---|---|---|---|---|---|---|---|
+  | 1 | 400 | 246.2 | 1.17 | 44 / 115 | 3.71 / 5.41 | 269 | 0.54 | 2.92 | 3.01 |
+  | 2 | 400 | 401.3 | 1.91 | 103 / 148 | 4.47 / 7.05 | 224 | 0.64 | 2.93 | 3.01 |
+  | 4 | 400 | 732.8 | 3.48 | 110 / 204 | 4.86 / 9.82 | 206 | 0.76 | 2.96 | 3.01 |
+  | 6 | 400 | 957.9 | 4.56 | 112 / 264 | 5.50 / 10.97 | 182 | 0.83 | 2.95 | 3.01 |
+  | 8 | 400 | 1140.2 | 5.42 | 115 / 308 | 6.19 / 11.30 | 161 | 0.90 | 2.94 | 3.01 |
+  | 12 | 400 | 1394.0 | 6.63 | 121 / 365 | 7.55 / 19.96 | 132 | 1.05 | 2.93 | 3.01 |
+  | 16 | 400 | 1592.4 | 7.57 | 129 / 496 | 8.74 / 19.95 | 114 | 1.22 | 2.95 | 3.01 |
+  
+  == specbench, pass A ==
+  | Concurrency | Requests | Output tok/s | Req/s | TTFT p50 / p99 (ms) | TPOT p50 / p99 (ms) | Per-stream tok/s (1000/TPOT p50) | E2E p50 (s) | tau | depth |
+  |---|---|---|---|---|---|---|---|---|---|
+  | 1 | 480 | 277.1 | 1.08 | 38 / 159 | 3.33 / 4.32 | 301 | 0.92 | 3.23 | 3.01 |
+  | 2 | 480 | 449.4 | 1.76 | 62 / 197 | 4.04 / 5.44 | 247 | 1.13 | 3.23 | 3.01 |
+  | 4 | 480 | 829.4 | 3.24 | 66 / 191 | 4.41 / 5.98 | 227 | 1.22 | 3.25 | 3.01 |
+  | 6 | 480 | 1101.9 | 4.30 | 71 / 213 | 4.99 / 6.84 | 200 | 1.37 | 3.23 | 3.01 |
+  | 8 | 480 | 1330.9 | 5.20 | 83 / 220 | 5.53 / 7.59 | 181 | 1.52 | 3.24 | 3.01 |
+  | 12 | 480 | 1678.6 | 6.56 | 120 / 242 | 6.54 / 9.44 | 153 | 1.79 | 3.23 | 3.01 |
+  | 16 | 480 | 1906.5 | 7.45 | 132 / 293 | 7.73 / 11.06 | 129 | 2.10 | 3.24 | 3.01 |
+  
+  == specbench, pass B ==
+  | Concurrency | Requests | Output tok/s | Req/s | TTFT p50 / p99 (ms) | TPOT p50 / p99 (ms) | Per-stream tok/s (1000/TPOT p50) | E2E p50 (s) | tau | depth |
+  |---|---|---|---|---|---|---|---|---|---|
+  | 1 | 480 | 276.2 | 1.08 | 38 / 160 | 3.34 / 4.30 | 300 | 0.92 | 3.23 | 3.01 |
+  | 2 | 480 | 451.8 | 1.77 | 62 / 178 | 4.02 / 5.53 | 249 | 1.12 | 3.24 | 3.01 |
+  | 4 | 480 | 831.9 | 3.25 | 65 / 200 | 4.38 / 5.87 | 228 | 1.22 | 3.23 | 3.01 |
+  | 6 | 480 | 1096.3 | 4.28 | 68 / 218 | 5.01 / 6.97 | 200 | 1.37 | 3.24 | 3.01 |
+  | 8 | 480 | 1343.4 | 5.25 | 78 / 261 | 5.46 / 7.49 | 183 | 1.50 | 3.23 | 3.01 |
+  | 12 | 480 | 1675.3 | 6.54 | 120 / 257 | 6.57 / 9.48 | 152 | 1.79 | 3.23 | 3.01 |
+  | 16 | 480 | 1892.6 | 7.39 | 130 / 291 | 7.76 / 10.94 | 129 | 2.12 | 3.23 | 3.01 |
+  
+  == sharegpt: pass A vs B (spread = |A - B| / mean) ==
+  conc  tok/s A        B     mean  spread TPOT50 A      B TTFT50 A      B  tau A     B
+     1    247.2    246.2    246.7   0.42%     3.69   3.71       44     44   2.92  2.92
+     2    399.3    401.3    400.3   0.51%     4.49   4.47       97    103   2.94  2.93
+     4    724.6    732.8    728.7   1.12%     4.88   4.86      111    110   2.94  2.96
+     6    962.5    957.9    960.2   0.48%     5.41   5.50      113    112   2.93  2.95
+     8   1125.2   1140.2   1132.7   1.33%     6.17   6.19      114    115   2.94  2.94
+    12   1387.0   1394.0   1390.5   0.50%     7.61   7.55      121    121   2.92  2.93
+    16   1585.7   1592.4   1589.0   0.42%     8.76   8.74      129    129   2.93  2.95
+  
+  == specbench: pass A vs B (spread = |A - B| / mean) ==
+  conc  tok/s A        B     mean  spread TPOT50 A      B TTFT50 A      B  tau A     B
+     1    277.1    276.2    276.7   0.33%     3.33   3.34       38     38   3.23  3.23
+     2    449.4    451.8    450.6   0.55%     4.04   4.02       62     62   3.23  3.24
+     4    829.4    831.9    830.6   0.31%     4.41   4.38       66     65   3.25  3.23
+     6   1101.9   1096.3   1099.1   0.51%     4.99   5.01       71     68   3.23  3.24
+     8   1330.9   1343.4   1337.2   0.94%     5.53   5.46       83     78   3.24  3.23
+    12   1678.6   1675.3   1677.0   0.20%     6.54   6.57      120    120   3.23  3.23
+    16   1906.5   1892.6   1899.5   0.73%     7.73   7.76      132    130   3.24  3.23
+  
+  == diagnostics (not for the README) ==
+  tag                     dur s mean in   out tot tok/s step p50   tau tau cli acc/prop cached % hits lines
+  A-sharegpt-c1             340     230   210     517.8    10.85  2.92    2.90    0.638     0.00    -   400
+  A-sharegpt-c2             211     230   210     836.5    12.71  2.94    2.92    0.644     0.00    -   400
+  A-sharegpt-c4             116     230   210    1518.0    12.72  2.94    2.92    0.644     0.00    -   400
+  A-sharegpt-c6              87     230   210    2016.4    13.38  2.93    2.91    0.642     0.00    -   400
+  A-sharegpt-c8              75     230   210    2357.2    14.22  2.94    2.92    0.646     0.00    -   400
+  A-sharegpt-c12             61     230   210    2905.5    15.59  2.92    2.90    0.638     0.00    -   400
+  A-sharegpt-c16             53     230   210    3321.8    17.07  2.93    2.91    0.640     0.00    -   400
+  A-specbench-c1            443     280   256     580.2    10.85  3.23    3.21    0.742     0.00    -   480
+  A-specbench-c2            273     280   256     940.8    12.72  3.23    3.21    0.742     0.00    -   480
+  A-specbench-c4            148     280   256    1736.4    12.72  3.25    3.22    0.746     0.00    -   480
+  A-specbench-c6            112     280   256    2306.9    13.47  3.23    3.21    0.741     0.00    -   480
+  A-specbench-c8             92     280   256    2786.4    14.22  3.24    3.22    0.746     0.00    -   480
+  A-specbench-c12            73     280   256    3514.3    15.55  3.23    3.21    0.740     0.00    -   480
+  A-specbench-c16            64     280   256    3991.4    17.06  3.24    3.22    0.744     0.00    -   480
+  B-sharegpt-c1             342     230   210     515.7    10.90  2.92    2.90    0.639     0.00    -   400
+  B-sharegpt-c2             210     230   210     840.8    12.69  2.93    2.91    0.642     0.00    -   400
+  B-sharegpt-c4             115     230   210    1535.1    12.70  2.96    2.93    0.649     0.00    -   400
+  B-sharegpt-c6              88     230   210    2006.7    13.62  2.95    2.93    0.648     0.00    -   400
+  B-sharegpt-c8              74     230   210    2388.7    14.18  2.94    2.92    0.645     0.00    -   400
+  B-sharegpt-c12             60     230   210    2920.2    15.59  2.93    2.92    0.643     0.00    -   400
+  B-sharegpt-c16             53     230   210    3335.9    17.03  2.95    2.93    0.648     0.00    -   400
+  B-specbench-c1            445     280   256     578.2    10.86  3.23    3.21    0.740     0.00    -   480
+  B-specbench-c2            272     280   256     946.0    12.69  3.24    3.22    0.743     0.00    -   480
+  B-specbench-c4            148     280   256    1741.7    12.70  3.23    3.22    0.743     0.00    -   480
+  B-specbench-c6            112     280   256    2295.1    13.64  3.24    3.21    0.742     0.00    -   480
+  B-specbench-c8             91     280   256    2812.6    14.13  3.23    3.21    0.742     0.00    -   480
+  B-specbench-c12            73     280   256    3507.4    15.54  3.23    3.21    0.742     0.00    -   480
+  B-specbench-c16            65     280   256    3962.2    17.06  3.23    3.21    0.742     0.00    -   480
+  
+  FLAGS: none
+  
+  DECISION: PUBLISHABLE (max A/B spread 1.33 % at sharegpt c8; every cell cached <= 1 %)
+2026-10-20T02:36:51+00:00 [r27-ba4-std-bench] GLM daily restored on :8029
+2026-10-20T02:36:51+00:00 [r27-ba4-std-bench] restarted: hermes hermes-webui owui-proxy
+2026-10-20T02:36:51+00:00 [r27-ba4-std-bench] native-l2 at the end:  270G 393G 73%
+2026-10-20T02:36:51+00:00 [r27-ba4-std-bench] === r27-ba4-std-bench DONE ===
+2026-10-20T02:36:51+00:00 [r27-ba4-std-bench] DECISION: PUBLISHABLE (max A/B spread 1.33 % at sharegpt c8; every cell cached <= 1 %)
