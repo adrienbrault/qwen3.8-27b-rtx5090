@@ -1,0 +1,45 @@
+{
+  "date": "2026-10-21",
+  "scope": "CPU preparation only; GPU qualification pending",
+  "upstream": {
+    "commit": "5df63a7203cdb9328d824a27b682e77c7b9928be",
+    "version": "0.32.0",
+    "archive_sha256": "33247d5def035a78ccc8b2e5499a429ab82358e426c6aa0fe91cb6c60bab9c3a",
+    "image": "vllm/vllm-openai@sha256:6ee133356d49ed24cee03dd0cda3d3980279a11c107ce3e752c89e76540f41c9",
+    "source_url": "https://codeload.github.com/vllm-project/vllm/legacy.tar.gz/5df63a7203cdb9328d824a27b682e77c7b9928be"
+  },
+  "cpu_behavior_tests": {
+    "passed": 8,
+    "platform": "Linux aarch64 CPU torch",
+    "fresh_source_reconstruction": true
+  },
+  "filesystem_tests": {
+    "passed": 9,
+    "platform": "Linux amd64 candidate image"
+  },
+  "cli_schema": {
+    "passed": true,
+    "platform": "Linux amd64 candidate image",
+    "hardware_metadata": "CPU-only SM120 stub; no server startup"
+  },
+  "native_extension": {
+    "compiled": "SM120a",
+    "loaded_without_gpu": true
+  },
+  "gpu_inference_tested": false,
+  "served_configuration_changed": false,
+  "versions": {
+    "vllm": "0.32.0",
+    "torch": "2.13.0+cu130",
+    "flashinfer-python": "0.7.0.post1",
+    "triton": "3.7.1"
+  },
+  "ba4_control_image": "sha256:eb76a1f2a3fb62daaeb367fb202df18f82747a20741c2ed725f49c0073e34d45",
+  "ba4_serving_protocol": "V032_BA4-serving-profile-v1",
+  "series_manifest_sha256": "e46c847a4a26119be816b7edd6df833c23a52db323e9e94daf79583a7b07dcf9",
+  "review": {
+    "scope": "source/build readiness only",
+    "blocking_findings_open": 0,
+    "nonblocking_limitation": "Filesystem pins and capacity accounting require a single manager per root; generated commands use fresh roots."
+  }
+}

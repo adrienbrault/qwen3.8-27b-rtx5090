@@ -1,0 +1,144 @@
+--- a/vllm/config/parallel.py
++++ b/vllm/config/parallel.py
+@@ -916,6 +916,8 @@
+             "max_parallel_loading_workers",
+             "disable_custom_all_reduce",
+             "enable_shm_tensor_arena",
++            # Sampling runs after the compiled forward pass.
++            "enable_batch_sharded_sampling",
+             "ray_workers_use_nsight",
+             "ray_runtime_env",
+             "placement_group",
+--- a/vllm/model_executor/models/qwen3_5_mtp.py
++++ b/vllm/model_executor/models/qwen3_5_mtp.py
+@@ -81,10 +81,16 @@
+         self.mtp_start_layer_idx = config.num_hidden_layers
+         self.num_mtp_layers = getattr(config, "mtp_num_hidden_layers", 1)
+
+-        self.embed_tokens = VocabParallelEmbedding(
+-            self.vocab_size,
+-            config.hidden_size,
+-        )
++        # With no pipeline parallelism, this is attached from the target model
++        # after loading. Avoid materializing a temporary full-vocabulary copy.
++        self.embed_tokens: VocabParallelEmbedding | None
++        if get_pp_group().world_size == 1:
++            self.embed_tokens = None
++        else:
++            self.embed_tokens = VocabParallelEmbedding(
++                self.vocab_size,
++                config.hidden_size,
++            )
+
+         # Workaround: mtp.fc is stored as BF16 in NVFP4 checkpoints but is
+         # missing from hf_quant_config.json exclude_modules. Force unquantized.
+@@ -141,6 +147,9 @@
+         )
+
+     def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
++        assert self.embed_tokens is not None, (
++            "embed_tokens must be shared from the target model before inference"
++        )
+         return self.embed_tokens(input_ids)
+
+     def forward(
+@@ -234,7 +243,11 @@
+             vllm_config=vllm_config, prefix=maybe_prefix(prefix, "mtp")
+         )
+
+-        if get_pp_group().is_last_rank:
++        self._share_target_vocab_weights = get_pp_group().world_size == 1
++        self.lm_head: ParallelLMHead | PPMissingLayer | None
++        if self._share_target_vocab_weights:
++            self.lm_head = None
++        elif get_pp_group().is_last_rank:
+             self.lm_head = ParallelLMHead(
+                 config.vocab_size,
+                 config.hidden_size,
+@@ -242,6 +255,7 @@
+                 prefix=maybe_prefix(prefix, "lm_head"),
+             )
+             if config.tie_word_embeddings:
++                assert self.model.embed_tokens is not None
+                 self.lm_head = self.lm_head.tie_weights(self.model.embed_tokens)
+         else:
+             self.lm_head = PPMissingLayer()
+@@ -297,9 +311,15 @@
+         hidden_states: torch.Tensor,
+         spec_step_idx: int = 0,
+     ) -> torch.Tensor | None:
++        assert self.lm_head is not None, "target lm_head must be attached before inference"
+         return self.logits_processor(self.lm_head, hidden_states)
+
+     def is_unused_checkpoint_weight(self, name: str) -> bool:
++        # Keep v0.32's early checkpoint filter and exclude PP1 shared vocabulary.
++        if self._share_target_vocab_weights and any(
++            key in name for key in ("embed_tokens", "lm_head")
++        ):
++            return True
+         return not name.startswith("mtp.") and not any(
+             key in name for key in ["embed_tokens", "lm_head"]
+         )
+--- a/vllm/model_executor/warmup/kernel_warmup.py
++++ b/vllm/model_executor/warmup/kernel_warmup.py
+@@ -502,3 +502,9 @@
+     # the file). FlashInfer gates its own autotune(cache=...) save the same way.
+     if tuner._dirty:
+         tuner.save_configs(str(cache_path))
++    # Each rank owns its v0.32 cache_path, including on a clean-cache boot.
++    # Reload by runner class name after saving to avoid stale in-memory hash keys.
++    if world.world_size > 1:
++        world.barrier()
++    if cache_path.exists():
++        tuner.load_configs(str(cache_path))
+--- a/vllm/v1/attention/backends/flashinfer.py
++++ b/vllm/v1/attention/backends/flashinfer.py
+@@ -106,6 +106,39 @@
+ trtllm_workspace_buffer = None
+
+
++@cache
++def _maybe_enable_sm12x_nvfp4_prefill_split_kv() -> None:
++    """Opt back into FI split-KV for the SM12x NVFP4 prefill route."""
++    import os
++
++    if os.environ.get("VLLM_SM12X_NVFP4_PREFILL_SPLIT_KV", "0") != "1":
++        return
++
++    import flashinfer.prefill as flashinfer_prefill
++
++    guard_name = "_nvfp4_kv_requires_disabled_split_kv"
++    if getattr(flashinfer_prefill, guard_name, None) is None:
++        logger.info_once(
++            "VLLM_SM12X_NVFP4_PREFILL_SPLIT_KV=1: this FlashInfer version "
++            "already honors the caller's split-KV setting."
++        )
++        return
++
++    # FlashInfer 0.6.18 overrides disable_split_kv=False for packed NVFP4.
++    # This process-wide, opt-in override restores the 0.6.16 behavior. Keep it
++    # off by default because FlashInfer added its guard after observing output
++    # corruption for short-Q/long-KV attention with split-KV enabled.
++    # The guard takes (kv_data_type) in 0.6.18 and (kv_data_type, device) in
++    # 0.7.x; accept any signature so the override cannot raise TypeError.
++    setattr(flashinfer_prefill, guard_name, lambda *_args, **_kwargs: False)
++    logger.warning_once(
++        "VLLM_SM12X_NVFP4_PREFILL_SPLIT_KV=1: re-enabled FlashInfer split-KV "
++        "for NVFP4 prefill/verification. Validate output fidelity at long context."
++    )
++
++
++
++
+ def _nvfp4_kv_on_fa2() -> bool:
+     return any(current_platform.is_device_capability_family(f) for f in (80, 90, 120))
+
+@@ -827,6 +860,8 @@
+             # fa2 plans NVFP4 by its uint8 storage dtype.
+             self.nvfp4_fa2 = self.is_kvcache_nvfp4 and _nvfp4_kv_on_fa2()
+             self.nvfp4_trtllm = self.is_kvcache_nvfp4 and not self.nvfp4_fa2
++            if self.nvfp4_fa2 and current_platform.is_device_capability_family(120):
++                _maybe_enable_sm12x_nvfp4_prefill_split_kv()
+             if self.nvfp4_fa2 and self.use_dcp:
+                 raise NotImplementedError(
+                     "The DCP prefill wrapper cannot read NVFP4 block scales."

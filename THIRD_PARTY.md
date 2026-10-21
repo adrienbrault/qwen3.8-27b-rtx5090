@@ -2,6 +2,10 @@
 
 This repository is MIT-licensed (see [LICENSE](LICENSE)) for the **original** work: documentation, benchmark harnesses/probes, serve scripts, and the patch-installer tooling. Everything below is derived from Apache-2.0 projects and **remains Apache-2.0-derived** — the MIT grant does not extend to upstream-derived content, and the patched files inside any image you build are derivative works of their upstream projects.
 
+## vLLM 0.32 candidate (2026-10-21)
+
+[`patches-v0320/`](patches-v0320/README.md) ports the retained 0.31 recipe features onto vLLM v0.32.0 commit `5df63a7203cdb9328d824a27b682e77c7b9928be`. Its upstream-derived patches and vendored PCIe package retain their Apache-2.0 provenance; [`NOTICE.md`](patches-v0320/NOTICE.md) links the original series, authors and upstream PRs, and [`PORT-STATUS.md`](patches-v0320/PORT-STATUS.md) accounts for omitted and replaced patches. BA4 uses a new engine-specific serving-evidence protocol and remains disabled pending fresh qualification.
+
 ## Humming comparison (2026-10-21)
 
 [Humming](https://github.com/vllm-project/humming), Apache-2.0, supplies the quantized GEMM implementation tested in `patches-v0310/humming/`. The official 0.1.18 x86_64 wheel is pinned by URL and SHA256 in `requirements-0118.txt`; its dependencies are left unchanged. An intermediate experiment backports Jinzhen Lin's [PR #148](https://github.com/vllm-project/humming/pull/148) and Michael Goin's [PR #149](https://github.com/vllm-project/humming/pull/149), taking only `humming/device.py` through commit `c00b2e645a4b5ef57174f40254968a2996944217` to correct recursion and device metadata construction under `torch.compile`. That patch remains Apache-2.0-derived. These experiment images do not change the served configuration.

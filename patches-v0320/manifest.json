@@ -1,0 +1,130 @@
+{
+  "upstream": {
+    "commit": "5df63a7203cdb9328d824a27b682e77c7b9928be",
+    "version": "0.32.0",
+    "archive_sha256": "33247d5def035a78ccc8b2e5499a429ab82358e426c6aa0fe91cb6c60bab9c3a",
+    "image": "vllm/vllm-openai@sha256:6ee133356d49ed24cee03dd0cda3d3980279a11c107ce3e752c89e76540f41c9",
+    "source_url": "https://codeload.github.com/vllm-project/vllm/legacy.tar.gz/5df63a7203cdb9328d824a27b682e77c7b9928be"
+  },
+  "patches": [
+    {
+      "name": "0001-gdn-runtime-guards.diff",
+      "sha256": "0d332449e06bdb8b7bcc4e3a68820fc9c5933c4ae2c0aa6379d59536f829c34f",
+      "ba4": false,
+      "before": {
+        "vllm/third_party/flash_linear_attention/ops/fused_recurrent.py": "fe6f1311014809040497aa0a623e7fa97f4b3457cdc7ee1f1f8aed21f326f755",
+        "vllm/third_party/flash_linear_attention/ops/fused_sigmoid_gating.py": "000ab8996af9788fdb8843a6a3b91833e7a14c8acc0e1ea073a536330f64cb6f",
+        "vllm/v1/attention/backends/gdn_attn.py": "ce951db92bb58b5b655ff00a89d0ffc68f8fbfb936e1e2a72a5da543cdf9d2f4"
+      },
+      "after": {
+        "vllm/third_party/flash_linear_attention/ops/fused_recurrent.py": "e31f40529653b7e92cef51d584c485181d1535c70e956c2792fdf5dc3b9e3dc2",
+        "vllm/third_party/flash_linear_attention/ops/fused_sigmoid_gating.py": "68b24b8c4f9c2d68ead11d0f5c177789b0716b417d60b476882a133149945c1c",
+        "vllm/v1/attention/backends/gdn_attn.py": "c231e29cb5794291ecbc16cafb6bdec7e7a362a8907f9d24e010e0dd06cbb487"
+      }
+    },
+    {
+      "name": "0002-embedding-and-bounded-kv-tiers.diff",
+      "sha256": "723ba823868ef2b0ad18f81b84cceb80fb1c5f77d1f3980687b7a6b0449de647",
+      "ba4": false,
+      "before": {
+        "tests/v1/kv_offload/tiering/test_fs_tier_eviction.py": null,
+        "vllm/entrypoints/llm.py": "283f5ed4d0744aef22a01fefd307565ef60ee172a8ec4805ece0bcd630d9568c",
+        "vllm/model_executor/model_loader/utils.py": "3091a9f64cbe42ad0e7fc0907fbbcb9197d2d56d5da4008779c5a16d9b8649a6",
+        "vllm/model_executor/offloader/base.py": "982e295299e2a282703ef6bec91897883f187f1ca31c21b6b46bda9566e09303",
+        "vllm/model_executor/offloader/uva.py": "1064eaff828cda23308654d2186c08f2c336e7fa25e2e7b9f518b051ea89ce0c",
+        "vllm/v1/core/kv_cache_coordinator.py": "efd7193391197c555ebc0c8f2b593a6c4cb5b7da2978cd57414c0b71170f5971",
+        "vllm/v1/core/kv_cache_utils.py": "af4164bca819f1cdc416077522a7019936fd38a523a482283eb91b08dae0e57a",
+        "vllm/v1/kv_offload/tiering/fs/manager.py": "7bbcecd31991ed85a39bc232d9b1a8b78dc43b6c4f345d63bc0d423bcead1e0d",
+        "vllm/v1/kv_offload/tiering/fs/thread_pool.py": "8891ad969658c61a8b902e70d673292bf481504c4b8347b3801b45b257a20cab",
+        "vllm/v1/kv_offload/tiering/metrics.py": "49471934d94a30859a281221cd3572fc825da082243c077ea55523e1dc352285",
+        "vllm/v1/kv_offload/tiering/spec.py": "e9492da6f8e0a0037e28c9c96fc6d116d8e535e4128890472e40b79c2354dedc"
+      },
+      "after": {
+        "tests/v1/kv_offload/tiering/test_fs_tier_eviction.py": "8398c648e133c9958d135c5b18fe721cb7678c1736527815a0f06a3b0c36b1f9",
+        "vllm/entrypoints/llm.py": "6ece29a56a3b7cbeb1b0385619bb53cd046cac4b2527ca71cd4d477beec5b344",
+        "vllm/model_executor/model_loader/utils.py": "d236b0845beaa87e1774ed295dbd0847408e6f86299a1e354cf4c0c3da9f1064",
+        "vllm/model_executor/offloader/base.py": "02d6b8aa3d94164de2b6913dd7c56dbb638c46893981e275f8b31f47bef75910",
+        "vllm/model_executor/offloader/uva.py": "0c59c1cd9977f3a70747d064cd8599b259a6344e304678817f7eb2705655f47a",
+        "vllm/v1/core/kv_cache_coordinator.py": "98ce78b73dbcce5e0ef9fceb371854807605d4699cdb8999e43bef2511a6779f",
+        "vllm/v1/core/kv_cache_utils.py": "18af658fcde18cb8ca4e660b2400080dcb8984539aa5a85e45cb2b1a39d979f4",
+        "vllm/v1/kv_offload/tiering/fs/manager.py": "caa0c5af7866e76926d12df23b8623d582b200d4d1d5e342a1e9b9a9530a4b63",
+        "vllm/v1/kv_offload/tiering/fs/thread_pool.py": "1ac9324e6cab9ab1f2532ef621da2fb75cf4a43ec1b0df7325674ce4677458bf",
+        "vllm/v1/kv_offload/tiering/metrics.py": "e6e16fd83ef1bdd95818b580ff6cfc94a4f33780894f73f11cb0ad7f80601faf",
+        "vllm/v1/kv_offload/tiering/spec.py": "a032b37d8f6bf045bda658351e8e8d4f56747db98151dfb9eb629975870a06d6"
+      }
+    },
+    {
+      "name": "0003-mtp-memory-splitkv-autotune.diff",
+      "sha256": "3ee97c59adc89095d43815b686a89411882ac743f06f22ef63c5657a1af66281",
+      "ba4": false,
+      "before": {
+        "vllm/config/parallel.py": "e8dcfb67c1ace957dcc7e12569ee62eb0f983aec3901fdef27c13014cea4b760",
+        "vllm/model_executor/models/qwen3_5_mtp.py": "fbf31b1dd2b63eaf1911e325e3b43db602cf1d4268dfb2d388727e44caffadc2",
+        "vllm/model_executor/warmup/kernel_warmup.py": "5eb35e459feaa5656d5365abb3b442ae5fd896193b4053b5c7ac8764e91aa829",
+        "vllm/v1/attention/backends/flashinfer.py": "343b949d62db7fc03f6ca0c682e1ec1cb60125461069b081ac1554b7a05214e9"
+      },
+      "after": {
+        "vllm/config/parallel.py": "81e2182d70c5156e683f61f936d5bd841a3b31c95226507b2568469d790c6133",
+        "vllm/model_executor/models/qwen3_5_mtp.py": "a12374a1a9e59393e9fcafbf57e9c02e5dcc64a02c667b587aa95ab1be81badf",
+        "vllm/model_executor/warmup/kernel_warmup.py": "f13439b3b6fda7eae5a8ebb386d3e49c41bb644bc80e25fde3a8c2cc7bc3db2c",
+        "vllm/v1/attention/backends/flashinfer.py": "b3da232f38ee375ebd3734625bd6d55c046be2f757ce107bf9ea82b107ea7742"
+      }
+    },
+    {
+      "name": "0004-pcie-ipc-mtp.diff",
+      "sha256": "673fa61d5ed70e1f318d14c87ff854e77fd2808edf36e126edf8b5b738c06c73",
+      "ba4": false,
+      "before": {
+        "vllm/distributed/device_communicators/cuda_communicator.py": "2f5368d6ca1856a7b2b49fc423cc4728483d0c9289f913a7bc7cbe0baa040ec0",
+        "vllm/distributed/device_communicators/pcie_ipc_all_reduce.py": null,
+        "vllm/distributed/parallel_state.py": "0e47cff9a89717183bdce6403f0454961848247f51306a0f1dfbe3d6e1b93336",
+        "vllm/v1/worker/gpu/model_runner.py": "5240fe8d62d403e466a4aa07a28fb7af5c0f1e9b9c3bb08c4003185bde461f87",
+        "vllm/v1/worker/gpu/spec_decode/target_dependent_ar/speculator.py": "2133fa15bae57b85a5d0fb1a32124b25d32987117fdce58d032c67331cfe8d48",
+        "vllm/v1/worker/gpu_worker.py": "e970aa29a738aa15cd963d9f9202ca6d3d504e98fd344959fd998e940472a5a0",
+        "vllm/envs.py": "e963af06cf6c775fe285147e0d811ea5b4d679e5cbd6958980ec2a0d1da70694"
+      },
+      "after": {
+        "vllm/distributed/device_communicators/cuda_communicator.py": "62807b9f4a9883ae4b1caf4392b9475822e6d916f0852db7f8fb5ea568168c60",
+        "vllm/distributed/device_communicators/pcie_ipc_all_reduce.py": "07373e26d426e3203adef3ccd91c077c4c51dd51235bbd63d4c074a1093a6de2",
+        "vllm/distributed/parallel_state.py": "cc927dfd783962d3675aeb47aa7154c30d6afb2405afb572ac9e0073a9917b68",
+        "vllm/v1/worker/gpu/model_runner.py": "4ea202464a9c7c8ebd6d9037168ca447945d478eb1ee09e70aaebc4670c09fe1",
+        "vllm/v1/worker/gpu/spec_decode/target_dependent_ar/speculator.py": "003204ecb6942ff1bd68de5e1b35be4ab7b00d9d2341c62c6254be22a8fe9228",
+        "vllm/v1/worker/gpu_worker.py": "e212d4a8083ec04a920aa4933fa4cfa366129bab68264aa36b6f345b03198d1b",
+        "vllm/envs.py": "5851357afeae2489dae31cfe795498d2e0e6005d2a361e50f78a3329e7a88119"
+      }
+    },
+    {
+      "name": "0005-ba4-integration.diff",
+      "sha256": "eb21f7d1ee3a01357b51fed9475b764fa557d1d81235b09cd63023048d31676b",
+      "ba4": true,
+      "before": {
+        "vllm/compilation/piecewise_backend.py": "188d926208a147c2786a496a10577edd832576455c36130e7f1ba375634e0806",
+        "vllm/model_executor/layers/linear.py": "7a9b90937865fa35d955ffc2017f23d3997bc4fba954e2667870b1b4854a38e0",
+        "vllm_ba4/__init__.py": null,
+        "vllm_ba4/benchmark_source.py": null,
+        "vllm_ba4/common.py": null,
+        "vllm_ba4/compilation.py": null,
+        "vllm_ba4/evidence.py": null,
+        "vllm_ba4/kernels.py": null,
+        "vllm_ba4/measurement.py": null,
+        "vllm_ba4/policy.py": null,
+        "vllm_ba4/runtime.py": null,
+        "vllm/envs.py": "5851357afeae2489dae31cfe795498d2e0e6005d2a361e50f78a3329e7a88119"
+      },
+      "after": {
+        "vllm/compilation/piecewise_backend.py": "d6e54e790e4068cab144b60697cc45176431c17ac9fdb11b6fa55e9888e7c386",
+        "vllm/model_executor/layers/linear.py": "5d76f6d10bc240fb32c019d0af00751ac731e0cc8d1e4719ed50b9a283422cd2",
+        "vllm_ba4/__init__.py": "62b880fea1cef6d3d0a0d71ee1478cc2d41dcf24b6eed6931a7fd63093548dc7",
+        "vllm_ba4/benchmark_source.py": "0dce5343317210f40b175976078da68c5e9ed33aed76d15a354bb4e5d9fcf750",
+        "vllm_ba4/common.py": "51a1fa1f9e359eff9bb2406cd916e69a997f69e64800244ef590f468dd9963da",
+        "vllm_ba4/compilation.py": "a379b5f7ec82c24f8c63c432826c7505287c8e3da57569f066e7500f7104fca4",
+        "vllm_ba4/evidence.py": "e128995c20348965b1b7836a7d94e01ed17e29baf823d92bbbed468d61454b70",
+        "vllm_ba4/kernels.py": "9754f6619a5c08ee666c0caddaa6d9c3fe31e3caee01a425baf739868789a1b2",
+        "vllm_ba4/measurement.py": "043e3d85c1bd2a783992aa1d36e6092d5610327829759544995876fda5437861",
+        "vllm_ba4/policy.py": "a6bd32ea6871c510417a600346eda791afbd0cf694573ad80e6e42b756fe1590",
+        "vllm_ba4/runtime.py": "057141a20dfa68c2285ef5660f1ed9f9b5e9614849a4a98d9756675abe5bc7b5",
+        "vllm/envs.py": "c8b1575600934aa7d01d4e9ccf1da02bfc4794b37145c545be8d0a8d8f3864aa"
+      }
+    }
+  ]
+}

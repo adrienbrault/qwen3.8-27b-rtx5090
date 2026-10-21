@@ -1,0 +1,88 @@
+Linux 7.2.9-orbstack-00391-g2b298d05fbd4 aarch64
+checking file vllm/third_party/flash_linear_attention/ops/fused_recurrent.py
+checking file vllm/third_party/flash_linear_attention/ops/fused_sigmoid_gating.py
+checking file vllm/v1/attention/backends/gdn_attn.py
+patching file vllm/third_party/flash_linear_attention/ops/fused_recurrent.py
+patching file vllm/third_party/flash_linear_attention/ops/fused_sigmoid_gating.py
+patching file vllm/v1/attention/backends/gdn_attn.py
+checking file tests/v1/kv_offload/tiering/test_fs_tier_eviction.py
+checking file vllm/entrypoints/llm.py
+checking file vllm/model_executor/model_loader/utils.py
+checking file vllm/model_executor/offloader/base.py
+checking file vllm/model_executor/offloader/uva.py
+checking file vllm/v1/core/kv_cache_coordinator.py
+checking file vllm/v1/core/kv_cache_utils.py
+checking file vllm/v1/kv_offload/tiering/fs/manager.py
+checking file vllm/v1/kv_offload/tiering/fs/thread_pool.py
+checking file vllm/v1/kv_offload/tiering/metrics.py
+checking file vllm/v1/kv_offload/tiering/spec.py
+patching file tests/v1/kv_offload/tiering/test_fs_tier_eviction.py
+patching file vllm/entrypoints/llm.py
+patching file vllm/model_executor/model_loader/utils.py
+patching file vllm/model_executor/offloader/base.py
+patching file vllm/model_executor/offloader/uva.py
+patching file vllm/v1/core/kv_cache_coordinator.py
+patching file vllm/v1/core/kv_cache_utils.py
+patching file vllm/v1/kv_offload/tiering/fs/manager.py
+patching file vllm/v1/kv_offload/tiering/fs/thread_pool.py
+patching file vllm/v1/kv_offload/tiering/metrics.py
+patching file vllm/v1/kv_offload/tiering/spec.py
+checking file vllm/config/parallel.py
+checking file vllm/model_executor/models/qwen3_5_mtp.py
+checking file vllm/model_executor/warmup/kernel_warmup.py
+checking file vllm/v1/attention/backends/flashinfer.py
+patching file vllm/config/parallel.py
+patching file vllm/model_executor/models/qwen3_5_mtp.py
+patching file vllm/model_executor/warmup/kernel_warmup.py
+patching file vllm/v1/attention/backends/flashinfer.py
+checking file vllm/distributed/device_communicators/cuda_communicator.py
+checking file vllm/distributed/device_communicators/pcie_ipc_all_reduce.py
+checking file vllm/distributed/parallel_state.py
+checking file vllm/v1/worker/gpu/model_runner.py
+checking file vllm/v1/worker/gpu/spec_decode/target_dependent_ar/speculator.py
+checking file vllm/v1/worker/gpu_worker.py
+checking file vllm/envs.py
+patching file vllm/distributed/device_communicators/cuda_communicator.py
+patching file vllm/distributed/device_communicators/pcie_ipc_all_reduce.py
+patching file vllm/distributed/parallel_state.py
+patching file vllm/v1/worker/gpu/model_runner.py
+patching file vllm/v1/worker/gpu/spec_decode/target_dependent_ar/speculator.py
+patching file vllm/v1/worker/gpu_worker.py
+patching file vllm/envs.py
+checking file vllm/compilation/piecewise_backend.py
+checking file vllm/model_executor/layers/linear.py
+checking file vllm_ba4/__init__.py
+checking file vllm_ba4/benchmark_source.py
+checking file vllm_ba4/common.py
+checking file vllm_ba4/compilation.py
+checking file vllm_ba4/evidence.py
+checking file vllm_ba4/kernels.py
+checking file vllm_ba4/measurement.py
+checking file vllm_ba4/policy.py
+checking file vllm_ba4/runtime.py
+checking file vllm/envs.py
+patching file vllm/compilation/piecewise_backend.py
+patching file vllm/model_executor/layers/linear.py
+patching file vllm_ba4/__init__.py
+patching file vllm_ba4/benchmark_source.py
+patching file vllm_ba4/common.py
+patching file vllm_ba4/compilation.py
+patching file vllm_ba4/evidence.py
+patching file vllm_ba4/kernels.py
+patching file vllm_ba4/measurement.py
+patching file vllm_ba4/policy.py
+patching file vllm_ba4/runtime.py
+patching file vllm/envs.py
+test_autotune_reload_uses_each_rank_path_after_dirty_or_warm_boot (__main__.PortTests.test_autotune_reload_uses_each_rank_path_after_dirty_or_warm_boot) ... ok
+test_ba4_old_engine_reports_are_rejected (__main__.PortTests.test_ba4_old_engine_reports_are_rejected) ... ok
+test_convolution_width_matches_state_layout_after_zero_draft_routing (__main__.PortTests.test_convolution_width_matches_state_layout_after_zero_draft_routing) ... ok
+test_mtp_graph_capture_preserves_native_dynamic_specialization (__main__.PortTests.test_mtp_graph_capture_preserves_native_dynamic_specialization) ... ok
+test_mtp_shared_vocab_is_not_loaded_on_pp1 (__main__.PortTests.test_mtp_shared_vocab_is_not_loaded_on_pp1) ... ok
+test_pcie_admission_uses_v032_pass_config_and_rejects_other_shapes (__main__.PortTests.test_pcie_admission_uses_v032_pass_config_and_rejects_other_shapes) ... ok
+test_plan_is_isolated_and_ba4_stays_disabled (__main__.PortTests.test_plan_is_isolated_and_ba4_stays_disabled) ... ok
+test_zero_and_variable_drafts_keep_native_recurrent_routing (__main__.PortTests.test_zero_and_variable_drafts_keep_native_recurrent_routing) ... ok
+
+----------------------------------------------------------------------
+Ran 8 tests in 0.560s
+
+OK

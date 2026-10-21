@@ -1,0 +1,1 @@
+{"versions": {"vllm": "0.32.0", "torch": "2.13.0+cu130", "flashinfer-python": "0.7.0.post1", "triton": "3.7.1"}, "ba4_control_image": "sha256:eb76a1f2a3fb62daaeb367fb202df18f82747a20741c2ed725f49c0073e34d45", "ba4_serving_protocol": "V032_BA4-serving-profile-v1", "series_manifest_sha256": "e46c847a4a26119be816b7edd6df833c23a52db323e9e94daf79583a7b07dcf9"}

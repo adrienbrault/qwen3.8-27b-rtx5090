@@ -164,6 +164,10 @@ Reasoning is on by default at effort `medium`. Tool calls, JSON-schema structure
 
 ## Other configurations
 
+### vLLM 0.32.0 candidate, prepared 2026-10-21
+
+The [0.32.0 candidate](patches-v0320/README.md) uses native SM120 NVFP4 writing and XQA verification with the retained MTP, offload and PCIe features. It has local CPU builds and tests; GPU startup, fidelity, capacity and performance remain unmeasured. BA4 integration is disabled pending fresh evidence. The served configuration remains 0.31.0. Preparation evidence: [v032-candidate](bench/results/v032-candidate.md), 2026-10-21, results `2026-10-21-v032-cpu`.
+
 ### BA4 at 14.86 GB with block drop, measured 2026-10-19
 
 The earlier launcher [scripts/serve-v031-ba4-daily.sh](scripts/serve-v031-ba4-daily.sh) uses the BA4 image with block drop, the 14.86 GB pin and 16 sequences. Its measurements remain in [r27-ba4-curves](bench/results/r27-ba4-curves.md), results `2026-10-19-233406-r27-ba4-curves`, and [r27-ba4-std-bench](bench/results/r27-ba4-std-bench.md), results `2026-10-19-r27-ba4-std-bench-2335` (standard benchmark completed 2026-10-20).

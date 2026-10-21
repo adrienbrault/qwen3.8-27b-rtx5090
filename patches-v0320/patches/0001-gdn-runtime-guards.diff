@@ -1,0 +1,175 @@
+--- a/vllm/third_party/flash_linear_attention/ops/fused_recurrent.py
++++ b/vllm/third_party/flash_linear_attention/ops/fused_recurrent.py
+@@ -8,9 +8,14 @@
+ # Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
+ # ruff: noqa: E501
+
++import functools
++
+ import torch
+
++from vllm import envs
++from vllm.platforms import current_platform
+ from vllm.triton_utils import tl, triton
++from vllm.utils.math_utils import next_power_of_2
+
+ from .op import exp, log
+
+@@ -106,10 +111,14 @@
+                 i_t = tl.load(num_accepted_tokens + i_n).to(tl.int64) - 1
+             else:
+                 i_t = 0
+-            # Load state index and check for invalid entries
+-            state_idx = tl.load(ssm_state_indices + i_n * stride_indices_seq + i_t).to(
+-                tl.int64
+-            )
++            # num_accepted_tokens is asynchronous GPU state. Keep a stale or
++            # zero count from indexing another request's state row.
++            idx_in_row = (i_t >= 0) & (i_t < stride_indices_seq)
++            state_idx = tl.load(
++                ssm_state_indices + i_n * stride_indices_seq + i_t,
++                mask=idx_in_row,
++                other=0,
++            ).to(tl.int64)
+             # Skip if state index is invalid (NULL_BLOCK_ID=0)
+             if state_idx <= 0:
+                 return
+@@ -340,6 +349,37 @@
+     tl.store(p_ht, b_h.to(p_ht.dtype.element_ty), mask=mask_h)
+
+
++@functools.cache
++def _get_packed_decode_launch_config(
++    batch_size: int,
++    num_key_heads: int,
++    num_value_heads: int,
++    key_dim: int,
++    value_dim: int,
++    device_index: int,
++) -> tuple[int, int, int]:
++    tile_value_dim = min(next_power_of_2(value_dim), 32)
++    is_sm12x = current_platform.is_device_capability_family(
++        120, device_id=device_index
++    )
++    forced_bv = envs.VLLM_SM12X_GDN_PACKED_BV
++    if forced_bv is not None and is_sm12x and key_dim == value_dim == 128:
++        if forced_bv not in (16, 32):
++            raise ValueError(
++                "VLLM_SM12X_GDN_PACKED_BV must be unset, 16, or 32; "
++                f"got {forced_bv}"
++            )
++        tile_value_dim = forced_bv
++    elif (
++        num_key_heads == num_value_heads == 16
++        and key_dim == value_dim == 128
++        and batch_size <= 24
++        and is_sm12x
++    ):
++        tile_value_dim = 16
++    return tile_value_dim, 1, 3
++
++
+ def fused_recurrent_gated_delta_rule_packed_decode(
+     mixed_qkv: torch.Tensor,
+     a: torch.Tensor,
+@@ -438,9 +478,12 @@
+         raise ValueError(
+             f"Packed decode kernel only supports NK=1 (got K={K}, BK={BK})."
+         )
+-    BV = min(triton.next_power_of_2(V), 32)
+-    num_stages = 3
+-    num_warps = 1
++    device_index = dev.index
++    if device_index is None:
++        device_index = torch.accelerator.current_device_index()
++    BV, num_warps, num_stages = _get_packed_decode_launch_config(
++        B, H, HV, K, V, device_index
++    )
+
+     stride_mixed_qkv_tok = mixed_qkv.stride(0)
+     stride_a_tok = a.stride(0)
+--- a/vllm/third_party/flash_linear_attention/ops/fused_sigmoid_gating.py
++++ b/vllm/third_party/flash_linear_attention/ops/fused_sigmoid_gating.py
+@@ -106,10 +106,14 @@
+                 i_t = tl.load(num_accepted_tokens + i_n).to(tl.int64) - 1
+             else:
+                 i_t = 0
+-            # Load state index and check for invalid entries
+-            state_idx = tl.load(ssm_state_indices + i_n * stride_indices_seq + i_t).to(
+-                tl.int64
+-            )
++            # num_accepted_tokens is asynchronous GPU state. Keep a stale or
++            # zero count from indexing another request's state row.
++            idx_in_row = (i_t >= 0) & (i_t < stride_indices_seq)
++            state_idx = tl.load(
++                ssm_state_indices + i_n * stride_indices_seq + i_t,
++                mask=idx_in_row,
++                other=0,
++            ).to(tl.int64)
+             # Skip if state index is invalid (NULL_BLOCK_ID=0)
+             if state_idx <= 0:
+                 return
+--- a/vllm/v1/attention/backends/gdn_attn.py
++++ b/vllm/v1/attention/backends/gdn_attn.py
+@@ -167,6 +167,11 @@
+         )
+         self.spec_token_indx: torch.Tensor = torch.empty(
+             (self.decode_cudagraph_max_bs * (self.num_spec + 1),),
++            dtype=torch.int32,
++            device=device,
++        )
++        self.spec_token_arange: torch.Tensor = torch.arange(
++            self.vllm_config.scheduler_config.max_num_seqs * (self.num_spec + 1),
+             dtype=torch.int32,
+             device=device,
+         )
+@@ -383,14 +388,8 @@
+                     num_spec_decodes * (self.num_spec + 1),
+                     query_start_loc_cpu[-1].item(),
+                 )
+-                spec_token_indx = torch.arange(
+-                    spec_token_size,
+-                    dtype=torch.int32,
+-                    device=query_start_loc.device,
+-                )
+-                non_spec_token_indx = torch.empty(
+-                    0, dtype=torch.int32, device=query_start_loc.device
+-                )
++                spec_token_indx = self.spec_token_arange[:spec_token_size]
++                non_spec_token_indx = self.non_spec_token_indx[:0]
+                 # Padded sequences trail the spec decodes, so slice them off
+                 # rather than gather with the host mask (an H2D copy + a kernel).
+                 spec_state_indices_tensor = block_table_tensor[
+@@ -556,17 +555,21 @@
+             spec_sequence_masks[num_spec_decodes:].fill_(False)
+
+             assert non_spec_token_indx is not None and spec_token_indx is not None
+-            self.non_spec_token_indx[: non_spec_token_indx.size(0)].copy_(
+-                non_spec_token_indx, non_blocking=True
+-            )
+-            non_spec_token_indx = self.non_spec_token_indx[
+-                : non_spec_token_indx.size(0)
+-            ]
+-
+-            self.spec_token_indx[: spec_token_indx.size(0)].copy_(
+-                spec_token_indx, non_blocking=True
+-            )
+-            spec_token_indx = self.spec_token_indx[: spec_token_indx.size(0)]
++            if non_spec_token_indx.numel() > 0:
++                self.non_spec_token_indx[: non_spec_token_indx.size(0)].copy_(
++                    non_spec_token_indx, non_blocking=True
++                )
++                non_spec_token_indx = self.non_spec_token_indx[
++                    : non_spec_token_indx.size(0)
++                ]
++
++            if spec_token_indx.data_ptr() == self.spec_token_arange.data_ptr():
++                spec_token_indx = self.spec_token_arange[: spec_token_indx.size(0)]
++            else:
++                self.spec_token_indx[: spec_token_indx.size(0)].copy_(
++                    spec_token_indx, non_blocking=True
++                )
++                spec_token_indx = self.spec_token_indx[: spec_token_indx.size(0)]
+
+             self.spec_query_start_loc[: num_spec_decodes + 1].copy_(
+                 spec_query_start_loc, non_blocking=True

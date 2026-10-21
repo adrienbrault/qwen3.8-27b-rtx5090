@@ -1,0 +1,1831 @@
+--- a/vllm/compilation/piecewise_backend.py
++++ b/vllm/compilation/piecewise_backend.py
+@@ -16,6 +16,7 @@
+ from torch._logging._internal import trace_structured
+
+ from vllm.compilation.backends import VllmBackend
++from vllm import envs
+ from vllm.config import VllmConfig
+ from vllm.config.utils import Range
+ from vllm.logger import init_logger
+@@ -80,6 +81,7 @@
+ class RangeEntry:
+     compile_range: Range
+     compiled: bool = False
++    ba4_input_indices: tuple[int, ...] | None = None
+     runnable: Callable[..., Any] = None  # type: ignore
+
+
+@@ -151,6 +153,11 @@
+         logger.debug_once(log_string)
+
+         self.compile_sizes = self.compilation_config.compile_sizes
++        if envs.VLLM_SM12X_BA_M4 and sym_shape_indices:
++            from vllm_ba4.compilation import compile_sizes
++
++            self.compile_sizes = compile_sizes(
++                self.compile_sizes, graph, compiled_runnables)
+         log_string = f"PiecewiseBackend: compile_sizes: {self.compile_sizes}"
+         logger.debug_once(log_string)
+
+@@ -237,7 +244,12 @@
+                 )
+                 continue
+             if hasattr(entry.runnable, "serialize"):
+-                out[str(range_key)] = serialize(entry.runnable)
++                key = str(range_key)
++                if entry.ba4_input_indices is not None:
++                    from vllm_ba4.compilation import artifact_key
++
++                    key = artifact_key(key, entry.ba4_input_indices)
++                out[key] = serialize(entry.runnable)
+
+         return out
+
+@@ -262,8 +274,19 @@
+             else:
+                 args_list = get_fake_args_from_graph(self.graph)
+
++            compile_graph = self.graph
++            if envs.VLLM_SM12X_BA_M4:
++                from vllm_ba4.compilation import graph_for_range
++
++                compile_graph = graph_for_range(
++                    self.graph, range_entry.compile_range)
++                if compile_graph is not self.graph:
++                    from vllm_ba4.compilation import prune_inputs
++
++                    compile_graph, args_list, range_entry.ba4_input_indices = (
++                        prune_inputs(compile_graph, args_list))
+             range_entry.runnable = self.vllm_backend.compiler_manager.compile(
+-                self.graph,
++                compile_graph,
+                 args_list,
+                 self.vllm_backend.inductor_config,
+                 self.compilation_config,
+@@ -330,6 +353,11 @@
+             if range_entry.compiled:
+                 continue
+             key = str(range_entry.compile_range)
++            if envs.VLLM_SM12X_BA_M4:
++                from vllm_ba4.compilation import loaded_key
++
++                key, range_entry.ba4_input_indices = loaded_key(
++                    key, self.compiled_runnables)
+             assert key in self.compiled_runnables, (
+                 f"Missing compiled runnable for range {range_entry.compile_range}. "
+                 f"Available keys: {list(self.compiled_runnables.keys())}"
+@@ -376,4 +404,6 @@
+             "PiecewiseBackend.__init__. "
+             f"range_entry={range_entry.compile_range}"
+         )
++        if range_entry.ba4_input_indices is not None:
++            args = tuple(args[i] for i in range_entry.ba4_input_indices)
+         return range_entry.runnable(*args)
+--- a/vllm/model_executor/layers/linear.py
++++ b/vllm/model_executor/layers/linear.py
+@@ -173,6 +173,13 @@
+             config.kernel_config.linear_backend if config is not None else "auto"
+         )
+         self._gemm_impl = dispatch_unquantized_gemm(linear_backend)
++        if envs.VLLM_SM12X_BA_M4 and current_platform.is_cuda():
++            # Construction has the current config; postload need not.
++            if config is None:
++                raise RuntimeError("BA4 requires construction-time vLLM config")
++            self._sm12x_ba4_capacity = max(
++                4, config.scheduler_config.max_num_batched_tokens,
++                config.compilation_config.max_cudagraph_capture_size or 0)
+
+     def create_weights(
+         self,
+@@ -226,6 +233,12 @@
+             ):
+                 layer.weight.data = weight.t().contiguous().t()
+
++        # N1: boot-time setup only; disabled means no import/allocation/logging.
++        if envs.VLLM_SM12X_BA_M4 and current_platform.is_cuda():
++            from vllm_ba4.runtime import prepare_layer
++
++            prepare_layer(layer, output_capacity=self._sm12x_ba4_capacity)
++
+     def apply(
+         self,
+         layer: torch.nn.Module,
+@@ -236,6 +249,12 @@
+             current_platform.is_cuda_alike() or current_platform.is_xpu()
+         ):
+             return linear_batch_invariant(x, layer.weight, bias)
++        if envs.VLLM_SM12X_BA_M4 and current_platform.is_cuda():
++            from vllm_ba4.runtime import try_apply
++
++            ba4_result = try_apply(layer, x, bias)
++            if ba4_result is not None:
++                return ba4_result
+         return self._gemm_impl(layer, x, layer.weight, bias)
+
+
+--- a/vllm_ba4/__init__.py
++++ b/vllm_ba4/__init__.py
+@@ -0,0 +1 @@
++"""Opt-in, measurement-gated L1a_BA4 layer. Importing this package is inert."""
+--- a/vllm_ba4/benchmark_source.py
++++ b/vllm_ba4/benchmark_source.py
+@@ -0,0 +1,593 @@
++#!/usr/bin/env python3
++"""N1 cold 48-layer replay, one GPU, hard wall limit <3 minutes.
++
++Run on each saved TP rank separately. Eager/synthetic diagnostics can never WIN or authorize normal ACTIVE.
++Timing events are OUTSIDE capture around whole replays; every projection
++is separated from its next reuse by representative large target weight reads.
++"""
++
++import argparse
++import hashlib
++import json
++import os
++from pathlib import Path
++import statistics
++import subprocess
++import sys
++import time
++
++ROOT = Path(__file__).resolve().parent
++sys.path.insert(0, str(ROOT / "L1a_BA4"))
++from vllm_ba4.policy import (CALLS, CANDIDATES, PROTOCOL, select, winning,
++                            valid_x_stride, weight_reason)
++from vllm_ba4.measurement import TIMING, replay_us, trace_layers, validate_replay_timer
++
++# The packet's input_reason accepts exactly (4, 5120); other M rows only
++# characterize the underlying kernels and must never select a serving route.
++ROUTE_M = 4
++INFORMATIONAL_MS = (8, 12, 16, 32)
++
++
++def select_serving_route(measurements):
++    return select(measurements[str(ROUTE_M)])
++
++
++def compiled_layer(name, prefix, x, weight, out, partial):
++    """Build persistent serving state before entering Dynamo, as at model load."""
++    from types import SimpleNamespace
++    from vllm_ba4.runtime import State
++    return SimpleNamespace(weight=weight, prefix=prefix,
++                           _sm12x_ba4=State(name, tuple(x.stride()), weight, out, partial))
++
++
++def compiled_route(layer, x, weight_offset, input_offset):
++    from vllm_ba4.runtime import try_apply
++    return try_apply(layer, x, None, weight_offset=weight_offset, input_offset=input_offset)
++
++
++def write_report(path, report):
++    path.parent.mkdir(parents=True, exist_ok=True)
++    tmp = path.with_suffix(path.suffix + ".tmp")
++    tmp.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
++    tmp.replace(path)
++
++
++def error_stats(actual, reference):
++    import torch
++    a, b = actual.double(), reference.double()
++    if not bool(torch.isfinite(a).all() & torch.isfinite(b).all()):
++        return {"max_abs": sys.float_info.max, "max_rel": sys.float_info.max,
++                "bit_equal": False, "close": False, "nonfinite": True}
++    d = (a - b).abs()
++    return {"max_abs": d.max().item(),
++            "max_rel": (d / b.abs().clamp_min(1e-6)).max().item(),
++            "bit_equal": bool(torch.equal(actual, reference)),
++            "close": bool(torch.allclose(a, b, rtol=1 / 64, atol=1 / 256)),
++            "nonfinite": False}
++
++
++def elementwise_error_comparison(actual, current, reference):
++    """No element may spend another element's baseline error allowance.
++
++    Absolute FP64-to-BF16 error is compared at each identical reference element,
++    without slack. Dividing both errors by that element's same |ref| (or the
++    same 1e-6 floor) gives the identical relative-error ordering, even near zero.
++    Maxima alone lose this correspondence and are diagnostic only.
++    """
++    import torch
++    a, b, r = actual.double(), current.double(), reference.double()
++    nonfinite = not bool(torch.isfinite(a).all() & torch.isfinite(b).all()
++                         & torch.isfinite(r).all())
++    if nonfinite:
++        count, excess = a.numel(), sys.float_info.max
++    else:
++        increase = (a - r).abs() - (b - r).abs()
++        count = int((increase > 0).sum().item())
++        excess = increase.clamp_min(0).max().item()
++    return {"metric": "abs_error_vs_fp64_bf16_per_element", "nonfinite": nonfinite,
++            "worse_elements": count, "max_abs_error_increase": excess}
++
++
++def record_correctness(path, report, owner, stage, outputs, references, prefixes,
++                       trace, baseline_outputs=None, captured_outputs=None):
++    """Persist every call and its kernel evidence before any numerical rejection.
++
++    The served baseline defines the comparison: FP64 tolerance is diagnostic
++    for it, with only non-finite values fatal (plus captured-output equality).
++    Finite candidates pass iff FP64-close OR elementwise no worse than current;
++    equality with finite current always passes. Captured equality is unchanged.
++    """
++    calls = []
++    for i, (actual, reference, prefix) in enumerate(zip(outputs, references, prefixes)):
++        ref = error_stats(actual, reference)
++        call = {"call": i, "prefix": prefix, "vs_fp64_bf16": ref}
++        passed = not ref["nonfinite"]
++        if baseline_outputs is not None:
++            base = error_stats(actual, baseline_outputs[i])
++            base_ref = error_stats(baseline_outputs[i], reference)
++            comparison = elementwise_error_comparison(actual, baseline_outputs[i], reference)
++            no_worse = not comparison["nonfinite"] and comparison["worse_elements"] == 0
++            call.update(vs_current=base, current_vs_fp64_bf16=base_ref,
++                        elementwise_vs_current=comparison, no_worse_than_current=no_worse)
++            passed = (passed and not base["nonfinite"] and not base_ref["nonfinite"]
++                      and (ref["close"] or no_worse or base["bit_equal"]))
++        if captured_outputs is not None and captured_outputs[i] is not None:
++            captured = error_stats(actual, captured_outputs[i])
++            call["vs_captured_served"] = captured
++            passed = passed and captured["bit_equal"]
++        call["passed"] = bool(passed)
++        calls.append(call)
++    if not calls or len(calls) != len(outputs) or len(calls) != len(references):
++        raise ValueError("incomplete correctness inputs")
++    result = {"passed": all(c["passed"] for c in calls), "per_call": calls,
++              "cuda_symbols": trace["cuda_symbols"],
++              "trace_path": trace["trace_path"], "trace_sha256": trace["trace_sha256"]}
++    owner.setdefault("correctness", {})[stage] = result
++    write_report(path, report)
++    if baseline_outputs is None and not result["passed"]:
++        if any(c["vs_fp64_bf16"]["nonfinite"] for c in calls):
++            raise ValueError("original dispatch or independent reference is non-finite")
++        raise ValueError("current dispatch differs from captured served output")
++    return result
++
++
++def print_measurement(m, row):
++    if "us_per_step" not in row:
++        print("M=%d %-19s unavailable: %s" %
++              (m, row["name"], row.get("error", "not qualified")), flush=True)
++        return
++    print("M=%d %-19s %8.3f B1 trace us/call %9.3f whole replay us/step %8.2f logical GB/s "
++          "max_abs=%g max_rel=%g" %
++          (m, row["name"], row["us_per_call"], row["us_per_step"],
++           row["effective_weight_GBps"], row.get("max_abs", 0), row.get("max_rel", 0)), flush=True)
++
++
++def worker(args, report):
++    import torch
++    from vllm_ba4.common import benchmark_sha256, code_sha256, fingerprint, tensor_sha256
++    from vllm_ba4.kernels import stream_weights
++    from vllm_ba4.runtime import ba4_out
++
++    torch.set_grad_enabled(False)
++    if not torch.cuda.is_available():
++        raise RuntimeError("one CUDA GPU is required; no measurement made")
++    device = torch.device("cuda", 0)
++    if torch.cuda.get_device_capability(device) != (12, 0):
++        raise RuntimeError("this arm is restricted to SM120")
++    report.update(code_sha256=code_sha256(), benchmark_sha256=hashlib.sha256(
++        Path(__file__).read_bytes()).hexdigest(), timing=TIMING,
++        serving_route_m=[ROUTE_M], selection_m=ROUTE_M, informational_m=list(INFORMATIONAL_MS))
++    if report['benchmark_sha256'] != benchmark_sha256():
++        raise ValueError('benchmark differs from the packaged measurement implementation')
++    deadline = time.monotonic() + args.seconds - 10
++    report['timing_validation'] = validate_replay_timer(torch)
++
++    def check_deadline():
++        if time.monotonic() >= deadline:
++            raise TimeoutError("measurement budget exhausted; keep partial JSON, no activation")
++
++    if args.capture:
++        payload = torch.load(args.capture, map_location="cpu", weights_only=True)
++        captured_settings = payload["fingerprint"]
++        # The model runner can set these beyond torch's process defaults.
++        # Reproduce them before testing the complete hardware/software binding.
++        torch.set_float32_matmul_precision(captured_settings["float32_matmul_precision"])
++        torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = captured_settings[
++            "bf16_reduced_precision_reduction"]
++        preference = captured_settings["blas_preference"].lower()
++        library = next((v for v in ("cublaslt", "cublas", "default") if v in preference), None)
++        if library is None:
++            raise ValueError("unsupported captured BLAS preference: " + preference)
++        torch.backends.cuda.preferred_blas_library(library)
++        report["fingerprint"] = fingerprint(device)
++        if payload["rank"] != args.rank or payload["fingerprint"] != report["fingerprint"]:
++            raise ValueError("capture rank/hardware/software/BLAS settings mismatch")
++        report.update(real_capture=payload.get("real_capture") is True,
++                      baseline_impl=payload.get("baseline_impl"),
++                      capture_path=str(args.capture), probe_mode=payload.get("probe_mode"),
++                      capture_sha256=hashlib.sha256(args.capture.read_bytes()).hexdigest(),
++                      captured_matmul_settings_replayed=True)
++        entries = payload["layers"]
++    else:
++        torch.manual_seed(271828 + args.rank)
++        report.update(real_capture=False, baseline_impl="default_unquantized_gemm",
++                      fingerprint=fingerprint(device))
++        entries = [{"prefix": "model.layers.%d.linear_attn.in_proj_ba" % i,
++                    "weight": torch.randn(48, 5120).mul_(5120 ** -.5).bfloat16(),
++                    "weight_stride": [5120, 1], "weight_offset": 0,
++                    "tp_size": 2, "tp_rank": args.rank, "output_sizes": [48, 48],
++                    "shard_order": "synthetic_beta24_alpha24", "x": {}, "y": {},
++                    "x_stride": {"4": [5120, 1]}, "x_offset": {"4": 0}}
++                   for i in range(CALLS)]
++    if len(entries) != CALLS or len({e["prefix"] for e in entries}) != CALLS:
++        raise ValueError("need 48 distinct, served layer matrices")
++    weights = []
++    report["layers"] = []
++    for e in entries:
++        w = e["weight"]
++        reason = weight_reason(e["prefix"], w.shape, e["weight_stride"], w.dtype,
++                               "cuda", (12, 0), e["tp_size"], e["output_sizes"],
++                               e["weight_offset"])
++        if reason or e["tp_rank"] != args.rank or not valid_x_stride(e["x_stride"]["4"]):
++            raise ValueError("unsupported captured layer: %s %s" % (e["prefix"], reason))
++        if report["real_capture"] and ("4" not in e["x"] or "4" not in e["y"]):
++            raise ValueError("missing real M4 input/output")
++        weights.append(w.to(device))
++        report["layers"].append({"prefix": e["prefix"],
++                                  "weight_sha256": tensor_sha256(w),
++                                  "x_stride": e["x_stride"]["4"],
++                                  "observed_M": sorted(e["x"], key=int),
++                                  "capture_x_strides": e["x_stride"],
++                                  "capture_x_offsets": e["x_offset"],
++                                  "weight_stride": e["weight_stride"],
++                                  "shard_order": e["shard_order"]})
++    write_report(args.json, report)
++    # Per GDN layer: FP8 qkvz 8192*5120 before BA; FP8 out 5120*3072 and
++    # representative NVFP4 gate/up+down (75,202,560 bytes) after BA. These
++    # are distinct allocations for all 48 layers (~6.38 GB), not a hot ring.
++    before_bytes = 8192 * 5120
++    after_bytes = 5120 * 3072 + 75_202_560
++    streams = [(torch.randint(0, 256, (before_bytes,), dtype=torch.uint8, device=device),
++                torch.randint(0, 256, (after_bytes,), dtype=torch.uint8, device=device))
++               for _ in range(CALLS)]
++    sink = torch.empty(((max(before_bytes, after_bytes) + 4095) // 4096,),
++                       dtype=torch.int32, device=device)
++    stream_weights(streams[0][0], sink)
++    stream_weights(streams[0][1], sink)
++    weight_bytes = CALLS * 48 * 5120 * 2
++    report["replay"] = {"distinct_B1_matrices": CALLS, "B1_weight_bytes": weight_bytes,
++                         "stream_bytes_per_step": CALLS * (before_bytes + after_bytes),
++                         "before_bytes_per_layer": before_bytes,
++                         "after_bytes_per_layer": after_bytes,
++                         "stream_kind": "unique random uint8 full reads, surrogate target weights",
++                         "timing": TIMING,
++                         "decision_scope": "whole replay including streams; B1 cost from separate trace",
++                         "relative_error_denominator_floor": 1e-6,
++                         "baseline_fp64_policy": "record errors; reject non-finite; require captured equality",
++                         "candidate_fp64_policy": "finite AND (FP64-close OR elementwise no-worse than current OR equal to current); finite equality passes even when current is not FP64-close",
++                         "rtol": 1 / 64, "atol": 1 / 256}
++    write_report(args.json, report)
++
++    def make_graph(xs, outs, partials, name, override=None):
++        def call(i):
++            if override is not None:
++                return override(i)
++            if name == "current":
++                # Exactly dispatch_unquantized_gemm(auto)'s default on CUDA.
++                return torch.nn.functional.linear(xs[i], weights[i], None)
++            route = "torch_mm" if name == "cublaslt_mm_probe" else name
++            ba4_out(xs[i], weights[i], outs[i], partials[i], route, "")
++            return outs[i]
++        for i in range(CALLS):
++            call(i)
++        torch.cuda.synchronize()
++        graph = torch.cuda.CUDAGraph()
++        retained = []
++        with torch.cuda.graph(graph):
++            for i in range(CALLS):
++                stream_weights(streams[i][0], sink)
++                retained.append(call(i))
++                stream_weights(streams[i][1], sink)
++        graph.replay()
++        torch.cuda.synchronize()
++        return graph, retained
++
++    def sample(g):
++        check_deadline()
++        return replay_us(torch.cuda, g[0])
++
++    def profile_graph(g, label):
++        check_deadline()
++        with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU,
++                                                torch.profiler.ProfilerActivity.CUDA]) as prof:
++            profiled_replay_us = replay_us(torch.cuda, g[0])
++        path = args.json.with_suffix("." + label + ".trace.json")
++        prof.export_chrome_trace(str(path))
++        result = trace_layers(json.loads(path.read_text())["traceEvents"])
++        if result['all_kernel_us'] > profiled_replay_us * 1.1:
++            raise ValueError('independent trace kernel sum exceeds outside replay interval')
++        result['profiled_replay_us'] = profiled_replay_us
++        result.update(trace_path=str(path), trace_sha256=hashlib.sha256(path.read_bytes()).hexdigest())
++        return result
++
++    def profile_calls(action, label):
++        # Capture the actual eager/compiled correctness launches, including
++        # rejected candidates; graph capture can choose different kernels.
++        check_deadline()
++        with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU,
++                                                torch.profiler.ProfilerActivity.CUDA]) as prof:
++            outputs = action()
++            torch.cuda.synchronize()
++        path = args.json.with_suffix("." + label + ".trace.json")
++        prof.export_chrome_trace(str(path))
++        events = json.loads(path.read_text())["traceEvents"]
++        trace = {"cuda_symbols": sorted({e["name"] for e in events if e.get("cat") == "kernel"}),
++                 "trace_path": str(path), "trace_sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
++        if not trace["cuda_symbols"]:
++            raise ValueError("correctness profiler did not expose CUDA kernel symbols")
++        return outputs, trace
++
++    def inputs(m):
++        key = str(m)
++        xs, outs, partials, references = [], [], [], []
++        for i, e in enumerate(entries):
++            stride = e["x_stride"].get(key, e["x_stride"]["4"])
++            offset = e["x_offset"].get(key, 0)
++            storage = torch.empty(offset + (m - 1) * stride[0] + 5120,
++                                  dtype=torch.bfloat16, device=device)
++            x = storage.as_strided((m, 5120), stride, offset)
++            if key in e["x"]:
++                x.copy_(e["x"][key])
++            elif "4" in e["x"]:
++                x.copy_(e["x"]["4"].repeat((m + 3) // 4, 1)[:m])
++            else:
++                x.normal_()
++            xs.append(x)
++            outs.append(torch.empty((m, 48), dtype=x.dtype, device=device))
++            partials.append(torch.empty((40, m, 48), dtype=torch.float32, device=device))
++            # FP64 computes the same BF16 products with enough precision to
++            # independently check the FP32 reduction and the final BF16 cast.
++            references.append((x.double() @ weights[i].double().t()).bfloat16())
++        return xs, outs, partials, references
++
++    for m in (ROUTE_M, *INFORMATIONAL_MS):
++        check_deadline()
++        key = str(m)
++        scope = "serving_route" if m == ROUTE_M else "informational"
++        print("M=%d scope=%s; serving route accepts M=%d only" % (m, scope, ROUTE_M), flush=True)
++        xs, outs, partials, references = inputs(m)
++        base = make_graph(xs, outs, partials, "current")
++        base_samples = [sample(base) for _ in range(3)]
++        base_trace = profile_graph(base, "M%d-current" % m)
++        current_outputs = [base[1][i].clone() for i in range(CALLS)]
++        baseline_checks = [error_stats(current_outputs[i], references[i]) for i in range(CALLS)]
++        baseline = {"name": "current", "measurement_scope": scope,
++                    "us_per_step": statistics.median(base_samples),
++                    "replay_samples_us": base_samples, "timing": TIMING,
++                    "us_per_call": base_trace["b1_trace_us_per_step"] / CALLS,
++                    "effective_weight_GBps": weight_bytes / base_trace["b1_trace_us_per_step"] / 1000,
++                    "retained_graph_outputs_correct": False,
++                    "real_M_capture": all(key in e["x"] for e in entries),
++                    "max_abs_vs_fp64_bf16": max(e["max_abs"] for e in baseline_checks),
++                    "max_rel_vs_fp64_bf16": max(e["max_rel"] for e in baseline_checks),
++                    **base_trace}
++        if m == 4:
++            report["baseline_cuda_symbols"] = base_trace["cuda_symbols"]
++            report["wmma128x1_seen"] = any("wmma" in symbol.lower() and "16x16_128x1" in symbol
++                                                for symbol in base_trace["cuda_symbols"])
++        rows = report["measurements"][key] = [baseline]
++        prefixes = [e["prefix"] for e in entries]
++        captured = [e["y"][key].to(device) if report["real_capture"] and key in e["y"] else None
++                    for e in entries]
++        record_correctness(args.json, report, baseline, "graph", current_outputs,
++                           references, prefixes, base_trace, captured_outputs=captured)
++        baseline["retained_graph_outputs_correct"] = True
++        write_report(args.json, report)
++        print_measurement(m, baseline)
++        for name in (*CANDIDATES, "cublaslt_mm_probe"):
++            check_deadline()
++            row = {"name": name, "measurement_scope": scope, "correct": False, "graph_ok": False,
++                   "allocation_free": False}
++            rows.append(row)
++            blas_original = torch.backends.cuda.preferred_blas_library()
++            route = "torch_mm" if name == "cublaslt_mm_probe" else name
++            try:
++                if name == "cublaslt_mm_probe":
++                    # PyTorch exposes a library preference, not a per-call
++                    # cuBLASLt algorithm pin. Capture it for comparison only;
++                    # never change the serving process's global BLAS policy.
++                    torch.backends.cuda.preferred_blas_library("cublaslt")
++                    row["deployable"] = False
++                    row["note"] = "advisory library preference; per-call pin required to deploy"
++                ba4_out(xs[0], weights[0], outs[0], partials[0], route, "")
++                def eager_calls():
++                    for i in range(CALLS):
++                        ba4_out(xs[i], weights[i], outs[i], partials[i], route, "")
++                    return outs
++                _, eager_trace = profile_calls(eager_calls, "M%d-%s-eager" % (m, name))
++                checked = record_correctness(args.json, report, row, "eager", outs,
++                                             references, prefixes, eager_trace,
++                                             baseline_outputs=current_outputs)
++                checks_base = [c["vs_current"] for c in checked["per_call"]]
++                checks_ref = [c["vs_fp64_bf16"] for c in checked["per_call"]]
++                row.update(correct=checked["passed"],
++                           max_abs=max(e["max_abs"] for e in checks_base),
++                           max_rel=max(e["max_rel"] for e in checks_base),
++                           bit_equal=all(e["bit_equal"] for e in checks_base),
++                           max_abs_vs_fp64_bf16=max(e["max_abs"] for e in checks_ref),
++                           max_rel_vs_fp64_bf16=max(e["max_rel"] for e in checks_ref))
++                if not row["correct"]:
++                    row["error"] = "numerical tolerance or baseline error bound failed"
++                    continue
++                # Check all layers after warmup, including library workspace.
++                torch.cuda.synchronize()
++                allocated = torch.cuda.memory_allocated()
++                torch.cuda.reset_peak_memory_stats()
++                for i in range(CALLS):
++                    ba4_out(xs[i], weights[i], outs[i], partials[i], route, "")
++                torch.cuda.synchronize()
++                extra = torch.cuda.max_memory_allocated() - allocated
++                row.update(allocation_free=(extra == 0), transient_device_bytes=extra)
++                candidate = make_graph(xs, outs, partials, name)
++                trace = profile_graph(candidate, "M%d-%s" % (m, name))
++                row["graph_ok"] = record_correctness(
++                    args.json, report, row, "graph", candidate[1], references,
++                    prefixes, trace, baseline_outputs=current_outputs)["passed"]
++                if not row["graph_ok"]:
++                    row["error"] = "graph replay correctness failed"
++                    del candidate
++                    continue
++                trials = []
++                for _ in range(3):
++                    before = sample(base)
++                    total = sample(candidate)
++                    after = sample(base)
++                    trials.append({"control_before_us": before, "candidate_us": total,
++                                   "control_after_us": after})
++                costs = [t["candidate_us"] for t in trials]
++                row.update(us_per_step=statistics.median(costs), timing=TIMING,
++                           us_per_call=trace["b1_trace_us_per_step"] / CALLS,
++                           trial_us_per_step=costs, paired_trials=trials,
++                           paired_savings_us=[(t["control_before_us"] + t["control_after_us"]) / 2
++                                              - t["candidate_us"] for t in trials],
++                           effective_weight_GBps=weight_bytes / trace["b1_trace_us_per_step"] / 1000,
++                           scratch_bytes=partials[0].numel() * 4 * CALLS,
++                           scratch_used=name.startswith("triton_split"),
++                           packing_us=0, synchronization_inside_timing=False, **trace)
++                del candidate
++            except (RuntimeError, NotImplementedError) as exc:
++                row["error"] = "%s: %s" % (type(exc).__name__, exc)
++                # Device errors (illegal access, assert, etc.) are not optional
++                # algorithm rejection: synchronization rethrows them and aborts.
++                torch.cuda.synchronize()
++            finally:
++                torch.backends.cuda.preferred_blas_library(blas_original)
++                write_report(args.json, report)
++                print_measurement(m, row)
++        del base
++        write_report(args.json, report)
++
++    best = select_serving_route(report["measurements"])
++    if best is None:
++        report.update(verdict="NO_WIN", reason="no correct allocation-free graph path for M=4; M=8/12/16/32 informational only")
++        return
++    # Compile the EXACT mutation-only op and persistent output pattern used in
++    # serving, for the selected M4 route. Reject functionalization allocations.
++    name = best["name"]
++
++    check_deadline()
++    xs, outs, partials, references = inputs(ROUTE_M)
++    bg = make_graph(xs, outs, partials, "current")
++    current_outputs = [a.clone() for a in bg[1]]
++    prefixes = [e["prefix"] for e in entries]
++    # Keep the original benchmark's common logging prefix: specializing this
++    # single compiled callable on 48 different strings exhausts Dynamo's cache.
++    # Weights, input strides and persistent buffers remain distinct per layer.
++    layers = [compiled_layer(name, prefixes[0], xs[i], weights[i], outs[i], partials[i])
++              for i in range(CALLS)]
++    # These graph-owned tensors keep their storage/offsets throughout replay.
++    offsets = [(weights[i].storage_offset(), xs[i].storage_offset()) for i in range(CALLS)]
++    compiled = torch.compile(compiled_route, fullgraph=True)
++    outputs = [compiled(layers[i], xs[i], *offsets[i]) for i in range(CALLS)]
++    torch.cuda.synchronize()
++    allocated = torch.cuda.memory_allocated()
++    torch.cuda.reset_peak_memory_stats()
++    outputs = [compiled(layers[i], xs[i], *offsets[i]) for i in range(CALLS)]
++    torch.cuda.synchronize()
++    report["compiled_check"] = {
++        "allocation_free": torch.cuda.max_memory_allocated() == allocated,
++        "output_aliases_buffer": all(a.data_ptr() == b.data_ptr() for a, b in zip(outputs, outs))}
++    outputs, compiled_trace = profile_calls(
++        lambda: [compiled(layers[i], xs[i], *offsets[i]) for i in range(CALLS)],
++        "selected-compiled-eager")
++    diagnostics = report.setdefault("compiled_diagnostics", {})
++    report["compiled_check"]["correct"] = record_correctness(
++        args.json, report, diagnostics, "eager", outputs, references, prefixes,
++        compiled_trace, baseline_outputs=current_outputs)["passed"]
++    cg = make_graph(xs, outs, partials, name,
++                    override=lambda i: compiled(layers[i], xs[i], *offsets[i]))
++    trace = profile_graph(cg, "selected-compiled")
++    report["compiled_check"]["capture_replay_correct"] = record_correctness(
++        args.json, report, diagnostics, "graph", cg[1], references, prefixes,
++        trace, baseline_outputs=current_outputs)["passed"]
++    # A changed input must be observed on replay; guards against stale results.
++    xs[0].neg_()
++    cg[0].replay()
++    torch.cuda.synchronize()
++    changed_trace = profile_graph(cg, "selected-compiled-changed-input")
++    changed_reference = (xs[0].double() @ weights[0].double().t()).bfloat16()
++    changed_current = torch.nn.functional.linear(xs[0], weights[0])
++    report["compiled_check"]["changed_input_correct"] = record_correctness(
++        args.json, report, diagnostics, "changed_input", [cg[1][0]],
++        [changed_reference], prefixes[:1], changed_trace,
++        baseline_outputs=[changed_current])["passed"]
++    xs[0].neg_()
++    bg = make_graph(xs, outs, partials, "current")
++    trials = []
++    for _ in range(3):
++        before = sample(bg)
++        total = sample(cg)
++        after = sample(bg)
++        trials.append({"control_before_us": before, "candidate_us": total,
++                       "control_after_us": after})
++    best["bare_op_us_per_step"] = best["us_per_step"]
++    costs = [t["candidate_us"] for t in trials]
++    best.update(us_per_step=statistics.median(costs), paired_trials=trials,
++                paired_savings_us=[(t["control_before_us"] + t["control_after_us"]) / 2
++                                   - t["candidate_us"] for t in trials],
++                compiled_selected=True, trial_us_per_step=costs,
++                us_per_call=trace["b1_trace_us_per_step"] / CALLS,
++                effective_weight_GBps=weight_bytes / trace["b1_trace_us_per_step"] / 1000,
++                **trace)
++    print_measurement(4, dict(best, name=name + " compiled"))
++    lt = next(r for r in report["measurements"]["4"] if r["name"] == "cublaslt_mm_probe")
++    lt_faster = (lt.get("correct") and lt.get("graph_ok")
++                 and lt.get("us_per_step", float("inf")) < best["us_per_step"])
++    report["cublaslt_requires_per_call_pin"] = bool(lt_faster)
++    qualified = (winning(best) and all(report["compiled_check"].values())
++                 and not lt_faster
++                 and select_serving_route(report["measurements"])["name"] == name
++                 and report["real_capture"])
++    report.update(selected=best["name"] if qualified else None,
++                  verdict="PROVISIONAL" if qualified else "NO_WIN",
++                  reason="M=4 route only; M=8/12/16/32 informational; require both-rank L1a vs L1a_BA4 PROFILE c1 before WIN/ACTIVE" if qualified
++                  else "M=4 route only; M=8/12/16/32 informational; require real capture, >=500us whole-replay saving in every pair, compile/graph/no-allocation checks; faster cuBLASLt probe needs scoped per-call pin")
++    if qualified:
++        from vllm_ba4.policy import admission_reason
++        reason = admission_reason(report, report['fingerprint'], code_sha256(), args.rank,
++                                  benchmark_sha256(), profile_only=True)
++        if reason:
++            report.update(verdict='NO_WIN', selected=None, reason=reason)
++
++
++def main():
++    p = argparse.ArgumentParser(description=__doc__)
++    data = p.add_mutually_exclusive_group(required=True)
++    data.add_argument("--capture", type=Path)
++    data.add_argument("--synthetic", action="store_true", help="diagnostic only; cannot admit a layer")
++    p.add_argument("--rank", type=int, choices=(0, 1), required=True)
++    p.add_argument("--json", type=Path, required=True)
++    p.add_argument("--seconds", type=int, default=170, metavar="30..170")
++    p.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
++    args = p.parse_args()
++    if not 30 <= args.seconds <= 170:
++        p.error("--seconds must be between 30 and 170")
++    if not args.worker:
++        # Supervise imports/JIT/driver stalls as well as the timed section.
++        # 170s budget + 5s grace, leaving headroom under the required 180s.
++        report = {"protocol": PROTOCOL, "rank": args.rank, "verdict": "RUNNING",
++                  "selected": None, "measurements": {}}
++        write_report(args.json, report)
++        try:
++            result = subprocess.run([sys.executable, str(Path(__file__).resolve()),
++                                     *sys.argv[1:], "--worker"], timeout=args.seconds + 5)
++            if result.returncode != 0:
++                report = json.loads(args.json.read_text())
++                if report["verdict"] == "RUNNING":
++                    report.update(verdict="BLOCKED", selected=None,
++                                  reason="worker terminated before qualification")
++                    write_report(args.json, report)
++                    print("VERDICT: BLOCKED (worker terminated; partial JSON preserved)", flush=True)
++            return result.returncode
++        except subprocess.TimeoutExpired:
++            report = json.loads(args.json.read_text())
++            report.update(verdict="BLOCKED", selected=None, reason="hard wall limit; no qualification")
++            write_report(args.json, report)
++            print("VERDICT: BLOCKED (wall limit; partial measurements in %s)" % args.json, flush=True)
++            return 2
++    report = json.loads(args.json.read_text())
++    started = time.monotonic()
++    try:
++        worker(args, report)
++    except Exception as exc:
++        report.update(verdict="BLOCKED", selected=None,
++                      reason="%s: %s" % (type(exc).__name__, exc))
++    report["worker_wall_seconds"] = time.monotonic() - started
++    write_report(args.json, report)
++    print("VERDICT: %s selected=%s; %s; JSON=%s" %
++          (report["verdict"], report.get("selected"), report.get("reason", ""), args.json), flush=True)
++    return 0 if report["verdict"] in ("PROVISIONAL", "NO_WIN") else 2
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+--- a/vllm_ba4/common.py
++++ b/vllm_ba4/common.py
+@@ -0,0 +1,40 @@
++"""Shared fingerprint and byte-identity checks; used outside timed paths."""
++
++import hashlib
++from pathlib import Path
++
++
++def code_sha256():
++    h = hashlib.sha256()
++    for name in ("__init__.py", "policy.py", "common.py", "kernels.py", "runtime.py",
++                 "measurement.py", "evidence.py", "benchmark_source.py", "compilation.py"):
++        h.update(name.encode())
++        h.update((Path(__file__).parent / name).read_bytes())
++    return h.hexdigest()
++
++
++def benchmark_sha256():
++    return hashlib.sha256((Path(__file__).parent / "benchmark_source.py").read_bytes()).hexdigest()
++
++
++def tensor_sha256(tensor):
++    import torch
++    return hashlib.sha256(tensor.detach().cpu().contiguous().view(
++        torch.uint8).numpy().tobytes()).hexdigest()
++
++
++def fingerprint(device):
++    import os
++    import torch
++    import triton
++    props = torch.cuda.get_device_properties(device)
++    return {"device_name": torch.cuda.get_device_name(device),
++            "device_uuid": str(getattr(props, "uuid", "unavailable")),
++            "capability": list(torch.cuda.get_device_capability(device)),
++            "torch": str(torch.__version__), "cuda": torch.version.cuda,
++            "triton": str(triton.__version__),
++            "blas_preference": str(torch.backends.cuda.preferred_blas_library()),
++            "bf16_reduced_precision_reduction":
++                torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction,
++            "float32_matmul_precision": torch.get_float32_matmul_precision(),
++            "cublas_workspace_config": os.getenv("CUBLAS_WORKSPACE_CONFIG", "")}
+--- a/vllm_ba4/compilation.py
++++ b/vllm_ba4/compilation.py
+@@ -0,0 +1,89 @@
++"""Keep BA4 opaque only in the size-four piecewise specialization.
++
++The symbolic node is a trace marker. General-size Inductor must see the
++original linear, including its neighbors, rather than execute its fallback
++behind a custom-op boundary. Do not mutate the shared Dynamo graph.
++"""
++import copy
++
++import torch
++
++
++def _dispatch_nodes(graph):
++    return [n for n in graph.graph.nodes if n.op == "call_function"
++            and n.target == torch.ops.vllm.sm12x_ba4_dispatch.default]
++
++
++def compile_sizes(sizes, graph, compiled_runnables):
++    # Warm/AOT loading has no FX graph. The serialized size-four entry is
++    # authoritative there, so cold and warm paths build the same range table.
++    selected = (_dispatch_nodes(graph) if graph is not None
++                else compiled_runnables is not None and "(4, 4)" in compiled_runnables)
++    if selected and 4 not in (sizes or []):
++        return [*(sizes or []), 4]
++    return sizes
++
++
++def graph_for_range(graph, compile_range):
++    general = not (compile_range.is_single_size() and compile_range.start == 4)
++    probes = [n for n in graph.graph.nodes if n.op == "call_function"
++              and n.target == torch.ops.vllm.sm12x_ba4_offset_metadata.default
++              and not n.users]
++    if not probes and (not general or not _dispatch_nodes(graph)):
++        return graph
++    result = copy.deepcopy(graph)
++    # These pure, unused metadata probes have served Dynamo's trace-time
++    # admission checks. Remove exactly them, never generic dead-code cleanup
++    # (attention nodes can carry mutations that FX does not recognize).
++    for node in list(result.graph.nodes):
++        if (node.op == "call_function"
++                and node.target == torch.ops.vllm.sm12x_ba4_offset_metadata.default
++                and not node.users):
++            result.graph.erase_node(node)
++    nodes = _dispatch_nodes(result) if general else []
++    result._ba4_scratch_inputs = {n.args[2].name for n in nodes}
++    for node in nodes:
++        x, weight, *_ = node.args
++        node.target = torch._C._nn.linear
++        node.args = (x, weight, None)
++        node.kwargs = {}
++    # Do not run generic FX DCE: vLLM attention packets carry mutation
++    # side effects that FX Node.is_impure does not necessarily recognize.
++    result.graph.lint()
++    result.recompile()
++    return result
++
++
++def prune_inputs(graph, args):
++    """Remove the now-unused scratch from general-size compiler inputs.
++
++    The piecewise caller retains its shared signature; selection of these
++    inputs belongs to that caller, outside the generated numerical program.
++    """
++    placeholders = [n for n in graph.graph.nodes if n.op == "placeholder"]
++    removed = {n for n in placeholders if not n.users
++               and n.name in graph._ba4_scratch_inputs}
++    indices = tuple(i for i, n in enumerate(placeholders) if n not in removed)
++    if len(indices) == len(placeholders):
++        return graph, args, None
++    for node in removed:
++        graph.graph.erase_node(node)
++    graph.recompile()
++    return graph, [args[i] for i in indices], indices
++
++
++_INPUTS = ";ba4-inputs="  # no underscore: AOT keys use rsplit("_", 1)
++
++
++def artifact_key(key, indices):
++    return key if indices is None else key + _INPUTS + ",".join(map(str, indices))
++
++
++def loaded_key(key, runnables):
++    matches = [k for k in runnables if k == key or k.startswith(key + _INPUTS)]
++    if len(matches) != 1:
++        raise RuntimeError("BA4 compiled input signature missing or ambiguous: " + key)
++    found = matches[0]
++    indices = (tuple(map(int, found.split(_INPUTS, 1)[1].split(",")))
++               if _INPUTS in found else None)
++    return found, indices
+--- a/vllm_ba4/evidence.py
++++ b/vllm_ba4/evidence.py
+@@ -0,0 +1,107 @@
++"""Strict serving PROFILE evidence contract, independent of torch/CUDA."""
++import hashlib
++import json
++import math
++from .measurement import positive
++
++BASE_IMAGE = 'UNQUALIFIED_V032_CONTROL_IMAGE'
++SERVING_PROTOCOL = 'V032_BA4-serving-profile-v1'
++SHARD_ORDER = 'beta[24*rank:24*(rank+1)],alpha[24*rank:24*(rank+1)]'
++
++
++def digest(value):
++    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'),
++                                     allow_nan=False).encode()).hexdigest()
++
++
++def sha(value):
++    return isinstance(value, str) and len(value) == 64 and all(c in '0123456789abcdef' for c in value)
++
++
++def image(value):
++    return isinstance(value, str) and value.startswith('sha256:') and sha(value[7:])
++
++
++def diagnostic_digest(report):
++    return digest({k: v for k, v in report.items()
++                   if k not in ('serving_evidence', 'verdict', 'reason')})
++
++
++def serving_reason(report):
++    evidence = report.get('serving_evidence', {})
++    if evidence.get('protocol') != SERVING_PROTOCOL:
++        return 'missing_serving_PROFILE'
++    if (evidence.get('rank') != report['rank']
++            or evidence.get('fingerprint') != report['fingerprint']
++            or evidence.get('diagnostic_sha256') != diagnostic_digest(report)):
++        return 'serving_capture_or_hardware_mismatch'
++    binding = evidence.get('binding', {})
++    if (binding.get('base_image_id') != BASE_IMAGE
++            or not image(binding.get('candidate_image_id'))
++            or binding['candidate_image_id'] == BASE_IMAGE
++            or binding.get('code_sha256') != report['code_sha256']
++            or binding.get('benchmark_sha256') != report['benchmark_sha256']
++            or any(not sha(binding.get(k)) for k in
++                   ('compiler_config_sha256', 'launch_config_sha256', 'source_archive_sha256'))):
++        return 'serving_image_or_compiler_binding'
++    trials = evidence.get('trials', [])
++    if len(trials) != 3:
++        return 'need_three_serving_PROFILE_pairs'
++    trace_hashes = set()
++    for trial in trials:
++        totals = []
++        for phase in ('control_before', 'candidate', 'control_after'):
++            p = trial[phase]
++            candidate = phase == 'candidate'
++            if (p.get('mode') != 'PROFILE' or p.get('concurrency') != 1
++                    or p.get('arm') != ('V032_BA4' if candidate else 'V032_NATIVE')
++                    or p.get('image_id') != binding['candidate_image_id' if candidate else 'base_image_id']
++                    or p.get('binding_sha256') != digest(binding)
++                    or p.get('vllm_compile_capture') is not True
++                    or p.get('outputs_correct') is not True
++                    or p.get('changed_input_correct') is not True
++                    or p.get('graph_replays_per_step') != 4
++                    or p.get('pcie_pushes_per_step') != 138
++                    or p.get('mtp_bf16_calls_per_step') != 15):
++                return 'unverified_serving_graph'
++            for kind in ('trace', 'probe', 'harness'):
++                artifact = p[kind]
++                if not artifact.get('path') or not sha(artifact.get('sha256')):
++                    return 'missing_serving_provenance'
++            if p['trace']['sha256'] in trace_hashes:
++                return 'reused_serving_trace'
++            trace_hashes.add(p['trace']['sha256'])
++            layers = p['layers']
++            if len(layers) != 48 or {l['prefix'] for l in layers} != {l['prefix'] for l in report['layers']}:
++                return 'serving_prefixes'
++            expected = {l['prefix']: l for l in report['layers']}
++            total = 0
++            for layer in layers:
++                e = expected[layer['prefix']]
++                if (layer.get('x_shape') != [4, 5120] or layer.get('logical_M') != 4
++                        or layer.get('padded_M') != 4 or layer.get('x_stride') != e['x_stride']
++                        or layer.get('x_offset') != e['capture_x_offsets']['4']
++                        or layer.get('weight_shape') != [48, 5120]
++                        or layer.get('weight_stride') != [5120, 1]
++                        or layer.get('weight_sha256') != e['weight_sha256']
++                        or layer.get('tp_rank') != report['rank'] or layer.get('tp_size') != 2
++                        or layer.get('output_sizes') != [48, 48]
++                        or layer.get('shard_order') != SHARD_ORDER
++                        or layer.get('calls_per_step') != 1
++                        or layer.get('route') != (report['selected'] if candidate else 'served_compiled_baseline')):
++                    return 'serving_shape_stride_padding_or_layout'
++                kernels = layer['kernels']
++                minimum = (2 if report['selected'].startswith('triton_split') else
++                           4 if report['selected'].startswith('torch_rows') else 1) if candidate else 1
++                if (not kernels or any(not k.get('symbol') or not positive(k.get('count_per_step'))
++                                       or not positive(k.get('us_per_step')) for k in kernels)
++                        or sum(k['count_per_step'] for k in kernels) < minimum):
++                    return 'serving_kernel_or_helper_costs'
++                total += sum(k['us_per_step'] for k in kernels)
++            if not positive(p.get('b1_us_per_step')) or abs(total - p['b1_us_per_step']) > 1e-6:
++                return 'serving_cost_sum_mismatch'
++            totals.append(total)
++        saving = (totals[0] + totals[2]) / 2 - totals[1]
++        if not math.isfinite(saving) or saving < 500:
++            return 'serving_saving_below_500us'
++    return None
+--- a/vllm_ba4/kernels.py
++++ b/vllm_ba4/kernels.py
+@@ -0,0 +1,86 @@
++"""Complete out-buffer paths. No packing, atomics, hot-path allocation or sync.
++
++Triton paths multiply BF16 inputs as FP32, reduce K in FP32, and cast once.
++The split variants include BOTH launches and their FP32 partial-sum traffic.
++"""
++
++import torch
++import triton
++import triton.language as tl
++
++
++@triton.jit
++def _direct(X, W, Y, XS: tl.constexpr, M: tl.constexpr,
++            BK: tl.constexpr):
++    n, m = tl.program_id(0), tl.program_id(1)
++    k = tl.arange(0, BK)
++    x = tl.load(X + m * XS + k, k < 5120, 0).to(tl.float32)
++    w = tl.load(W + n * 5120 + k, k < 5120, 0).to(tl.float32)
++    tl.store(Y + m * 48 + n, tl.sum(x * w, 0))
++
++
++@triton.jit
++def _partial(X, W, P, XS: tl.constexpr, M: tl.constexpr,
++             BK: tl.constexpr, BN: tl.constexpr):
++    ns = tl.program_id(0) * BN + tl.arange(0, BN)
++    s, m = tl.program_id(1), tl.program_id(2)
++    k = s * BK + tl.arange(0, BK)
++    x = tl.load(X + m * XS + k, k < 5120, 0).to(tl.float32)
++    w = tl.load(W + ns[:, None] * 5120 + k[None, :],
++                (ns[:, None] < 48) & (k[None, :] < 5120), 0).to(tl.float32)
++    sums = tl.sum(w * x[None, :], 1)
++    tl.store(P + (s * M + m) * 48 + ns, sums, ns < 48)
++
++
++@triton.jit
++def _finish(P, Y, M: tl.constexpr, SPLITS: tl.constexpr,
++            BS: tl.constexpr, BN: tl.constexpr):
++    n = tl.program_id(0) * BN + tl.arange(0, BN)
++    m = tl.program_id(1)
++    s = tl.arange(0, BS)
++    p = tl.load(P + (s[:, None] * M + m) * 48 + n[None, :],
++                (s[:, None] < SPLITS) & (n[None, :] < 48), 0)
++    tl.store(Y + m * 48 + n, tl.sum(p, 0), n < 48)
++
++
++@triton.jit
++def _stream_weights(W, S, SIZE: tl.constexpr, B: tl.constexpr):
++    """Read every byte of a large representative target weight stream."""
++    b = tl.program_id(0)
++    i = b * B + tl.arange(0, B)
++    v = tl.load(W + i, i < SIZE, 0, cache_modifier=".cg").to(tl.int32)
++    tl.store(S + b, tl.sum(v, 0))
++
++
++def stream_weights(weight_bytes, sink):
++    _stream_weights[(triton.cdiv(weight_bytes.numel(), 4096),)](
++        weight_bytes, sink, weight_bytes.numel(), 4096, num_warps=4)
++
++
++def run_out(name, x, weight, out, partial):
++    """All temporaries/views below are host metadata; device storage is fixed."""
++    if name == "torch_mm":
++        torch.mm(x, weight.t(), out=out)
++    elif name == "torch_rows_mm":
++        # M=1 cuBLAS route; include all M calls, not a single-row extrapolation.
++        for m in range(x.shape[0]):
++            torch.mm(x[m:m + 1], weight.t(), out=out[m:m + 1])
++    elif name == "torch_rows_mv":
++        # Some cuBLAS versions reject BF16 GEMV. Benchmark records rejection.
++        for m in range(x.shape[0]):
++            torch.mv(weight, x[m], out=out[m])
++    elif name == "triton_direct":
++        _direct[(48, x.shape[0])](x, weight, out, x.stride(0), x.shape[0],
++                                    8192, num_warps=4, enable_fp_fusion=False)
++    elif name.startswith("triton_split"):
++        bk = int(name.removeprefix("triton_split"))
++        if bk not in (128, 256, 512):
++            raise ValueError(name)
++        splits = triton.cdiv(5120, bk)
++        _partial[(12, splits, x.shape[0])](
++            x, weight, partial, x.stride(0), x.shape[0], bk, 4,
++            num_warps=4, enable_fp_fusion=False)
++        _finish[(3, x.shape[0])](partial, out, x.shape[0], splits,
++                                triton.next_power_of_2(splits), 16, num_warps=4)
++    else:
++        raise ValueError(name)
+--- a/vllm_ba4/measurement.py
++++ b/vllm_ba4/measurement.py
+@@ -0,0 +1,84 @@
++"""Outside-capture replay timing and independent trace accounting."""
++import math
++
++TIMING = 'external_events_whole_interleaved_replay-v2'
++
++
++def positive(value):
++    return type(value) in (int, float) and math.isfinite(value) and value > 0
++
++
++def replay_us(cuda, graph):
++    # The graph itself contains NO event-record nodes. Events bracket the
++    # complete replay on its launch stream, including every helper/weight read.
++    if cuda.is_current_stream_capturing():
++        raise RuntimeError('replay timing must run outside capture')
++    start, end = cuda.Event(enable_timing=True), cuda.Event(enable_timing=True)
++    start.record()
++    graph.replay()
++    end.record()
++    end.synchronize()
++    elapsed = start.elapsed_time(end) * 1000
++    if not positive(elapsed):
++        raise ValueError('nonfinite or nonpositive replay interval')
++    return elapsed
++
++
++def validate_replay_timer(torch):
++    """GPU-only sanity gate: sixteen GEMMs must take longer than one."""
++    import statistics
++    x = torch.randn((1024, 1024), dtype=torch.bfloat16, device='cuda')
++    w, out = torch.empty_like(x).normal_(), torch.empty_like(x)
++    for _ in range(3):
++        torch.mm(x, w, out=out)
++    torch.cuda.synchronize()
++    graphs = []
++    for count in (1, 16):
++        graph = torch.cuda.CUDAGraph()
++        with torch.cuda.graph(graph):
++            for _ in range(count):
++                torch.mm(x, w, out=out)
++        graph.replay()
++        torch.cuda.synchronize()
++        graphs.append(graph)
++    samples = [[replay_us(torch.cuda, graph) for _ in range(3)] for graph in graphs]
++    if statistics.median(samples[1]) <= 2 * statistics.median(samples[0]):
++        raise ValueError('outside-graph timer failed work-scaling sanity gate')
++    return {'single_work_us': samples[0], 'sixteen_work_us': samples[1]}
++
++
++def trace_layers(events, calls=48):
++    """Attribute CUDA kernels between each before/after weight-stream kernel.
++
++    Input is the independent Chrome trace, not captured event timestamps.
++    Fail closed if the profiler cannot expose graph kernels or attribution.
++    Copies, memset and reduction helpers within each bracket are included.
++    """
++    gpu = sorted((e for e in events if e.get('ph') == 'X'
++                  and e.get('cat') in ('kernel', 'gpu_memcpy', 'gpu_memset')),
++                 key=lambda e: e['ts'])
++    layers, group, reading = [], [], False
++    stream_ids = {e.get('args', {}).get('stream') for e in gpu}
++    if len(stream_ids) != 1 or None in stream_ids or not gpu:
++        raise ValueError('need one ordered CUDA stream for trace attribution')
++    for event in gpu:
++        if not positive(event.get('dur')):
++            raise ValueError('invalid CUDA trace duration')
++        if '_stream_weights' in event['name']:
++            if reading:
++                if not group:
++                    raise ValueError('empty BA trace bracket')
++                layers.append(group)
++                group = []
++            reading = not reading
++        elif reading:
++            group.append(event)
++        else:
++            raise ValueError('unattributed CUDA helper outside BA brackets')
++    if reading or len(layers) != calls:
++        raise ValueError('need exactly 48 complete BA trace brackets')
++    costs = [sum(e['dur'] for e in group) for group in layers]
++    return {'per_layer_us': costs, 'b1_trace_us_per_step': sum(costs),
++            'all_kernel_us': sum(e['dur'] for e in gpu),
++            'cuda_symbols': sorted({e['name'] for group in layers for e in group}),
++            'kernel_counts': [len(group) for group in layers]}
+--- a/vllm_ba4/policy.py
++++ b/vllm_ba4/policy.py
+@@ -0,0 +1,358 @@
++"""Dependency-free routing/admission policy; also exercised on the CPU host."""
++
++import math
++import statistics
++
++from .measurement import TIMING, positive
++from .evidence import SHARD_ORDER, serving_reason, sha
++
++PROTOCOL = "L1a_BA4-v2"
++PROFILE_PROTOCOL = "L1a_BA4-profile-qualified-v3"
++SUFFIX = ".linear_attn.in_proj_ba"
++WEIGHT_SHAPE = (48, 5120)
++WEIGHT_STRIDE = (5120, 1)
++CALLS = 48
++MIN_SAVING_US = 500.0
++CANDIDATES = (
++    "torch_mm", "torch_rows_mm", "torch_rows_mv",
++    "triton_direct", "triton_split128", "triton_split256", "triton_split512",
++)
++COMPILED_CHECKS = ("allocation_free", "output_aliases_buffer", "correct",
++                   "capture_replay_correct", "changed_input_correct")
++
++
++def weight_reason(prefix, shape, stride, dtype, device_type, capability,
++                  tp_size, output_sizes, offset=0):
++    if not prefix.endswith(SUFFIX):
++        return "prefix"
++    if tuple(shape) != WEIGHT_SHAPE:
++        return "weight_shape"
++    if tuple(stride) != WEIGHT_STRIDE or offset != 0:
++        return "weight_stride_or_offset"
++    if str(dtype) != "torch.bfloat16":
++        return "weight_dtype"
++    if device_type != "cuda" or tuple(capability) != (12, 0):
++        return "device"  # Exact target SM120; do not infer SM121 compatibility.
++    if tp_size != 2 or list(output_sizes) != [48, 48]:
++        return "shards"  # Excludes the interleaved Qwen3-Next [96] route.
++    return None
++
++
++def input_reason(shape, stride, dtype, device, expected_device,
++                 expected_stride, bias, requires_grad=False, offset=0):
++    if bias is not None:
++        return "bias"
++    if tuple(shape) != (4, 5120):
++        return "input_shape"
++    if tuple(stride) != tuple(expected_stride):
++        return "input_stride"
++    if str(dtype) != "torch.bfloat16" or device != expected_device:
++        return "input_dtype_or_device"
++    if requires_grad or offset % 8:
++        return "input_grad_or_alignment"
++    return None
++
++
++def valid_x_stride(stride):
++    return (len(stride) == 2 and stride[1] == 1
++            and stride[0] >= 5120 and stride[0] % 8 == 0)
++
++
++def select(results):
++    """Pick the fastest correct, graph-checked, allocation-free complete path.
++
++    Ordinary torch paths win exact ties. Results are medians of measured sums,
++    never 48 times the fastest/hottest single layer.
++    """
++    eligible = [r for r in results if r.get("name") in CANDIDATES
++                and r.get("correct") is True and r.get("graph_ok") is True
++                and r.get("allocation_free") is True
++                and math.isfinite(r.get("us_per_step", math.inf))
++                and r["us_per_step"] > 0]
++    return min(eligible, key=lambda r: (r["us_per_step"],
++               CANDIDATES.index(r["name"]))) if eligible else None
++
++
++def paired_values(result):
++    trials = result.get("paired_trials", [])
++    if len(trials) != 3:
++        raise ValueError("need three complete control/candidate/control trials")
++    values = []
++    for trial in trials:
++        before, candidate, after = (trial[k] for k in
++                                    ("control_before_us", "candidate_us", "control_after_us"))
++        if not all(positive(v) for v in (before, candidate, after)):
++            raise ValueError("invalid paired time")
++        saving = (before + after) / 2 - candidate
++        if not math.isfinite(saving):
++            raise ValueError('nonfinite recomputed saving')
++        values.append(saving)
++    return values
++
++
++def winning(result):
++    try:
++        savings = paired_values(result)
++        costs = [t["candidate_us"] for t in result["paired_trials"]]
++        return (result.get("paired_savings_us") == savings
++                and result.get("trial_us_per_step") == costs
++                and result.get("us_per_step") == statistics.median(costs)
++                and all(s >= MIN_SAVING_US for s in savings))
++    except (KeyError, TypeError, ValueError, OverflowError):
++        return False
++
++
++def finite_tree(value):
++    if isinstance(value, float):
++        return math.isfinite(value)
++    if isinstance(value, dict):
++        return all(finite_tree(v) for v in value.values())
++    if isinstance(value, list):
++        return all(finite_tree(v) for v in value)
++    return True
++
++
++def measurement_reason(report):
++    replay = report.get('replay', {})
++    required = {'distinct_B1_matrices': CALLS, 'B1_weight_bytes': CALLS*48*5120*2,
++                'before_bytes_per_layer': 41_943_040, 'after_bytes_per_layer': 90_931_200,
++                'stream_bytes_per_step': 6_377_963_520, 'timing': TIMING}
++    if any(replay.get(k) != v for k, v in required.items()):
++        return 'unverified_cold_replay_protocol'
++    sanity = report.get('timing_validation', {})
++    single, long = sanity.get('single_work_us', []), sanity.get('sixteen_work_us', [])
++    if (len(single) != 3 or len(long) != 3 or not all(positive(v) for v in single + long)
++            or statistics.median(long) <= 2 * statistics.median(single)):
++        return 'unvalidated_outside_replay_timer'
++    for m in ("4", "8", "12", "16", "32"):
++        rows = report.get("measurements", {}).get(m, [])
++        names = [r.get("name") for r in rows]
++        if (len(names) != len(set(names)) or set(names) !=
++                {"current", *CANDIDATES, "cublaslt_mm_probe"}):
++            return "incomplete_other_M_or_control_rows"
++        control_us = next(r for r in rows if r['name'] == 'current').get('us_per_step')
++        if not positive(control_us):
++            return 'invalid_current_control'
++        for row in rows:
++            if row["name"] != "current" and "us_per_step" not in row:
++                if not row.get("error"):
++                    return "unexplained_missing_measurement"
++                continue
++            if (not positive(row.get("us_per_step")) or row.get("timing") != TIMING
++                    or not positive(row.get("b1_trace_us_per_step"))
++                    or len(row.get("per_layer_us", [])) != CALLS
++                    or not all(positive(v) for v in row["per_layer_us"])
++                    or abs(sum(row["per_layer_us"]) - row["b1_trace_us_per_step"]) > 1e-6
++                    or len(row.get("kernel_counts", [])) != CALLS
++                    or not all(type(n) is int and n > 0 for n in row["kernel_counts"])
++                    or not row.get("cuda_symbols")
++                    or not sha(row.get("trace_sha256")) or not row.get("trace_path")
++                    or not positive(row.get("us_per_call"))
++                    or abs(row["us_per_call"] * CALLS - row["b1_trace_us_per_step"]) > 1e-6
++                    or not positive(row.get("effective_weight_GBps"))):
++                return "invalid_timing_or_trace_schema"
++            if (not positive(row.get('all_kernel_us')) or not positive(row.get('profiled_replay_us'))
++                    or row['b1_trace_us_per_step'] > row['all_kernel_us']
++                    or row['all_kernel_us'] > row['profiled_replay_us'] * 1.1
++                    or abs(row['effective_weight_GBps'] - CALLS*48*5120*2 /
++                           row['b1_trace_us_per_step'] / 1000) > 1e-6
++                    or any(type(row.get(k)) not in (int, float) or row[k] < 0
++                           for k in ('max_abs_vs_fp64_bf16', 'max_rel_vs_fp64_bf16'))):
++                return 'incomplete_trace_or_numerical_evidence'
++            minimum = (2 if row['name'].startswith('triton_split') else
++                       int(m) if row['name'].startswith('torch_rows') else 1)
++            if any(n < minimum for n in row['kernel_counts']):
++                return 'missing_reduction_or_rowwise_helpers'
++            if row["name"] == "current":
++                if (len(row.get("replay_samples_us", [])) != 3
++                        or not all(positive(v) for v in row["replay_samples_us"])
++                        or row["us_per_step"] != statistics.median(row["replay_samples_us"])
++                        or type(row.get('real_M_capture')) is not bool
++                        or (m == '4' and row['real_M_capture'] is not True)
++                        or row.get("retained_graph_outputs_correct") is not True):
++                    return "invalid_current_graph_control"
++            else:
++                if any(type(row.get(k)) not in (int, float) or row[k] < 0
++                       for k in ('max_abs', 'max_rel')):
++                    return 'missing_numerical_evidence'
++                savings = paired_values(row)
++                costs = [t["candidate_us"] for t in row["paired_trials"]]
++                if any(abs(t[k] / control_us - 1) > .2 for t in row['paired_trials']
++                       for k in ('control_before_us', 'control_after_us')):
++                    return 'unstable_or_mismatched_current_control'
++                if (type(row.get('transient_device_bytes')) is not int
++                        or row['transient_device_bytes'] < 0
++                        or row.get('allocation_free') != (row['transient_device_bytes'] == 0)
++                        or row.get('packing_us') != 0
++                        or row.get('synchronization_inside_timing') is not False
++                        or row.get('scratch_bytes') != 40*int(m)*48*4*CALLS
++                        or row.get('scratch_used') != row['name'].startswith('triton_split')):
++                    return 'inconsistent_helper_or_allocation_evidence'
++                if (row.get("paired_savings_us") != savings
++                        or row.get("trial_us_per_step") != costs
++                        or row["us_per_step"] != statistics.median(costs)
++                        or any(type(row.get(k)) is not bool for k in
++                               ("correct", "graph_ok", "allocation_free"))):
++                    return "inconsistent_paired_measurement"
++    return None
++
++
++def admission_reason(report, fingerprint, code_sha, rank, benchmark_sha=None, profile_only=False):
++    try:
++        return _admission_reason(report, fingerprint, code_sha, rank, benchmark_sha, profile_only)
++    except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
++        return "malformed_result"
++
++
++def _admission_reason(report, fingerprint, code_sha, rank, benchmark_sha, profile_only):
++    if report.get("protocol") == PROFILE_PROTOCOL:
++        if profile_only or report.get("verdict") != "PROFILE_QUALIFIED":
++            return "no_profile_qualified_result"
++        # Reuse every diagnostic, fingerprint, code, benchmark and layer check.
++        diagnostic = dict(report, protocol=PROTOCOL, verdict="PROVISIONAL")
++        reason = _admission_reason(diagnostic, fingerprint, code_sha, rank, benchmark_sha, True)
++        return reason or profile_qualified_reason(report)
++    if report.get("protocol") != PROTOCOL or report.get("verdict") != ("PROVISIONAL" if profile_only else "WIN"):
++        return "no_provisional_result" if profile_only else "no_WIN_result"
++    if not finite_tree(report):
++        return "nonfinite_result"
++    if report.get("fingerprint") != fingerprint:
++        return "hardware_or_software_changed"
++    if report.get("code_sha256") != code_sha:
++        return "implementation_changed"
++    if benchmark_sha is None:
++        from .common import benchmark_sha256
++        benchmark_sha = benchmark_sha256()
++    if report.get("benchmark_sha256") != benchmark_sha:
++        return "benchmark_changed"
++    if (report.get("rank") != rank or report.get("real_capture") is not True
++            or not sha(report.get("capture_sha256"))
++            or report.get("probe_mode") != "eager_diagnostic"):
++        return "rank_or_capture"
++    if report.get("baseline_impl") != "default_unquantized_gemm":
++        return "unsupported_baseline"
++    if (report.get("timing") != TIMING
++            or report.get("cublaslt_requires_per_call_pin") is not False
++            or any(report.get("compiled_check", {}).get(k) is not True
++                   for k in COMPILED_CHECKS)):
++        return "unverified_timing_or_compiled_path"
++    entries = report.get("layers", [])
++    if (len(entries) != CALLS or len({e.get("prefix") for e in entries}) != CALLS
++            or any(not e.get("prefix", "").endswith(SUFFIX)
++                   or not valid_x_stride(e.get("x_stride", []))
++                   or e.get("weight_stride") != [5120, 1]
++                   or e.get("shard_order") != SHARD_ORDER
++                   or not sha(e.get("weight_sha256"))
++                   or type(e.get("capture_x_offsets", {}).get("4")) is not int
++                   or e["capture_x_offsets"]["4"] < 0 or e["capture_x_offsets"]["4"] % 8
++                   for e in entries)):
++        return "incomplete_48_layer_capture"
++    reason = measurement_reason(report)
++    if reason:
++        return reason
++    rows = report["measurements"]["4"]
++    best = select(rows)
++    if (best is None or report.get("selected") != best["name"]
++            or best.get("compiled_selected") is not True or not winning(best)):
++        return "no_qualified_fastest_path"
++    lt = next(r for r in rows if r["name"] == "cublaslt_mm_probe")
++    if lt.get("us_per_step", math.inf) < best["us_per_step"]:
++        return "cublaslt_requires_per_call_pin"
++    if not profile_only:
++        return serving_reason(report)
++    return None
++
++
++def profile_qualified_reason(report):
++    """v3 is admission from repeated complete PROFILE pairs, never fidelity."""
++    from .evidence import BASE_IMAGE, digest, image
++    evidence = report.get('profile_evidence', {})
++    if (evidence.get('protocol') != PROFILE_PROTOCOL
++            or evidence.get('diagnostic_sha256') != digest({k: v for k, v in report.items()
++                if k not in ('profile_evidence', 'serving_evidence')})):
++        return 'profile_diagnostic_changed'
++    binding = report.get('serving_evidence', {}).get('binding', {})
++    if (binding.get('base_image_id') != BASE_IMAGE
++            or not image(binding.get('candidate_image_id'))
++            or binding['candidate_image_id'] == BASE_IMAGE
++            or binding.get('code_sha256') != report['code_sha256']
++            or binding.get('benchmark_sha256') != report['benchmark_sha256']
++            or any(not sha(binding.get(k)) for k in
++                ('compiler_config_sha256', 'launch_config_sha256', 'source_archive_sha256'))):
++        return 'profile_image_or_compiler_binding'
++    inputs = evidence.get('provisional_inputs', {})
++    if (set(inputs) != {'provisional-rank0.json', 'provisional-rank1.json'}
++            or not all(sha(h) for h in inputs.values())):
++        return 'profile_provisional_inputs'
++    migration = evidence.get('migration', {})
++    if (migration.get('target_code_sha256') != report['code_sha256']
++            or migration.get('target_image_id') != binding['candidate_image_id']
++            or migration.get('source_code_sha256') not in
++                (report['code_sha256'], 'f21ed08a57291f0ba0501d45d7e8cbb5b863fb5c68dc6c0e2155cd5e54d517ea')
++            or not image(migration.get('source_image_id'))):
++        return 'unverified_profile_code_migration'
++    pairs = evidence.get('pairs', [])
++    if len(pairs) < 2:
++        return 'need_two_complete_PROFILE_pairs'
++    paths, manifests, units, traces = set(), set(), set(), set()
++    for pair in pairs:
++        if (not isinstance(pair.get('result_dir'), str) or not pair['result_dir'].startswith('/')
++                or pair['result_dir'] in paths or pair.get('unit_identity') in units
++                or not sha(pair.get('unit_identity'))):
++            return 'reused_PROFILE_unit'
++        paths.add(pair['result_dir']); units.add(pair['unit_identity'])
++        manifest = pair.get('manifest', {})
++        if (not manifest or not all(isinstance(n, str) and n and not n.startswith('/')
++                and '..' not in n.split('/') and sha(h) for n, h in manifest.items())
++                or pair.get('manifest_sha256') != digest(manifest)
++                or pair['manifest_sha256'] in manifests):
++            return 'profile_manifest_changed'
++        manifests.add(pair['manifest_sha256'])
++        if (pair.get('order') != ['A_S_L1a', 'L1a_BA4']
++                or pair.get('provisional_inputs') != inputs
++                or pair.get('binding') != dict(binding,
++                    code_sha256=migration['source_code_sha256'],
++                    candidate_image_id=migration['source_image_id'],
++                    source_archive_sha256=pair.get('binding', {}).get('source_archive_sha256'))
++                or not sha(pair.get('binding', {}).get('source_archive_sha256'))
++                or pair.get('gates') != 'PASS'
++                or pair.get('aot_cache_decimal_nonce_dirs') != 0):
++            return 'incomplete_PROFILE_pair'
++        timings = [pair.get('unprofiled')] + [pair.get('profiled', {}).get(str(r)) for r in (0, 1)]
++        for timing in timings:
++            if (not isinstance(timing, dict) or not positive(timing.get('control_us'))
++                    or not positive(timing.get('candidate_us'))
++                    or timing.get('saving_us') != timing['control_us'] - timing['candidate_us']
++                    or timing['saving_us'] < MIN_SAVING_US):
++                return 'insufficient_PROFILE_saving'
++        for r in (0,1):
++            for key in ('control_trace_sha256','candidate_trace_sha256'):
++                h=pair['profiled'][str(r)].get(key)
++                if not sha(h) or h in traces:
++                    return 'reused_or_missing_PROFILE_trace'
++                traces.add(h)
++        worker = pair.get('workers', {}).get(str(report['rank']), {})
++        if (worker.get('kernel') != report['selected']
++                or worker.get('prefixes') != sorted(e['prefix'] for e in report['layers'])
++                or not isinstance(worker.get('pid'), str) or not worker['pid'].isdigit()):
++            return 'profile_worker_or_kernel_changed'
++    return None
++
++
++def profile_binding_reason(binding, report):
++    """Both host and worker bind the v3 source inventory to this rank report."""
++    try:
++        pairs = report['profile_evidence']['pairs']
++        if (set(binding) != {'protocol', 'binding', 'fingerprints', 'sources', 'provisional_inputs'}
++                or binding['protocol'] != PROFILE_PROTOCOL
++                or binding['binding'] != report['serving_evidence']['binding']
++                or binding['fingerprints'][report['rank']] != report['fingerprint']
++                or len(binding['fingerprints']) != 2
++                or binding['fingerprints'][0]['device_uuid'] == binding['fingerprints'][1]['device_uuid']
++                or binding['provisional_inputs'] != report['profile_evidence']['provisional_inputs']
++                or binding['sources'] != [{k: p[k] for k in
++                    ('result_dir', 'unit_identity', 'manifest_sha256', 'manifest')} for p in pairs]):
++            return 'profile_launch_binding_changed'
++    except (AttributeError, KeyError, TypeError, IndexError):
++        return 'malformed_profile_binding'
++    return None
+--- a/vllm_ba4/runtime.py
++++ b/vllm_ba4/runtime.py
+@@ -0,0 +1,295 @@
++"""Per-layer scratch/static outputs are prepared before compile/graph capture.
++
++Symbolic M dispatch returns fresh outputs owned by the caller/CUDA graph.
++
++The serving runner must order uses of a layer on its compute stream, as for
++its other persistent model buffers. The BA result is consumed inside the
++same forward. Independently concurrent forwards on one model are unsupported.
++"""
++
++import functools
++import json
++import logging
++import os
++import sys
++from dataclasses import dataclass
++
++import torch
++
++from .common import benchmark_sha256, code_sha256, fingerprint, tensor_sha256
++from .kernels import run_out
++from .policy import (SUFFIX, PROFILE_PROTOCOL, admission_reason, input_reason,
++                     profile_binding_reason, valid_x_stride, weight_reason)
++
++# init_logger preserves its argument; the external package name vllm_ba4 is
++# not a child of vllm. Use vLLM's configured worker handler/formatter rather
++# than Python's process-local root/lastResort stderr handlers. WorkerProc
++# supplies the process tag; never synthesize one from our rank/PID fields.
++logger = logging.getLogger("vllm." + __name__)
++if "vllm.logger" in sys.modules:
++    from vllm.logger import init_logger
++
++    logger = init_logger("vllm." + __name__)
++_used = set()
++
++
++@torch.library.custom_op("vllm::sm12x_ba4_offset_metadata", mutates_args=())
++def _offset_metadata(tensor: torch.Tensor) -> torch.Tensor:
++    """Expose trace-time offset metadata in a fresh zero-element tensor's stride.
++
++    Dynamo evaluates this helper on FakeTensor metadata, without evaluating
++    tensor producers. Its only FX result is a Tensor: unlike nonstrict_trace,
++    no shared TreeSpec can cross vLLM's attention partition boundaries.
++    An OpOverload is safe for Torch's AOT key and GraphPickler; an arbitrary
++    allow_in_graph Python function is not. The fresh empty result owns zero
++    storage bytes, reads/copies no data, and obeys custom_op's no-alias rule.
++    Piecewise compilation removes only these dead probes after Dynamo reads
++    their strides. The +1 represents every nonnegative offset positively.
++
++    Registration makes the target cacheable/serializable, not its integer
++    stride a live replay-time accessor. Dynamo specializes that integer:
++    compile at offset 0, then reuse at 1, and the tensor stride is (2,) but
++    the separately returned integer stride stays 1 (aot_eager/inductor).
++    Safety on compiled reuse comes from ba4_out's live operand validation,
++    which refuses a misaligned input before run_out or USED logging.
++    """
++    return torch.empty_strided((0,), (tensor.storage_offset() + 1,),
++                               dtype=tensor.dtype, device=tensor.device)
++
++
++@_offset_metadata.register_fake
++def _offset_metadata_fake(tensor):
++    return torch.empty_strided((0,), (tensor.storage_offset() + 1,),
++                               dtype=tensor.dtype, device=tensor.device)
++
++
++def _storage_offset(tensor):
++    """Read eagerly, or observe a trace-time integer specialized by Dynamo.
++
++    Compiled reuse does not reread this integer. ba4_out validates the live
++    offset before kernel execution/logging at warmup/capture; CUDA graph
++    replay itself does not execute Python and retains the runner contract.
++    """
++    if torch.compiler.is_compiling():
++        return torch.ops.vllm.sm12x_ba4_offset_metadata.default(tensor).stride(0) - 1
++    return tensor.storage_offset()
++
++
++@torch.library.custom_op("vllm::sm12x_ba4_out",
++                         mutates_args=("out", "partial"), device_types="cuda")
++def ba4_out(x: torch.Tensor, weight: torch.Tensor, out: torch.Tensor,
++            partial: torch.Tensor, name: str, prefix: str,
++            x_stride: list[int] | None = None) -> None:
++    # Python runs at warmup/capture, never during CUDA graph replay. Fail
++    # closed if guard-disabled compiled code receives newly invalid weights.
++    # The operand is the current Parameter itself, never a saved .data alias.
++    if (weight.requires_grad or tuple(weight.shape) != (48, 5120)
++            or tuple(weight.stride()) != (5120, 1)
++            or weight.storage_offset() != 0 or weight.dtype != torch.bfloat16
++            or weight.device != out.device):
++        raise RuntimeError("BA4 live weight metadata refused; re-trace before capture")
++    # Empty prefix is the retained microbenchmark's direct bare-kernel API,
++    # including informational non-M4 controls, never a try_apply fallback.
++    # Serving always supplies its live suffix-validated layer prefix.
++    if prefix and (not prefix.removeprefix("PROFILE_ONLY:").endswith(SUFFIX)
++            or tuple(x.shape) != (4, 5120) or x.requires_grad
++            or not valid_x_stride(x.stride())
++            or (x_stride is not None and tuple(x.stride()) != tuple(x_stride))
++            or x.storage_offset() % 8 or x.dtype != torch.bfloat16
++            or x.device != out.device or tuple(out.shape) != (4, 48)):
++        raise RuntimeError("BA4 live input refused; re-trace the original apply path")
++    run_out(name, x, weight, out, partial)
++    if prefix and prefix not in _used:
++        _used.add(prefix)
++        profile_only = prefix.startswith("PROFILE_ONLY:")
++        display_prefix = prefix.removeprefix("PROFILE_ONLY:")
++        logger.warning("SM12X BA4 %s: prefix=%s pid=%d kernel=%s "
++                       "phase=warmup_or_capture; verify replay with PROFILE",
++                       "PROFILE_USED" if profile_only else "USED", display_prefix, os.getpid(), name)
++
++
++@ba4_out.register_fake
++def _fake(x, weight, out, partial, name, prefix, x_stride=None):
++    # Mutation-only op, no returned aliases and no fake/meta allocation.
++    return None
++
++
++@torch.library.custom_op("vllm::sm12x_ba4_dispatch",
++                         mutates_args=("partial",), device_types="cuda")
++def ba4_dispatch(x: torch.Tensor, weight: torch.Tensor, partial: torch.Tensor,
++                 name: str, prefix: str, x_stride: list[int]) -> torch.Tensor:
++    """Runtime M dispatch for the single symbolic backbone graph.
++
++    This output never aliases an operand or a persistent BA4 output. M != 4
++    uses exactly default_unquantized_gemm's F.linear(x, weight, None), with
++    its own allocation/lifetime and no BA4 capacity or out= GEMM variant.
++    M4 allocates at warmup/capture; CUDA graph replay reuses the graph-owned
++    allocation without running Python/the allocator. Scratch stays per layer.
++    """
++    if x.ndim != 2 or x.shape[0] != 4:
++        return torch.nn.functional.linear(x, weight, None)
++    # partial is the persistent prepared-device anchor. A fresh output on
++    # x.device cannot enforce the old prepared-output device refusals.
++    # Check before allocation, selected work, or USED logging.
++    if weight.device != partial.device:
++        raise RuntimeError("BA4 live weight metadata refused; re-trace before capture")
++    if x.device != partial.device:
++        raise RuntimeError("BA4 live input refused; re-trace the original apply path")
++    out = torch.empty((4, 48), dtype=x.dtype, device=x.device)
++    # Keep all j41m live operand checks and the actual USED emission in one
++    # place. A guard-disabled replay with invalid M4 operands fails closed.
++    ba4_out(x, weight, out, partial, name, prefix, x_stride)
++    return out
++
++
++@ba4_dispatch.register_fake
++def _dispatch_fake(x, weight, partial, name, prefix, x_stride):
++    return x.new_empty((x.shape[0], 48))
++
++
++@dataclass
++class State:
++    name: str
++    x_stride: tuple
++    weight: torch.Tensor
++    out: torch.Tensor
++    partial: torch.Tensor
++    profile_only: bool = False
++    prefix: str = ""
++    buffer: torch.Tensor | None = None
++
++    def __post_init__(self):
++        if self.buffer is None:
++            self.buffer = self.out
++
++    def matches_weight(self, weight):
++        """Validate the live Parameter at eager calls and at every trace."""
++        return (weight is self.weight and not weight.requires_grad
++                and tuple(weight.shape) == (48, 5120)
++                and tuple(weight.stride()) == (5120, 1)
++                and _storage_offset(weight) == 0
++                and weight.dtype == torch.bfloat16
++                and weight.device == self.out.device)
++
++
++@functools.lru_cache(maxsize=4)
++def _read_report(path):
++    with open(path) as f:
++        return json.load(f)
++
++
++def prepare_layer(layer, *, output_capacity=4):
++    """Called only with the flag on. Never called from apply/capture."""
++    prefix = getattr(layer, "prefix", "")
++    if not prefix.endswith(SUFFIX):
++        return
++    layer._sm12x_ba4 = None
++
++    def inactive(reason):
++        logger.warning("SM12X BA4 INACTIVE: prefix=%s pid=%d reason=%s",
++                       prefix, os.getpid(), reason)
++
++    if os.environ.get("VLLM_BATCH_INVARIANT", "0") != "0":
++        inactive("batch_invariant_precedence")
++        return
++    w = getattr(layer, "weight", None)
++    if w is None:
++        inactive("weight_unavailable")
++        return
++    if w.requires_grad:
++        inactive("weight_requires_grad")
++        return
++    if getattr(layer, "bias", None) is not None:
++        inactive("layer_bias")
++        return
++    capability = torch.cuda.get_device_capability(w.device) if w.is_cuda else ()
++    reason = weight_reason(prefix, w.shape, w.stride(), w.dtype, w.device.type,
++                           capability, getattr(layer, "tp_size", None),
++                           getattr(layer, "output_sizes", []), w.storage_offset())
++    if reason:
++        inactive(reason)
++        return
++    if getattr(layer.quant_method._gemm_impl, "__name__", "") != "default_unquantized_gemm":
++        inactive("nondefault_original_dispatch")
++        return
++    rank = layer.tp_rank
++    path = os.environ.get("VLLM_SM12X_BA_M4_RESULT", "").replace("{rank}", str(rank))
++    try:
++        report = _read_report(path)
++        profile_only = os.environ.get("VLLM_SM12X_BA_M4_PROFILE_ONLY", "0") == "1"
++        reason = admission_reason(report, fingerprint(w.device), code_sha256(), rank,
++                                  benchmark_sha256(), profile_only=profile_only)
++        if reason:
++            inactive(reason)
++            return
++        if not profile_only:
++            binding = _read_report(os.environ.get("VLLM_SM12X_BA_M4_BINDING", ""))
++            if (report.get("protocol") == PROFILE_PROTOCOL
++                    and profile_binding_reason(binding, report)):
++                inactive("profile_launch_binding_changed")
++                return
++            if (binding.get("binding") != report["serving_evidence"]["binding"]
++                    or binding.get("fingerprints", [])[rank] != report["fingerprint"]):
++                inactive("serving_launch_binding_changed")
++                return
++        entry = next((e for e in report["layers"] if e["prefix"] == prefix), None)
++        if entry is None or tensor_sha256(w) != entry["weight_sha256"]:
++            inactive("prefix_or_weight_identity_changed")
++            return
++    except (OSError, ValueError, KeyError, TypeError, IndexError, AttributeError) as exc:
++        inactive("result_unavailable_or_invalid:%s" % type(exc).__name__)
++        return
++    # Per-layer ownership, not a shared global scratch pool. No packing.
++    capacity = output_capacity
++    buffer = torch.empty((capacity, 48), dtype=w.dtype, device=w.device)
++    out = buffer if capacity == 4 else buffer[:4]
++    partial = torch.empty((40, 4, 48), dtype=torch.float32, device=w.device)
++    state = State(report["selected"], tuple(entry["x_stride"]), w, out, partial,
++                  profile_only, ("PROFILE_ONLY:" if profile_only else "") + prefix,
++                  buffer)
++    # Materialize the selected library/JIT path before any capture. Do not mark
++    # USED until an actual matching model input passes try_apply.
++    sample = torch.empty_strided((4, 5120), state.x_stride,
++                                 dtype=w.dtype, device=w.device).zero_()
++    run_out(state.name, sample, w, out, partial)
++    layer._sm12x_ba4 = state
++    logger.warning("SM12X BA4 %s: prefix=%s rank=%d pid=%d kernel=%s "
++                   "M=4 N=48 K=5120 bf16 w_stride=(5120,1) x_stride=%s "
++                   "result=%s stable_buffers=1", "PROFILE_ONLY" if profile_only else "ACTIVE",
++                   prefix, rank, os.getpid(), state.name,
++                   state.x_stride, path)
++
++
++def try_apply(layer, x, bias, *, weight_offset=None, input_offset=None):
++    state = getattr(layer, "_sm12x_ba4", None)
++    if state is None:
++        return None
++    w = layer.weight
++    if (not getattr(layer, "prefix", "").endswith(SUFFIX)
++            or not state.matches_weight(w)):
++        return None
++    if weight_offset is not None and weight_offset != _storage_offset(w):
++        return None
++    symbolic_m = False
++    if torch.compiler.is_compiling():
++        from torch.fx.experimental.symbolic_shapes import statically_known_true
++        if x.ndim != 2:
++            return None
++        if statically_known_true(x.shape[0] != 4):
++            return None
++        symbolic_m = not statically_known_true(x.shape[0] == 4)
++    # Offsets supplied by the fixed-M replay harness are additional checks,
++    # never substitutes for observing this call's actual tensor metadata.
++    actual_input_offset = _storage_offset(x)
++    if input_offset is not None and input_offset != actual_input_offset:
++        return None
++    shape = (4, x.shape[1]) if symbolic_m else x.shape
++    if input_reason(shape, x.stride(), x.dtype, x.device, state.out.device,
++                    state.x_stride, bias, x.requires_grad,
++                    actual_input_offset):
++        return None
++    prefix = ("PROFILE_ONLY:" if state.profile_only else "") + layer.prefix
++    if symbolic_m:
++        return ba4_dispatch(x, w, state.partial, state.name, prefix, list(state.x_stride))
++    ba4_out(x, w, state.out, state.partial, state.name, prefix, list(state.x_stride))
++    return state.out
+--- a/vllm/envs.py
++++ b/vllm/envs.py
+@@ -92,6 +92,10 @@
+     VLLM_MAIN_CUDA_VERSION: str = "13.0"
+     VLLM_FLOAT32_MATMUL_PRECISION: Literal["highest", "high", "medium"] = "highest"
+     VLLM_BATCH_INVARIANT: bool = False
++    VLLM_SM12X_BA_M4: bool = False
++    VLLM_SM12X_BA_M4_PROFILE_ONLY: bool = False
++    VLLM_SM12X_BA_M4_BINDING: str = ""
++    VLLM_SM12X_BA_M4_RESULT: str = ""
+     VLLM_TRITON_USE_TD: bool | None = None
+     VLLM_GPU_SYNC_CHECK: Literal["warn", "error"] | None = None
+     MAX_JOBS: str | None = None
+@@ -643,6 +647,11 @@
+     # Enable batch-invariant mode: deterministic results regardless of
+     # batch composition. Requires NVIDIA GPU with compute capability >= 9.0.
+     "VLLM_BATCH_INVARIANT": lambda: bool(int(os.getenv("VLLM_BATCH_INVARIANT", "0"))),
++    # N1: enable only this layer/shape after serving PROFILE qualification (or isolated PROFILE_ONLY).
++    "VLLM_SM12X_BA_M4": lambda: os.getenv("VLLM_SM12X_BA_M4", "0") == "1",
++    "VLLM_SM12X_BA_M4_RESULT": lambda: os.getenv("VLLM_SM12X_BA_M4_RESULT", ""),
++    "VLLM_SM12X_BA_M4_PROFILE_ONLY": lambda: os.getenv("VLLM_SM12X_BA_M4_PROFILE_ONLY", "0") == "1",
++    "VLLM_SM12X_BA_M4_BINDING": lambda: os.getenv("VLLM_SM12X_BA_M4_BINDING", ""),
+     "VLLM_REPLICATE_EMBED": lambda: (
+         os.getenv("VLLM_REPLICATE_EMBED", "0").strip().lower() in ("1", "true")
+     ),
