@@ -120,6 +120,7 @@ RUN=("${DK[@]}" run -d --name "$NAME" --restart unless-stopped --oom-score-adj -
   --entrypoint python3 --runtime nvidia --gpus "$GPU_ARG" --ipc=host
   -p "$BIND:$PORT:8000" --shm-size 8g --memory 52g --memory-swap 52g
   -e VLLM_ATTENTION_BACKEND=FLASHINFER
+  -e VLLM_KV_CACHE_LAYOUT=LBHNC                           # the layout the served NVFP4 path reads; without a tier vLLM picks LBNHC (GOTCHAS 31)
   -e VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE=536870912      # 512 MiB: with XQA off, the Bug B dodge
   -e CUDA_MODULE_LOADING=LAZY
   -e TORCHINDUCTOR_COMPILE_THREADS=8 -e MAX_JOBS=4 -e FLASHINFER_NUM_COMPILE_JOBS=4   # bounds the first boot's JIT host RAM
