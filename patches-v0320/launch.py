@@ -9,8 +9,11 @@ from plan import command
 
 if os.readlink('/proc/self/fd/9') != '/srv/qwen5090/gpu-exclusive.lock':
     raise SystemExit('GPU lock must be inherited on fd 9')
+dynamic = os.environ.get('V032_DYNAMIC_MTP', '0')
+if dynamic not in ('0', '1'):
+    raise SystemExit('V032_DYNAMIC_MTP must be 0 or 1')
 cmd = command(Path('/srv/qwen5090/models/qwen3.8-27b-nvidia-nvfp4'),
-              Path('/srv/qwen5090/v032-candidate'))
+              Path('/srv/qwen5090/v032-candidate'), dynamic_mtp=dynamic == '1')
 mnbt = int(os.environ.get('V032_MNBT', '8192'))
 if mnbt not in (2048, 4096, 8192):
     raise SystemExit('unsupported screen prefill budget')

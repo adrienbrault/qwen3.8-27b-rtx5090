@@ -1,0 +1,347 @@
+{
+  "scope": "native 0.32 fixed K3 versus dynamic K3/K2/K1 by scheduled batch size; BA4 off, prefill budget 8192",
+  "gpu_qualification_complete": false,
+  "arms": {
+    "A": {
+      "decode": [
+        {
+          "c": 1,
+          "kind": "code",
+          "ctx": 0,
+          "runs": 2,
+          "ss_agg_tps_median": 242.25,
+          "ss_agg_tps_min_max": [
+            218.3,
+            266.2
+          ],
+          "ss_per_stream_tps_median": 242.2,
+          "accept_per_draft_median": 0.692,
+          "ttft_s_median": 0.05,
+          "ss_window_s": [
+            4.5,
+            3.0
+          ]
+        },
+        {
+          "c": 4,
+          "kind": "code",
+          "ctx": 0,
+          "runs": 2,
+          "ss_agg_tps_median": 899.4000000000001,
+          "ss_agg_tps_min_max": [
+            861.1,
+            937.7
+          ],
+          "ss_per_stream_tps_median": 224.9,
+          "accept_per_draft_median": 0.6465000000000001,
+          "ttft_s_median": 0.1,
+          "ss_window_s": [
+            4.0,
+            3.5
+          ]
+        },
+        {
+          "c": 16,
+          "kind": "code",
+          "ctx": 0,
+          "runs": 2,
+          "ss_agg_tps_median": 2793.95,
+          "ss_agg_tps_min_max": [
+            2770.3,
+            2817.6
+          ],
+          "ss_per_stream_tps_median": 174.6,
+          "accept_per_draft_median": 0.64,
+          "ttft_s_median": 0.535,
+          "ss_window_s": [
+            5.0,
+            4.5
+          ]
+        },
+        {
+          "c": 1,
+          "kind": "code",
+          "ctx": 60000,
+          "runs": 2,
+          "ss_agg_tps_median": 249.6,
+          "ss_agg_tps_min_max": [
+            238.7,
+            260.5
+          ],
+          "ss_per_stream_tps_median": 249.6,
+          "accept_per_draft_median": 0.732,
+          "ttft_s_median": 9.51,
+          "ss_window_s": [
+            3.5,
+            4.0
+          ]
+        },
+        {
+          "c": 4,
+          "kind": "code",
+          "ctx": 60000,
+          "runs": 2,
+          "ss_agg_tps_median": 867.3,
+          "ss_agg_tps_min_max": [
+            853.5,
+            881.1
+          ],
+          "ss_per_stream_tps_median": 216.8,
+          "accept_per_draft_median": 0.7244999999999999,
+          "ttft_s_median": 24.89,
+          "ss_window_s": [
+            4.0,
+            3.5
+          ]
+        },
+        {
+          "c": 6,
+          "kind": "code",
+          "ctx": 60000,
+          "runs": 2,
+          "ss_agg_tps_median": 1131.0500000000002,
+          "ss_agg_tps_min_max": [
+            1126.7,
+            1135.4
+          ],
+          "ss_per_stream_tps_median": 188.5,
+          "accept_per_draft_median": 0.7124999999999999,
+          "ttft_s_median": 34.57,
+          "ss_window_s": [
+            4.0,
+            4.0
+          ]
+        }
+      ],
+      "agents": {
+        "complete": true,
+        "failed": 0,
+        "cold": {
+          "requests": 6,
+          "ttft_median_s": 12.01369833946228,
+          "ttft_p95_s": 29.861088752746582,
+          "decode_tps_median": 18.165027745351182,
+          "wall_median_s": 54.46461796760559,
+          "sse_gap_max_s": 1.7104933261871338,
+          "request_sse_gap_p95_median_s": 1.0536549091339111
+        },
+        "returning": {
+          "requests": 12,
+          "ttft_median_s": 0.9826235771179199,
+          "ttft_p95_s": 1.6760587692260742,
+          "decode_tps_median": 126.16936422895195,
+          "wall_median_s": 6.531773567199707,
+          "sse_gap_max_s": 0.7675843238830566,
+          "request_sse_gap_p95_median_s": 0.018487930297851562
+        },
+        "all": {
+          "requests": 18,
+          "ttft_median_s": 1.366459846496582,
+          "ttft_p95_s": 29.861088752746582,
+          "decode_tps_median": 114.81215213911501,
+          "wall_median_s": 7.812267541885376,
+          "sse_gap_max_s": 1.7104933261871338,
+          "request_sse_gap_p95_median_s": 0.01863837242126465
+        },
+        "wall_span_s": 81.77809858322144,
+        "wall_output_tps": 170.79144956869462,
+        "prompt_tokens_range": [
+          29974,
+          105552
+        ],
+        "cached_tokens": 728640,
+        "prompt_tokens": 1131349,
+        "note": "Wall output rate includes prefill, tool think time and ramp-up/down. SSE gaps are frame gaps; MTP may emit several tokens per frame."
+      }
+    },
+    "B": {
+      "decode": [
+        {
+          "c": 1,
+          "kind": "code",
+          "ctx": 0,
+          "runs": 2,
+          "ss_agg_tps_median": 238.35,
+          "ss_agg_tps_min_max": [
+            230.2,
+            246.5
+          ],
+          "ss_per_stream_tps_median": 238.3,
+          "accept_per_draft_median": 0.6865,
+          "draft_tokens_per_proposal_median": 3.0,
+          "ttft_s_median": 0.05,
+          "ss_window_s": [
+            4.0,
+            3.5
+          ]
+        },
+        {
+          "c": 4,
+          "kind": "code",
+          "ctx": 0,
+          "runs": 2,
+          "ss_agg_tps_median": 635.4,
+          "ss_agg_tps_min_max": [
+            583.8,
+            687.0
+          ],
+          "ss_per_stream_tps_median": 158.8,
+          "accept_per_draft_median": 0.7065,
+          "draft_tokens_per_proposal_median": 2.0,
+          "ttft_s_median": 0.105,
+          "ss_window_s": [
+            5.6,
+            5.0
+          ]
+        },
+        {
+          "c": 16,
+          "kind": "code",
+          "ctx": 0,
+          "runs": 2,
+          "ss_agg_tps_median": 2199.05,
+          "ss_agg_tps_min_max": [
+            2102.7,
+            2295.4
+          ],
+          "ss_per_stream_tps_median": 137.4,
+          "accept_per_draft_median": 0.8505,
+          "draft_tokens_per_proposal_median": 1.0,
+          "ttft_s_median": 0.53,
+          "ss_window_s": [
+            7.6,
+            6.1
+          ]
+        },
+        {
+          "c": 1,
+          "kind": "code",
+          "ctx": 60000,
+          "runs": 2,
+          "ss_agg_tps_median": 233.95,
+          "ss_agg_tps_min_max": [
+            225.1,
+            242.8
+          ],
+          "ss_per_stream_tps_median": 233.9,
+          "accept_per_draft_median": 0.669,
+          "draft_tokens_per_proposal_median": 3.0,
+          "ttft_s_median": 9.515,
+          "ss_window_s": [
+            4.0,
+            4.0
+          ]
+        },
+        {
+          "c": 4,
+          "kind": "code",
+          "ctx": 60000,
+          "runs": 2,
+          "ss_agg_tps_median": 635.4,
+          "ss_agg_tps_min_max": [
+            621.3,
+            649.5
+          ],
+          "ss_per_stream_tps_median": 158.8,
+          "accept_per_draft_median": 0.7965,
+          "draft_tokens_per_proposal_median": 2.0,
+          "ttft_s_median": 24.9,
+          "ss_window_s": [
+            5.6,
+            5.0
+          ]
+        },
+        {
+          "c": 6,
+          "kind": "code",
+          "ctx": 60000,
+          "runs": 2,
+          "ss_agg_tps_median": 760.9,
+          "ss_agg_tps_min_max": [
+            760.9,
+            760.9
+          ],
+          "ss_per_stream_tps_median": 126.8,
+          "accept_per_draft_median": 0.905,
+          "draft_tokens_per_proposal_median": 1.0,
+          "ttft_s_median": 34.595,
+          "ss_window_s": [
+            6.6,
+            6.6
+          ]
+        }
+      ],
+      "agents": {
+        "complete": true,
+        "failed": 0,
+        "cold": {
+          "requests": 6,
+          "ttft_median_s": 12.022511005401611,
+          "ttft_p95_s": 29.824429035186768,
+          "decode_tps_median": 16.339330657135474,
+          "wall_median_s": 55.989035844802856,
+          "sse_gap_max_s": 1.7067053318023682,
+          "request_sse_gap_p95_median_s": 0.859504222869873
+        },
+        "returning": {
+          "requests": 12,
+          "ttft_median_s": 0.9831345081329346,
+          "ttft_p95_s": 1.8329417705535889,
+          "decode_tps_median": 95.0957115278913,
+          "wall_median_s": 8.737339496612549,
+          "sse_gap_max_s": 0.6839122772216797,
+          "request_sse_gap_p95_median_s": 0.017652511596679688
+        },
+        "all": {
+          "requests": 18,
+          "ttft_median_s": 1.3165249824523926,
+          "ttft_p95_s": 29.824429035186768,
+          "decode_tps_median": 89.77303781246046,
+          "wall_median_s": 9.62454628944397,
+          "sse_gap_max_s": 1.7067053318023682,
+          "request_sse_gap_p95_median_s": 0.017788410186767578
+        },
+        "wall_span_s": 85.86046886444092,
+        "wall_output_tps": 162.6709029745868,
+        "prompt_tokens_range": [
+          29974,
+          105551
+        ],
+        "cached_tokens": 728640,
+        "prompt_tokens": 1131347,
+        "note": "Wall output rate includes prefill, tool think time and ramp-up/down. SSE gaps are frame gaps; MTP may emit several tokens per frame."
+      }
+    }
+  },
+  "fidelity": {
+    "fidelity-0": {
+      "chunks": 6,
+      "missing_one_side": 0,
+      "fully_agreeing": 0,
+      "diverged": 6,
+      "first_divergence_positions": [
+        0,
+        1,
+        2,
+        23,
+        29,
+        63
+      ],
+      "median_abs_dlogprob_on_agreed": 0.0,
+      "p99_abs_dlogprob_on_agreed": 0.17171
+    },
+    "fidelity-30000": {
+      "chunks": 6,
+      "missing_one_side": 0,
+      "fully_agreeing": 3,
+      "diverged": 3,
+      "first_divergence_positions": [
+        0,
+        0,
+        13
+      ],
+      "median_abs_dlogprob_on_agreed": 0.00372,
+      "p99_abs_dlogprob_on_agreed": 0.36043
+    }
+  }
+}

@@ -20,7 +20,7 @@ def metrics(base):
     for line in txt.splitlines():
         if line.startswith("vllm:generation_tokens_total") or line.startswith("vllm:num_requests_running") \
            or line.startswith("vllm:spec_decode_num_accepted_tokens_total") or line.startswith("vllm:spec_decode_num_draft_tokens_total") \
-           or line.startswith("vllm:prompt_tokens_total"):
+           or line.startswith("vllm:spec_decode_num_drafts_total") or line.startswith("vllm:prompt_tokens_total"):
             k = line.split("{")[0].split(" ")[0]; v = float(line.rsplit(" ", 1)[1]); out[k] = v
     return out
 
@@ -76,10 +76,12 @@ def run(base, model, c, tokens, dt, seed, kind="prose", ctx=0):
     gen = m1["vllm:generation_tokens_total"] - m0["vllm:generation_tokens_total"]; T = t1 - t0
     acc = m1.get("vllm:spec_decode_num_accepted_tokens_total", 0) - m0.get("vllm:spec_decode_num_accepted_tokens_total", 0)
     drf = m1.get("vllm:spec_decode_num_draft_tokens_total", 0) - m0.get("vllm:spec_decode_num_draft_tokens_total", 0)
+    n_drafts = m1.get("vllm:spec_decode_num_drafts_total", 0) - m0.get("vllm:spec_decode_num_drafts_total", 0)
     comp = [r["usage"]["completion_tokens"] for r in res if r["usage"]]
     per_stream_e2e = [r["usage"]["completion_tokens"] / (r["end"] - r["first"]) for r in res if r["usage"] and r["first"]]
     return {"c": c, "ss_window_s": round(T, 1), "ss_agg_tps": round(gen / T, 1), "ss_per_stream_tps": round(gen / T / c, 1),
-            "accept_per_draft": round(acc / drf, 3) if drf else None, "e2e_per_stream_tps_median": round(statistics.median(per_stream_e2e), 1),
+            "accept_per_draft": round(acc / drf, 3) if drf else None,
+            "draft_tokens_per_proposal": round(drf / n_drafts, 3) if n_drafts else None, "e2e_per_stream_tps_median": round(statistics.median(per_stream_e2e), 1),
             "ttft_s_median": round(statistics.median(r["ttft"] for r in res), 2), "completion_tokens": comp}
 
 def main():
@@ -95,8 +97,10 @@ def main():
         if not good:
             print(f"c{c}: {rs}"); continue
         agg = [r["ss_agg_tps"] for r in good]; acc = [r["accept_per_draft"] for r in good if r["accept_per_draft"] is not None]
+        depths = [r["draft_tokens_per_proposal"] for r in good if r.get("draft_tokens_per_proposal") is not None]
         summ = {"c": c, "kind": a.kind, "ctx": a.ctx, "runs": len(good), "ss_agg_tps_median": statistics.median(agg), "ss_agg_tps_min_max": [min(agg), max(agg)],
                 "ss_per_stream_tps_median": round(statistics.median(agg) / c, 1), "accept_per_draft_median": statistics.median(acc) if acc else None,
+                "draft_tokens_per_proposal_median": statistics.median(depths) if depths else None,
                 "ttft_s_median": statistics.median(r["ttft_s_median"] for r in good), "ss_window_s": [r["ss_window_s"] for r in good]}
         print("RESULT", json.dumps(summ), flush=True)
         if a.out:

@@ -1,0 +1,31 @@
+{
+  "--speculative-config": {
+    "method": "qwen3_5_mtp",
+    "num_speculative_tokens": 3,
+    "disable_eagle_block_drop": true,
+    "num_speculative_tokens_per_batch_size": [
+      [
+        1,
+        2,
+        3
+      ],
+      [
+        3,
+        4,
+        2
+      ],
+      [
+        5,
+        16,
+        1
+      ]
+    ]
+  },
+  "--max-num-batched-tokens": "8192",
+  "--kv-cache-memory-bytes": "15900000000",
+  "--max-num-seqs": "16",
+  "--max-model-len": "262144",
+  "--tensor-parallel-size": "2",
+  "--attention-backend": "FLASHINFER",
+  "image_id": "sha256:0ae66d77cb49ad12ac134dd2b5d8ae63b16ed35ca933a48500d5912e4e4b2c93"
+}

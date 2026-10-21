@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check the installed v0.32 parser using CPU-only SM120 metadata, without booting."""
 from pathlib import Path
+import os
 import importlib.metadata
 
 from plan import command
@@ -28,7 +29,7 @@ platforms._current_platform = ParserMetadata()
 from vllm.entrypoints.launchers.cli_args import make_arg_parser
 from vllm.utils.argparse_utils import FlexibleArgumentParser
 
-cmd = command(Path('/model'), Path('/state/v032-candidate'))
+cmd = command(Path('/model'), Path('/state/v032-candidate'), dynamic_mtp=os.getenv('V032_DYNAMIC_MTP') == '1')
 args = cmd[cmd.index('vllm.entrypoints.openai.api_server') + 1:]
 parsed = make_arg_parser(FlexibleArgumentParser()).parse_args(args)
 assert parsed.tensor_parallel_size == 2
@@ -36,4 +37,6 @@ assert parsed.attention_backend == "FLASHINFER"
 assert parsed.max_num_seqs == 16
 assert parsed.kv_cache_memory_bytes == 15900000000
 assert parsed.speculative_config['disable_eagle_block_drop'] is True
+if os.getenv('V032_DYNAMIC_MTP') == '1':
+    assert parsed.speculative_config['num_speculative_tokens_per_batch_size'] == [[1,2,3],[3,4,2],[5,16,1]]
 print('Actual v0.32 parser accepted the candidate flags; CPU metadata only, no server startup')

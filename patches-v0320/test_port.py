@@ -59,6 +59,18 @@ class PortTests(unittest.TestCase):
         exec(compile(ast.Module(body=imports+[shim], type_ignores=[]), 'splitkv-module-load', 'exec'), ns)
         self.assertTrue(callable(ns[shim.name].cache_info))
 
+    def test_dynamic_mtp_schedule_uses_pinned_runtime_lookup(self):
+        import runpy
+        from plan import command
+        cmd = command(Path('/model'), Path('/state/v032-candidate'), dynamic_mtp=True)
+        cfg = json.loads(cmd[cmd.index('--speculative-config')+1])
+        lookup = runpy.run_path(str(TREE/'vllm/v1/spec_decode/dynamic/utils.py'))['build_dynamic_sd_schedule_lookup'](
+            cfg['num_speculative_tokens_per_batch_size'], 16, cfg['num_speculative_tokens'])
+        self.assertEqual(lookup[1:], [3,3,2,2]+[1]*12)
+        self.assertTrue(cfg['disable_eagle_block_drop'])
+        plain = command(Path('/model'), Path('/state/v032-candidate'))
+        self.assertNotIn('num_speculative_tokens_per_batch_size', json.loads(plain[plain.index('--speculative-config')+1]))
+
     def test_mtp_shared_vocab_is_not_loaded_on_pp1(self):
         fn = method('vllm/model_executor/models/qwen3_5_mtp.py', 'Qwen3_5MTP',
                     'is_unused_checkpoint_weight', {})

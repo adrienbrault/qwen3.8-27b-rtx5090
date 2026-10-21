@@ -1,0 +1,1 @@
+native 0.32 fixed K3 versus dynamic K3/K2/K1 by scheduled batch size; BA4 off, prefill budget 8192

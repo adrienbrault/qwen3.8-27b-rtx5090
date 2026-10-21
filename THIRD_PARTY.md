@@ -4,6 +4,8 @@ This repository is MIT-licensed (see [LICENSE](LICENSE)) for the **original** wo
 
 ## vLLM 0.32 candidate (2026-10-21)
 
+The dynamic-MTP screen uses the batch-size schedule in vLLM `SpeculativeConfig` and the MRV2 runtime-depth fix [#57053](https://github.com/vllm-project/vllm/pull/57053). The tested 3/2/1 schedule is an experiment configuration, disabled by default.
+
 [`patches-v0320/`](patches-v0320/README.md) ports the retained 0.31 recipe features onto vLLM v0.32.0 commit `5df63a7203cdb9328d824a27b682e77c7b9928be`. Its upstream-derived patches and vendored PCIe package retain their Apache-2.0 provenance; [`NOTICE.md`](patches-v0320/NOTICE.md) links the original series, authors and upstream PRs, and [`PORT-STATUS.md`](patches-v0320/PORT-STATUS.md) accounts for omitted and replaced patches. BA4 uses a new engine-specific serving-evidence protocol and remains disabled pending fresh qualification.
 
 ## Humming comparison (2026-10-21)
