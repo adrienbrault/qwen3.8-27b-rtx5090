@@ -1,0 +1,1 @@
+{"chunks": 6, "missing_one_side": 0, "fully_agreeing": 0, "diverged": 6, "first_divergence_positions": [2, 4, 4, 6, 15, 52], "median_abs_dlogprob_on_agreed": 0.03222, "p99_abs_dlogprob_on_agreed": 0.90994}

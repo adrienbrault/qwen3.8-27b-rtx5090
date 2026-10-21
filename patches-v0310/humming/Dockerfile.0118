@@ -1,0 +1,6 @@
+FROM vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan
+COPY requirements-0118.txt /opt/humming-screen/requirements-0118.txt
+COPY test_deviceinfo.py /opt/humming-screen/test_deviceinfo.py
+RUN python3 -m pip install --no-deps --no-cache-dir --require-hashes -r /opt/humming-screen/requirements-0118.txt \
+ && python3 /opt/humming-screen/test_deviceinfo.py
+LABEL org.opencontainers.image.description="Humming experiment: official 0.1.18 wheel; serving dependencies otherwise unchanged"

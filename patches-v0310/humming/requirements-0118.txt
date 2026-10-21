@@ -1,0 +1,1 @@
+humming-kernels @ https://files.pythonhosted.org/packages/c4/5d/692bb0ac2d62dc5bbaf291f9ac5da125334ba6a6647709b6021822a6a48e/humming_kernels-0.1.18-cp310-abi3-manylinux_2_28_x86_64.whl --hash=sha256:3eee5f7365457708a8962c852a4c797d99439a450dfe16fee47cc39664d080d4

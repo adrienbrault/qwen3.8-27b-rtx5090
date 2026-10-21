@@ -1,0 +1,6 @@
+{"id":"code-cache","bucket":"code","text":"Implement a Python LRU cache using OrderedDict. Include get and put methods, a capacity check, and tests.\n\n```python\n"}
+{"id":"code-parser","bucket":"code","text":"Write a TypeScript tokenizer for arithmetic expressions. Explain how invalid characters and whitespace are handled.\n"}
+{"id":"prose-tcp","bucket":"prose","text":"Explain TCP congestion control to a programmer. Cover slow start, congestion avoidance, and packet loss.\n"}
+{"id":"prose-france","bucket":"prose","text":"Describe how a refrigerator transfers heat. Give a clear account of the compressor, condenser, expansion valve, and evaporator.\n"}
+{"id":"math","bucket":"math","text":"A warehouse has 144 boxes. Three eighths are shipped, and then 27 new boxes arrive. Explain how many boxes remain.\n"}
+{"id":"json","bucket":"structured","text":"Return a JSON array of five objects describing planets. Each object must have name, order_from_sun, and rocky fields.\n"}
