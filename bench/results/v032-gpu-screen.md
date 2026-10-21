@@ -24,7 +24,7 @@ The six-agent replay uses fixed base contexts 30K/40K/50K/60K/80K/100K, three gr
 | Longest streamed-response gap | 1.715 s | 1.710 s |
 | Returning-turn median time to first token | 1.34 s | 0.98 s |
 
-Response gaps are intervals between nonempty SSE frames; MTP can emit multiple tokens in one frame. During cold prefills the control's generation throughput fell to single digits with low KV usage and no preemptions. Together with the replay timings, this points to prefill interference as a cause of the interactive slowdown. Faster steady decode does not remove those pauses in this screen. A separate smaller-prefill-budget screen tests that mechanism.
+Response gaps are intervals between nonempty SSE frames; MTP can emit multiple tokens in one frame. During cold prefills the control's generation throughput fell to single digits with low KV usage and no preemptions. Together with the replay timings, this points to prefill interference as a cause of the interactive slowdown. Faster steady decode does not remove those pauses in this screen. The [smaller-prefill-budget screen](v032-chunk2048.md), results `2026-10-21-v032-chunk2048`, tests that mechanism.
 
 The native candidate boots with XQA and PCIe collectives active, and passes arithmetic, automatic tool parsing and finite decode-logprob smoke checks. The first boot found a missing `functools.cache` import in the retained split-KV helper; it was fixed and a decorator-initialization regression case brings the Linux CPU suite to nine passing cases. The explicit 0.32 attention-backend CLI flag is also checked. Earlier CPU-only evidence describes the [earlier package snapshot](https://github.com/adrienbrault/qwen3.8-27b-rtx5090/tree/ada8b92/patches-v0320).
 

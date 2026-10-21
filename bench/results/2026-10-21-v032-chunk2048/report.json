@@ -1,0 +1,233 @@
+{
+  "scope": "native 0.32 prefill budget 8192 versus 2048; BA4 off in both",
+  "gpu_qualification_complete": false,
+  "arms": {
+    "A": {
+      "decode": [
+        {
+          "c": 1,
+          "kind": "code",
+          "ctx": 0,
+          "runs": 2,
+          "ss_agg_tps_median": 242.25,
+          "ss_agg_tps_min_max": [
+            218.3,
+            266.2
+          ],
+          "ss_per_stream_tps_median": 242.2,
+          "accept_per_draft_median": 0.692,
+          "ttft_s_median": 0.05,
+          "ss_window_s": [
+            4.5,
+            3.0
+          ]
+        },
+        {
+          "c": 4,
+          "kind": "code",
+          "ctx": 0,
+          "runs": 2,
+          "ss_agg_tps_median": 899.4000000000001,
+          "ss_agg_tps_min_max": [
+            861.1,
+            937.7
+          ],
+          "ss_per_stream_tps_median": 224.9,
+          "accept_per_draft_median": 0.6465000000000001,
+          "ttft_s_median": 0.1,
+          "ss_window_s": [
+            4.0,
+            3.5
+          ]
+        },
+        {
+          "c": 16,
+          "kind": "code",
+          "ctx": 0,
+          "runs": 2,
+          "ss_agg_tps_median": 2793.95,
+          "ss_agg_tps_min_max": [
+            2770.3,
+            2817.6
+          ],
+          "ss_per_stream_tps_median": 174.6,
+          "accept_per_draft_median": 0.64,
+          "ttft_s_median": 0.535,
+          "ss_window_s": [
+            5.0,
+            4.5
+          ]
+        },
+        {
+          "c": 1,
+          "kind": "code",
+          "ctx": 60000,
+          "runs": 2,
+          "ss_agg_tps_median": 249.6,
+          "ss_agg_tps_min_max": [
+            238.7,
+            260.5
+          ],
+          "ss_per_stream_tps_median": 249.6,
+          "accept_per_draft_median": 0.732,
+          "ttft_s_median": 9.51,
+          "ss_window_s": [
+            3.5,
+            4.0
+          ]
+        },
+        {
+          "c": 4,
+          "kind": "code",
+          "ctx": 60000,
+          "runs": 2,
+          "ss_agg_tps_median": 867.3,
+          "ss_agg_tps_min_max": [
+            853.5,
+            881.1
+          ],
+          "ss_per_stream_tps_median": 216.8,
+          "accept_per_draft_median": 0.7244999999999999,
+          "ttft_s_median": 24.89,
+          "ss_window_s": [
+            4.0,
+            3.5
+          ]
+        },
+        {
+          "c": 6,
+          "kind": "code",
+          "ctx": 60000,
+          "runs": 2,
+          "ss_agg_tps_median": 1131.0500000000002,
+          "ss_agg_tps_min_max": [
+            1126.7,
+            1135.4
+          ],
+          "ss_per_stream_tps_median": 188.5,
+          "accept_per_draft_median": 0.7124999999999999,
+          "ttft_s_median": 34.57,
+          "ss_window_s": [
+            4.0,
+            4.0
+          ]
+        }
+      ],
+      "agents": {
+        "complete": true,
+        "failed": 0,
+        "cold": {
+          "requests": 6,
+          "ttft_median_s": 12.01369833946228,
+          "ttft_p95_s": 29.861088752746582,
+          "decode_tps_median": 18.165027745351182,
+          "wall_median_s": 54.46461796760559,
+          "sse_gap_max_s": 1.7104933261871338,
+          "request_sse_gap_p95_median_s": 1.0536549091339111
+        },
+        "returning": {
+          "requests": 12,
+          "ttft_median_s": 0.9826235771179199,
+          "ttft_p95_s": 1.6760587692260742,
+          "decode_tps_median": 126.16936422895195,
+          "wall_median_s": 6.531773567199707,
+          "sse_gap_max_s": 0.7675843238830566,
+          "request_sse_gap_p95_median_s": 0.018487930297851562
+        },
+        "all": {
+          "requests": 18,
+          "ttft_median_s": 1.366459846496582,
+          "ttft_p95_s": 29.861088752746582,
+          "decode_tps_median": 114.81215213911501,
+          "wall_median_s": 7.812267541885376,
+          "sse_gap_max_s": 1.7104933261871338,
+          "request_sse_gap_p95_median_s": 0.01863837242126465
+        },
+        "wall_span_s": 81.77809858322144,
+        "wall_output_tps": 170.79144956869462,
+        "prompt_tokens_range": [
+          29974,
+          105552
+        ],
+        "cached_tokens": 728640,
+        "prompt_tokens": 1131349,
+        "note": "Wall output rate includes prefill, tool think time and ramp-up/down. SSE gaps are frame gaps; MTP may emit several tokens per frame."
+      }
+    },
+    "B": {
+      "decode": [],
+      "agents": {
+        "complete": true,
+        "failed": 0,
+        "cold": {
+          "requests": 6,
+          "ttft_median_s": 13.906781911849976,
+          "ttft_p95_s": 35.283940076828,
+          "decode_tps_median": 15.690528293970397,
+          "wall_median_s": 58.72029995918274,
+          "sse_gap_max_s": 0.9555871486663818,
+          "request_sse_gap_p95_median_s": 0.3608677387237549
+        },
+        "returning": {
+          "requests": 12,
+          "ttft_median_s": 0.9351489543914795,
+          "ttft_p95_s": 1.8001646995544434,
+          "decode_tps_median": 131.24055413671428,
+          "wall_median_s": 5.974613666534424,
+          "sse_gap_max_s": 0.7796351909637451,
+          "request_sse_gap_p95_median_s": 0.018930435180664062
+        },
+        "all": {
+          "requests": 18,
+          "ttft_median_s": 1.328345537185669,
+          "ttft_p95_s": 35.283940076828,
+          "decode_tps_median": 119.4603408778027,
+          "wall_median_s": 7.986281633377075,
+          "sse_gap_max_s": 0.9555871486663818,
+          "request_sse_gap_p95_median_s": 0.06072521209716797
+        },
+        "wall_span_s": 85.73084473609924,
+        "wall_output_tps": 162.91685965528373,
+        "prompt_tokens_range": [
+          29974,
+          105552
+        ],
+        "cached_tokens": 728640,
+        "prompt_tokens": 1131348,
+        "note": "Wall output rate includes prefill, tool think time and ramp-up/down. SSE gaps are frame gaps; MTP may emit several tokens per frame."
+      }
+    }
+  },
+  "fidelity": {
+    "fidelity-0": {
+      "chunks": 6,
+      "missing_one_side": 0,
+      "fully_agreeing": 0,
+      "diverged": 6,
+      "first_divergence_positions": [
+        0,
+        0,
+        1,
+        4,
+        4,
+        6
+      ],
+      "median_abs_dlogprob_on_agreed": 0.03264,
+      "p99_abs_dlogprob_on_agreed": 0.3791
+    },
+    "fidelity-30000": {
+      "chunks": 6,
+      "missing_one_side": 0,
+      "fully_agreeing": 2,
+      "diverged": 4,
+      "first_divergence_positions": [
+        0,
+        0,
+        4,
+        13
+      ],
+      "median_abs_dlogprob_on_agreed": 0.00099,
+      "p99_abs_dlogprob_on_agreed": 0.13871
+    }
+  }
+}

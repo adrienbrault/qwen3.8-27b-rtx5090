@@ -18,6 +18,7 @@ Hardware since 2026-08-31: two RTX 5090 32 GB (`sm_120`), Ryzen 7 9800X3D, 64 GB
 
 ## Index
 
+- [Native 0.32 prefill budget 2048: cold response gaps shorten, replay takes 4.8% longer; experimental, no serving change (2026-10-21, results `2026-10-21-v032-chunk2048`)](results/v032-chunk2048.md)
 - [Native vLLM 0.32: deep steady decode +17–20%, six-agent replay tied, response gaps unchanged; BA4 off and numerical qualification incomplete (2026-10-21, results `2026-10-21-v032-gpu`)](results/v032-gpu-screen.md)
 - [vLLM 0.32.0 candidate: pinned native NVFP4/XQA port, local CPU image builds and checks; BA4 off, GPU qualification pending, serving unchanged (2026-10-21, results `2026-10-21-v032-cpu`)](results/v032-candidate.md)
 - [Live concurrent agents: passive server counters read 499.1 generated tok/s across 6–7 requests at 400 W per card, without queueing or preemptions; deep concurrent tool turns remain outside the existing benchmark curves (2026-10-21, results `2026-10-21-r27-live-agents`)](results/r27-live-agents.md)
