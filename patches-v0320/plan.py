@@ -26,7 +26,7 @@ def command(model, state, ba4=False):
                  'secondary_tiers': [{'type': 'fs', 'root_dir': '/l2',
                    'n_read_threads': 16, 'n_write_threads': 4, 'max_capacity_gb': 300,
                    'evict_scope': 'root', 'min_free_gb': 10}]}}
-    env = {'VLLM_USE_V2_MODEL_RUNNER': '1', 'VLLM_ATTENTION_BACKEND': 'FLASHINFER',
+    env = {'VLLM_USE_V2_MODEL_RUNNER': '1',
            'VLLM_SM12X_NVFP4_PREFILL_SPLIT_KV': '1',
            'VLLM_SM12X_PCIE_IPC_AR': '1', 'VLLM_SM12X_PCIE_IPC_MTP': '1',
            'VLLM_ALLREDUCE_USE_FLASHINFER_PCIE_IPC': '0',
@@ -46,7 +46,7 @@ def command(model, state, ba4=False):
         cmd += ['-e', key + '=' + value]
     cmd += [BA4 if ba4 else CONTROL, '-m', 'vllm.entrypoints.openai.api_server',
             '--model', '/model', '--served-model-name', 'qwen3.8-27b-candidate',
-            '--tensor-parallel-size', '2', '--kv-cache-dtype', 'nvfp4',
+            '--tensor-parallel-size', '2', '--attention-backend', 'FLASHINFER', '--kv-cache-dtype', 'nvfp4',
             '--kv-cache-memory-bytes', '15900000000', '--gpu-memory-utilization', '0.88',
             '--max-model-len', '262144', '--max-num-seqs', '16',
             '--max-num-batched-tokens', '8192', '--enable-prefix-caching',

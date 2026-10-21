@@ -18,6 +18,7 @@ Hardware since 2026-08-31: two RTX 5090 32 GB (`sm_120`), Ryzen 7 9800X3D, 64 GB
 
 ## Index
 
+- [Native vLLM 0.32: deep steady decode +17–20%, six-agent replay tied, response gaps unchanged; BA4 off and numerical qualification incomplete (2026-10-21, results `2026-10-21-v032-gpu`)](results/v032-gpu-screen.md)
 - [vLLM 0.32.0 candidate: pinned native NVFP4/XQA port, local CPU image builds and checks; BA4 off, GPU qualification pending, serving unchanged (2026-10-21, results `2026-10-21-v032-cpu`)](results/v032-candidate.md)
 - [Live concurrent agents: passive server counters read 499.1 generated tok/s across 6–7 requests at 400 W per card, without queueing or preemptions; deep concurrent tool turns remain outside the existing benchmark curves (2026-10-21, results `2026-10-21-r27-live-agents`)](results/r27-live-agents.md)
 - [Humming 0.1.18: NVFP4-only selection reduces single-stream code/prose decode by about 8%/12%, with no consistent gain at four or sixteen streams; 1,490,437-token pool retained, serving unchanged (2026-10-21, results `2026-10-21-074028-r27-humming-screen`)](results/r27-humming.md)

@@ -166,7 +166,7 @@ Reasoning is on by default at effort `medium`. Tool calls, JSON-schema structure
 
 ### vLLM 0.32.0 candidate, prepared 2026-10-21
 
-The [0.32.0 candidate](patches-v0320/README.md) uses native SM120 NVFP4 writing and XQA verification with the retained MTP, offload and PCIe features. It has local CPU builds and tests; GPU startup, fidelity, capacity and performance remain unmeasured. BA4 integration is disabled pending fresh evidence. The served configuration remains 0.31.0. Preparation evidence: [v032-candidate](bench/results/v032-candidate.md), 2026-10-21, results `2026-10-21-v032-cpu`.
+The [0.32.0 candidate](patches-v0320/README.md) boots with native SM120 NVFP4 writing and XQA verification. The [2026-10-21 GPU screen](bench/results/v032-gpu-screen.md), results `2026-10-21-v032-gpu`, measures about 17–20% higher steady decode at 60K context with four/six streams, but a tied six-agent replay and unchanged longest response gaps. BA4 is disabled and numerical qualification is incomplete. The served configuration remains 0.31.0. [CPU preparation](bench/results/v032-candidate.md) is recorded separately.
 
 ### BA4 at 14.86 GB with block drop, measured 2026-10-19
 

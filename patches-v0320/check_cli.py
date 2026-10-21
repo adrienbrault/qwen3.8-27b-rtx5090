@@ -32,6 +32,7 @@ cmd = command(Path('/model'), Path('/state/v032-candidate'))
 args = cmd[cmd.index('vllm.entrypoints.openai.api_server') + 1:]
 parsed = make_arg_parser(FlexibleArgumentParser()).parse_args(args)
 assert parsed.tensor_parallel_size == 2
+assert parsed.attention_backend == "FLASHINFER"
 assert parsed.max_num_seqs == 16
 assert parsed.kv_cache_memory_bytes == 15900000000
 assert parsed.speculative_config['disable_eagle_block_drop'] is True

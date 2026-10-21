@@ -1,6 +1,6 @@
 # vLLM 0.32.0 candidate for Qwen3.8-27B
 
-Prepared on 2026-10-21. This directory contains a source port and local CPU builds, not a promoted serving configuration. The served 0.31.0 launcher remains unchanged. GPU startup, correctness, memory capacity and performance are pending an authorized GPU window.
+Prepared on 2026-10-21. This directory contains a source port and local CPU builds, not a promoted serving configuration. The served 0.31.0 launcher remains unchanged. The first GPU screen boots successfully and measures the same token pool. Numerical qualification and BA4 admission remain incomplete; [dated results](https://github.com/adrienbrault/qwen3.8-27b-rtx5090/blob/main/bench/results/v032-gpu-screen.md) describe performance.
 
 The base is `vllm/vllm-openai:v0.32.0`, pinned to its Linux amd64 manifest digest in `manifest.json`. The image's installed versions were checked locally: vLLM 0.32.0, torch 2.13.0+cu130, FlashInfer 0.7.0.post1 and Triton 3.7.1. The native NVFP4 writer and SM120 XQA verification replace the older writer/FA2 graph overlays. `PORT-STATUS.md` accounts for every previous patch.
 
@@ -25,7 +25,7 @@ python3 test_port.py --source-archive out/source.tar.gz
 
 The expected archive SHA256 is `33247d5def035a78ccc8b2e5499a429ab82358e426c6aa0fe91cb6c60bab9c3a`. The tests require CPU torch. They reconstruct a fresh tree, apply both image layers, check rejection of repeated installation and invalid BA4 control IDs, and exercise the changed MTP, GDN, autotune, capture and evidence behavior. They do not execute attention kernels or validate GPU numerical output. The carried filesystem eviction tests also run against the patched source using pytest; their transfer jobs use 0.32's `chunk_ids` field. `check_cli.py`, run inside the built image, validates the actual parser using CPU-only SM120 metadata; it does not validate hardware startup.
 
-## Deferred GPU screen
+## GPU screen and deferred qualification
 
 `python3 plan.py` prints a proposed container command and does nothing else. It neither inspects nor modifies the host. `--ba4-image` selects the integration image with BA4 still disabled. The command uses loopback port 18029, a candidate-only model alias, a read-only checkpoint mount and a fresh child of `v032-candidate` for both tier and compile-cache state on every generation. This prevents different checkpoints or rebuilt images from sharing cached state merely because they all mount at `/model`. Filesystem capacity accounting and pins require one manager per tier root; do not share these directories with another server. Generate a new command for each boot; do not reuse a printed command after changing its checkpoint or image. It contains no daily stop, cleanup, power/clock change, queue registration or service installation. An authorized GPU-exclusive unit must own its lifecycle before this command is run; another port does not provide GPU isolation.
 

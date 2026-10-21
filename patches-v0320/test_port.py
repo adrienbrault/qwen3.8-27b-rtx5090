@@ -51,6 +51,14 @@ class PortTests(unittest.TestCase):
         self.assertIn('TP2 drafter', fn(obj, True, comm, None))
         self.assertIn('custom all-reduce disabled', fn(obj, False, comm, None))
 
+    def test_splitkv_decorator_import_is_available_at_module_load(self):
+        tree = ast.parse((TREE / 'vllm/v1/attention/backends/flashinfer.py').read_text())
+        imports = [n for n in tree.body if isinstance(n, ast.ImportFrom) and n.module == 'functools']
+        shim = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == '_maybe_enable_sm12x_nvfp4_prefill_split_kv')
+        ns = {}
+        exec(compile(ast.Module(body=imports+[shim], type_ignores=[]), 'splitkv-module-load', 'exec'), ns)
+        self.assertTrue(callable(ns[shim.name].cache_info))
+
     def test_mtp_shared_vocab_is_not_loaded_on_pp1(self):
         fn = method('vllm/model_executor/models/qwen3_5_mtp.py', 'Qwen3_5MTP',
                     'is_unused_checkpoint_weight', {})

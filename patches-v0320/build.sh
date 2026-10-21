@@ -6,6 +6,12 @@ BASE=vllm/vllm-openai@sha256:6ee133356d49ed24cee03dd0cda3d3980279a11c107ce3e752c
 CONTROL=vllm-qwen38:v0320-native-r1
 CANDIDATE=vllm-qwen38:v0320-native-ba4-r1
 mkdir -p out
+# Avoid inherited root-owned buildx state in the operator home directory.
+export DOCKER_CONFIG="${V032_DOCKER_CONFIG:-$PWD/out/docker-config}"
+mkdir -p "$DOCKER_CONFIG/cli-plugins"
+if [ -x "$HOME/.docker/cli-plugins/docker-buildx" ] && [ ! -e "$DOCKER_CONFIG/cli-plugins/docker-buildx" ]; then
+  ln -s "$HOME/.docker/cli-plugins/docker-buildx" "$DOCKER_CONFIG/cli-plugins/docker-buildx"
+fi
 docker image inspect "$BASE" >/dev/null 2>&1 || docker pull --platform linux/amd64 "$BASE"
 [ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$BASE")" = linux/amd64 ]
 docker build --platform linux/amd64 --network=none --pull=false --target native \

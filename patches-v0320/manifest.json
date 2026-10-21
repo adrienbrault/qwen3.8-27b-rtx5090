@@ -55,7 +55,7 @@
     },
     {
       "name": "0003-mtp-memory-splitkv-autotune.diff",
-      "sha256": "3ee97c59adc89095d43815b686a89411882ac743f06f22ef63c5657a1af66281",
+      "sha256": "03685c3c0a3f34d848b69f5df5c324850ca08e66b4c9c36b1c47af601973ae24",
       "ba4": false,
       "before": {
         "vllm/config/parallel.py": "e8dcfb67c1ace957dcc7e12569ee62eb0f983aec3901fdef27c13014cea4b760",
@@ -67,7 +67,7 @@
         "vllm/config/parallel.py": "81e2182d70c5156e683f61f936d5bd841a3b31c95226507b2568469d790c6133",
         "vllm/model_executor/models/qwen3_5_mtp.py": "a12374a1a9e59393e9fcafbf57e9c02e5dcc64a02c667b587aa95ab1be81badf",
         "vllm/model_executor/warmup/kernel_warmup.py": "f13439b3b6fda7eae5a8ebb386d3e49c41bb644bc80e25fde3a8c2cc7bc3db2c",
-        "vllm/v1/attention/backends/flashinfer.py": "b3da232f38ee375ebd3734625bd6d55c046be2f757ce107bf9ea82b107ea7742"
+        "vllm/v1/attention/backends/flashinfer.py": "ba7ed14694febf520ff1eb7f0aef4fb9f764a6769ba9d4dccdc6d71880af2328"
       }
     },
     {

@@ -93,6 +93,15 @@
 +        tuner.load_configs(str(cache_path))
 --- a/vllm/v1/attention/backends/flashinfer.py
 +++ b/vllm/v1/attention/backends/flashinfer.py
+@@ -4,7 +4,7 @@
+
+ from dataclasses import dataclass, replace
+ from enum import Enum
+-from functools import partial
++from functools import cache, partial
+ from typing import ClassVar
+
+ import numpy as np
 @@ -106,6 +106,39 @@
  trtllm_workspace_buffer = None
 
