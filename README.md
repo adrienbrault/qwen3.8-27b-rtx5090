@@ -36,7 +36,7 @@ Cold prefill runs at 9,557 t/s at 6.7K prompt tokens and 3,994 at 200K. One code
 | `vllm bench serve`, 16 streams, wall-clock output | 1,649.9 tok/s on ShareGPT V3; 1,925.1 on Spec-Bench (2.19 % tier cached) | 2026-10-20, [r27-served-std-bench](bench/results/r27-served-std-bench.md) |
 | `vllm bench serve`, 16 streams, TTFT p50 / p99 | 124.0 / 500.3 ms on ShareGPT V3; 127.2 / 285.6 ms on Spec-Bench (2.19 % tier cached) | 2026-10-20, [r27-served-std-bench](bench/results/r27-served-std-bench.md) |
 
-Also on the served configuration (2026-10-20, [r27 served quality](bench/results/r27-served-quality.md), results `2026-10-20-172512-r27-served-quality` and `2026-10-20-173445-r27-served-quality`): tool-eval 89.6 ± 1.8 over 8 trials of 69 scenarios, GSM8K 5-shot T=0 0.895 over 200 problems; tool smoke 5 of 5 ([r27-kv-pin](bench/results/r27-kv-pin.md), results `2026-10-20-135353-pin-promote`).
+Also on the served configuration: tool-eval 94.5 ± 1.7 over 4 trials of 69 scenarios with tool-eval-bench 3.0.0, which sends earlier reasoning back (2026-11-23, [r27 tool-eval with reasoning sent back](bench/results/r27-tooleval-think.md), results `2026-11-23-r27-tooleval-think`). On the same boot tool-eval-bench 2.1.0, which drops it from the resent history, read 88.5 ± 1.0, and 2.1.0 with only the reasoning echo added 90.0 ± 1.8; every other tool-eval figure in this README is a 2.1.0 score. GSM8K 5-shot T=0 0.895 over 200 problems (2026-10-20, [r27 served quality](bench/results/r27-served-quality.md), results `2026-10-20-172512-r27-served-quality` and `2026-10-20-173445-r27-served-quality`, where 2.1.0 read 89.6 ± 1.8 over 8 trials); tool smoke 5 of 5 ([r27-kv-pin](bench/results/r27-kv-pin.md), results `2026-10-20-135353-pin-promote`).
 
 ## Served configuration
 
@@ -160,7 +160,7 @@ curl -s http://localhost:8020/v1/chat/completions -H 'content-type: application/
 }' | jq -r '.choices[0].message.content'
 ```
 
-Reasoning is on by default at effort `medium`. Tool calls, JSON-schema structured output and up to 32 images per request work without extra flags. Clients that resend prior assistant turns should include the `reasoning` field to keep earlier thinking blocks in context.
+Reasoning is on by default at effort `medium`. Tool calls, JSON-schema structured output and up to 32 images per request work without extra flags. Agent clients should send each earlier assistant turn's reasoning back as `reasoning_content` or `reasoning` (the server accepts both). The template keeps reasoning on every earlier assistant turn and renders an empty `<think>` block for a turn sent without it ([`scripts/think_echo_probe.py`](scripts/think_echo_probe.py) checks a server, [r27 tool-eval with reasoning sent back](bench/results/r27-tooleval-think.md)).
 
 ## Other configurations
 
@@ -184,7 +184,7 @@ The earlier launcher [scripts/serve-v031-ba4-daily.sh](scripts/serve-v031-ba4-da
 | wall-clock output, 16 streams, ShareGPT / Spec-Bench | 1,589.0 / 1,899.5 tok/s; 114.3 / 129.1 per stream; 0 cached tokens | 2026-10-19/20, `2026-10-19-r27-ba4-std-bench-2335` |
 | TTFT p50 / p99, 16 streams, ShareGPT / Spec-Bench | 129.4 / 494.1 ms; 131.1 / 292.0 ms; 0 cached tokens | 2026-10-19/20, `2026-10-19-r27-ba4-std-bench-2335` |
 | dense fidelity vs bf16, 555,549 positions | top-1 90.71 %, perplexity +1.901 % | 2026-10-19, [r27 BA4](bench/results/r27-ba4.md), results `2026-10-19-r27-audition-screen-070155-3532152`, `2026-10-19-r27-audition-screen-075049-955439` |
-| task checks | GSM8K 5-shot T=0 0.905 over 200 problems; tool-eval 91.0 ± 1.4 (69 × 4); tool smoke 5/5 | 2026-10-19, [r27 BA4](bench/results/r27-ba4.md), results `2026-10-19-223642-ba4-lean-gate`, `2026-10-19-224947-ba4-lean-gate`, `2026-10-19-233300-ba4-promote` |
+| task checks | GSM8K 5-shot T=0 0.905 over 200 problems; tool-eval 91.0 ± 1.4 (69 × 4, tool-eval-bench 2.1.0); tool smoke 5/5 | 2026-10-19, [r27 BA4](bench/results/r27-ba4.md), results `2026-10-19-223642-ba4-lean-gate`, `2026-10-19-224947-ba4-lean-gate`, `2026-10-19-233300-ba4-promote` |
 
 ### No block drop at 14.86 GB, measured 2026-10-20
 
@@ -196,7 +196,7 @@ Three older shapes remain runnable and documented:
 
 - **Two cards, fp8 KV, DFlash2 on vLLM 0.28.0** ([scripts/serve-r156-daily.sh](scripts/serve-r156-daily.sh)).
   - Served 2026-09-02 to 09-04 on the RedHatAI checkpoint with pool 654,491.
-  - tool-eval 90.8 ± 0.5 over its life, SWE-Bench Verified 386/500.
+  - tool-eval 90.8 ± 0.5 over its life (tool-eval-bench 2.1.0), SWE-Bench Verified 386/500.
   - Its disk tier never served a revisit, because a tier hit must fit the CPU tier whole (`results/2026-09-04-r172-cputier`).
 - **One card, nvfp4 KV, MTP on vLLM 0.28.0** ([scripts/serve-v0280-daily.sh](scripts/serve-v0280-daily.sh)): the shape for a single RTX 5090.
 - **Two cards, nvfp4 KV, MTP on vLLM 0.28.0** (`serve-v0280-daily.sh` with `TP=2`): the capacity shape.
@@ -214,7 +214,7 @@ The first three columns were measured on 2026-08-31 on the [gittensor](https://h
 | decode at 100K context | 106.7 | 174.4 | 137.5 | 152.8 † |
 | prefill at 8K | 11.9K t/s | 9.3K | 9.0K | 8.1K † |
 | prefill at 100K | 4.7K | 7.0K | 6.3K | 6.4K † |
-| tool-eval ×4 | 89.2 ± 1.7 | 89.8 ± 1.3 | 90.2 ± 1.0 | 91.2 ± 1.3 |
+| tool-eval ×4 (tool-eval-bench 2.1.0) | 89.2 ± 1.7 | 89.8 ± 1.3 | 90.2 ± 1.0 | 91.2 ± 1.3 |
 
 DFlash2 accepts few draft tokens per step, so its decode is bound by weight bandwidth, which the second card doubles. MTP accepts more per step and amortizes the weight reads, so on MTP the second card adds KV space more than speed. Tool-eval does not separate the three shapes; the bf16 rulers separate them by KV dtype ([docs/FIDELITY.md](docs/FIDELITY.md)).
 
@@ -236,7 +236,7 @@ These rows preserve measurements on earlier configurations of the served route. 
 
 | | value | configuration | source |
 |---|---|---|---|
-| [tool-eval](https://github.com/SeraphimSerapis/tool-eval-bench), 69 × 4 | 90.5 ± 1.3 | A_S, vLLM v0.31.0, [scripts/serve-v031-splitkv-daily.sh](scripts/serve-v031-splitkv-daily.sh) | 2026-10-16, [r27](bench/results/r27-v031-splitkv.md), results `2026-10-16-r27-audition-qualify-085528-807233` |
+| [tool-eval](https://github.com/SeraphimSerapis/tool-eval-bench) 2.1.0, 69 × 4 | 90.5 ± 1.3 | A_S, vLLM v0.31.0, [scripts/serve-v031-splitkv-daily.sh](scripts/serve-v031-splitkv-daily.sh) | 2026-10-16, [r27](bench/results/r27-v031-splitkv.md), results `2026-10-16-r27-audition-qualify-085528-807233` |
 | fidelity vs the bf16 model, dense text, 555,549 positions | top-1 90.71 %, perplexity +1.90 %, truncated KL 0.0226 | A_S, vLLM v0.31.0 | 2026-10-16, [r27](bench/results/r27-v031-splitkv.md), results `2026-10-16-r27-audition-qualify-085528-807233` |
 | decode alone, 16 streams | 2,443 t/s of code and 2,086 of prose, 153 and 130 per stream; one stream 212.5 and 169.1 | the served configuration on vLLM v0.29.0rc2 | 2026-09-23, [R675](bench/results/r675-27b-curves.md) |
 | `vllm bench serve` v0.30.0, 16 streams | 1,330 (ShareGPT V3) and 1,628 (Spec-Bench) output tok/s, wall clock; 97 and 111 per stream (1000 / TPOT p50); time to first token p50 42 to 44 ms at 1 stream, 176 ms at 16 | the served configuration on vLLM v0.29.0rc2 | 2026-09-28, [R793](bench/results/r793-27b-std-bench.md) |

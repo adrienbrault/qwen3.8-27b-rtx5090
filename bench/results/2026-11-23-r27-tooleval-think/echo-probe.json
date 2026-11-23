@@ -1,0 +1,14 @@
+{
+ "model": "qwen3.8-27b",
+ "prompt_tokens": {
+  "plain-none": 38,
+  "plain-reasoning_content": 187,
+  "plain-reasoning": 187,
+  "plain-both": 187,
+  "tool-none": 324,
+  "tool-reasoning_content": 473
+ },
+ "reasoning_content_rendered": true,
+ "reasoning_rendered": true,
+ "tool_turn_reasoning_content_rendered": true
+}
