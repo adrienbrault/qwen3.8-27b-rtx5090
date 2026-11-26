@@ -1,6 +1,6 @@
 # Qwen3.8-27B on RTX 5090
 
-![Recipe card: served configuration, decode, prefill, KV pool and power, 2026-10-20](docs/img/recipe-card-82390c26.png)
+![Recipe card: served configuration, decode, prefill, KV pool and power, 2026-10-20](docs/img/recipe-card-fbe928ca.png)
 
 Serving configuration, vLLM patches, launch scripts and measurements for [Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B), served as [nvidia/Qwen3.8-27B-NVFP4](https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4) by [vLLM](https://github.com/vllm-project/vllm) v0.31.0 with the patch chain in [patches-v0310/](patches-v0310/) and FlashInfer 0.7.0.post1 across two RTX 5090 cards. The window is 262,144 tokens, the KV cache is NVFP4, the checkpoint's own MTP head drafts 3 tokens, and vision, reasoning, tool calls and structured output are all on. The target workload is a few concurrent coding agents with long contexts. The one-card and older shapes are under [Other configurations](#other-configurations).
 
@@ -36,7 +36,7 @@ Cold prefill runs at 9,557 t/s at 6.7K prompt tokens and 3,994 at 200K. One code
 | `vllm bench serve`, 16 streams, wall-clock output | 1,649.9 tok/s on ShareGPT V3; 1,925.1 on Spec-Bench (2.19 % tier cached) | 2026-10-20, [r27-served-std-bench](bench/results/r27-served-std-bench.md) |
 | `vllm bench serve`, 16 streams, TTFT p50 / p99 | 124.0 / 500.3 ms on ShareGPT V3; 127.2 / 285.6 ms on Spec-Bench (2.19 % tier cached) | 2026-10-20, [r27-served-std-bench](bench/results/r27-served-std-bench.md) |
 
-Also on the served configuration: tool-eval 94.5 ± 1.7 over 4 trials of 69 scenarios with tool-eval-bench 3.0.0, which sends tool-calling turns' reasoning back (2026-11-23, [r27 tool-eval with reasoning sent back](bench/results/r27-tooleval-think.md), results `2026-11-23-r27-tooleval-think`). On the same boot tool-eval-bench 2.1.0, which drops it from the resent history, read 88.5 ± 1.0, and 2.1.0 with only the reasoning echo added 90.0 ± 1.8; every other tool-eval figure in this README is a 2.1.0 score. GSM8K 5-shot T=0 0.895 over 200 problems (2026-10-20, [r27 served quality](bench/results/r27-served-quality.md), results `2026-10-20-172512-r27-served-quality` and `2026-10-20-173445-r27-served-quality`, where 2.1.0 read 89.6 ± 1.8 over 8 trials); tool smoke 5 of 5 ([r27-kv-pin](bench/results/r27-kv-pin.md), results `2026-10-20-135353-pin-promote`).
+Also on the served configuration: tool-eval 95.2 ± 1.5 over 4 trials of 69 scenarios with tool-eval-bench 3.0.0, which sends tool-calling turns' reasoning back (2026-11-26, BA4 active, [r27 tool-eval with BA4](bench/results/r27-tooleval-ba4.md), results `2026-11-26-r27-tooleval-ba4`). On the same boot tool-eval-bench 2.1.0, which drops it from the resent history, read 90.8 ± 0.5, and 2.1.0 with every earlier turn's reasoning sent back 91.0 ± 1.4; every other tool-eval figure in this README is a 2.1.0 score. GSM8K 5-shot T=0 0.895 over 200 problems (2026-10-20, [r27 served quality](bench/results/r27-served-quality.md), results `2026-10-20-172512-r27-served-quality` and `2026-10-20-173445-r27-served-quality`, where 2.1.0 read 89.6 ± 1.8 over 8 trials); tool smoke 5 of 5 ([r27-kv-pin](bench/results/r27-kv-pin.md), results `2026-10-20-135353-pin-promote`).
 
 ## Served configuration
 

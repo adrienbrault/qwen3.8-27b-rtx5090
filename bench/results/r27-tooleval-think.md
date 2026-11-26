@@ -2,6 +2,8 @@
 
 [← all results](../RESULTS.md)
 
+**Superseded 2026-11-26.** This boot ran with BA4 inactive (0 of 96 rank-layers, after the 2026-11-20 card slot swap), so it was not the served configuration. The served-configuration row is [r27 tool-eval with BA4](r27-tooleval-ba4.md): 95.2 ± 1.5.
+
 2026-11-23 22:49 to 23:01 UTC, raw records in [`2026-11-23-r27-tooleval-think/`](2026-11-23-r27-tooleval-think/), driver [`scripts/r27-tooleval-think.sh`](../../scripts/r27-tooleval-think.sh). One boot of the served launcher ([`scripts/serve-v031-served-daily.sh`](../../scripts/serve-v031-served-daily.sh), image `vllm-qwen38:v0310-r27c-A_S-BA4-L1a-ubplan`) with a freshly compiled `torch.compile` artifact, nothing else using the server.
 
 Every tool-eval row in this repository before this date ran tool-eval-bench 2.1.0, which resends conversation history without each assistant turn's reasoning. The Qwen3.8 template keeps reasoning on every earlier assistant turn and renders an empty `<think>` block when a client sends none. tool-eval-bench 3.0.0 sends tool-calling turns' reasoning back as `reasoning_content`. Arm B is 2.1.0 with only that change ([`scripts/tooleval_echo.py`](../../scripts/tooleval_echo.py)), so A against B isolates the reasoning echo on the same 69 scenarios.
